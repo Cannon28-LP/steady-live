@@ -393,7 +393,7 @@ function fresh(){
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
     me:null, friends:{}, pairs:{}, demo:false, outbox:[], cheersIn:[], todos:[],
     settings:{theme:'teal',mode:'dark',accent:null,density:'comfy',corners:'round',font:'system',textSize:100,motion:true,haptics:true,glow:true},
-    flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
+    flags:{onboarded:false,why:'',whys:[],lastOpen:null,quoteDate:null,tours:{}},
     pendingMisses:[], undo:null,
   };
 }
@@ -403,6 +403,9 @@ function load(){
     const s=fresh(); const p=JSON.parse(raw);
     const m={...s,...p,settings:{...s.settings,...(p.settings||{})},flags:{...s.flags,...(p.flags||{})}};
     if(m.points.coins===undefined){ m.points={coins:m.points.balance||0,xp:m.points.lifetime||0}; } // migrate v2 pot → coins/xp
+    if(!Array.isArray(m.flags.whys)) m.flags.whys=[];
+    if(m.flags.why && !m.flags.whys.length) m.flags.whys=[m.flags.why];
+    if(!m.flags.why && m.flags.whys.length) m.flags.why=m.flags.whys[0];
     m.rewards.forEach(r=>{ if(!TIER_DAYS[r.tier]) r.tier = r.tier==='big' ? 'fortnight' : 'week'; }); // small/medium/big → day-based tiers
     return m;
   }catch(e){ return fresh(); }
@@ -977,7 +980,10 @@ function vSettings(){
     <div class="opt"><label>Haptics <span class="hint">where supported</span></label>${tg('haptics',st.haptics)}</div>
     <div class="opt"><label>Glow</label>${tg('glow',st.glow)}</div>
     <div class="opt"><label>Reset look</label><button class="btn sm" id="resetlook">Defaults</button></div></div></details>
-  <details class="acc"><summary>Your why <span class="muted">${S.flags.why?'set':'empty'}</span></summary><div class="body"><textarea id="why" placeholder="Why does being consistent matter to you?">${esc(S.flags.why)}</textarea><p class="tiny muted" style="margin-top:8px">Saved as you type.</p></div></details>
+  <details class="acc"><summary>Your why <span class="muted">${(S.flags.whys||[]).length?(S.flags.whys.length+' set'):(S.flags.why?'set':'empty')}</span></summary><div class="body">
+    ${(S.flags.whys||(S.flags.why?[S.flags.why]:[])).map((w,i)=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(w)}</span><button class="iconbtn" data-delwhy="${i}" aria-label="Remove">${ICON.trash}</button></div>`).join('')||'<p class="muted small">Nothing yet.</p>'}
+    <div class="row" style="margin-top:10px"><input type="text" id="newwhy" placeholder="Add another why…" maxlength="200"><button class="btn primary" id="addwhy">Add</button></div>
+    <p class="tiny muted" style="margin-top:8px">Shown on the morning quote screen, rotating by day.</p></div></details>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, times its habit strength (up to ×1.5). Coins are spent in the shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task has a 0–100% strength that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
@@ -1051,7 +1057,9 @@ function bind(){
   qa('[data-toggle]').forEach(b=>b.onclick=()=>{S.settings[b.dataset.toggle]=!S.settings[b.dataset.toggle];save();applyTheme();haptic();render();keepLook();});
   qa('[data-size]').forEach(b=>b.onclick=()=>{S.settings.textSize=clamp(S.settings.textSize+Number(b.dataset.size),80,130);save();applyTheme();render();keepLook();});
   const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings=fresh().settings;save();applyTheme();render();keepLook();toast('Look reset');};
-  const why=q('#why'); if(why) why.oninput=()=>{S.flags.why=why.value;save();};
+  const syncWhys=()=>{ if(!Array.isArray(S.flags.whys)) S.flags.whys=[]; S.flags.why=S.flags.whys[0]||''; save(); };
+  const aw=q('#addwhy'); if(aw){ const add=()=>{ const v=q('#newwhy').value.trim(); if(!v) return; if(!Array.isArray(S.flags.whys)) S.flags.whys=[]; S.flags.whys.push(v); syncWhys(); haptic(); render(); document.querySelectorAll('.acc')[4]?.setAttribute('open',''); const a=[...document.querySelectorAll('.acc')].find(x=>x.textContent.includes('Your why')); if(a) a.open=true; }; aw.onclick=add; q('#newwhy').onkeydown=e=>{if(e.key==='Enter')add();}; }
+  qa('[data-delwhy]').forEach(b=>b.onclick=()=>{ const i=Number(b.dataset.delwhy); S.flags.whys.splice(i,1); syncWhys(); haptic(); render(); const a=[...document.querySelectorAll('.acc')].find(x=>x.querySelector('#addwhy')); if(a) a.open=true; });
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
   const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
   const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, points and rewards. This cannot be undone.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
@@ -1136,7 +1144,7 @@ function missGate(){
 function quoteGate(next){
   const q=quoteToday(); if(!q||S.flags.quoteDate===today()){ next(); return; }
   const g=document.createElement('div'); g.className='gate';
-  g.innerHTML=`<p class="q">${esc(q.text)}</p><p class="by">${q.author&&q.author!=='—'?esc(q.author):''}</p><div class="actions"><button class="btn primary block" id="startday">Start the day</button>${S.flags.why?`<p class="tiny muted" style="margin-top:18px;text-align:center">Your why: ${esc(S.flags.why)}</p>`:''}</div>`;
+  g.innerHTML=`<p class="q">${esc(q.text)}</p><p class="by">${q.author&&q.author!=='—'?esc(q.author):''}</p><div class="actions"><button class="btn primary block" id="startday">Start the day</button>${(S.flags.whys?.length?S.flags.whys:(S.flags.why?[S.flags.why]:[]))[0]?`<p class="tiny muted" style="margin-top:18px;text-align:center">Your why: ${esc((S.flags.whys?.length?S.flags.whys:[S.flags.why])[(parse(today()).getDate()-1)%(S.flags.whys?.length||1)])}</p>`:''}</div>`;
   document.body.appendChild(g);
   g.querySelector('#startday').onclick=()=>{ S.flags.quoteDate=today(); save(); haptic(); g.style.transition='opacity .3s'; g.style.opacity=0; setTimeout(()=>{g.remove();next();},300); };
 }
@@ -1144,20 +1152,30 @@ function quoteGate(next){
 /* ---------- Onboarding ---------- */
 function onboarding(next){
   if(S.flags.onboarded){ next(); return; }
-  let step=0; const picks=new Set(); const targets={}; let why='';
+  let step=0; const picks=new Set(); const targets={}; const whys=[]; let whyIdx=0; let draft='';
   const g=document.createElement('div'); g.className='gate onb'; document.body.appendChild(g);
   const SUG=[['Walk',20],['Read',15],['No phone in bed',0],['Drink 2L water',0],['Tidy up',10],['Stretch',10],['Journal',0],['Study',30]];
+  const commitDraft=()=>{ const v=(g.querySelector('#onbwhy')?.value||draft).trim(); if(v){ if(whyIdx<whys.length) whys[whyIdx]=v; else whys.push(v); draft=v; } };
   const draw=()=>{
     const steps=`<div class="steps">${[0,1,2].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
     if(step===0) g.innerHTML=`${steps}<h1>Consistency isn’t a mood.</h1><p>Big goals fail because they depend on how you feel that day. Small promises kept daily don’t.</p><p style="margin-top:14px">Steady gives every day a 100-point pot, splits it across your tasks, and pays out for showing up. Miss one and nothing is taken away — you just say why, so you can see your patterns.</p><p style="margin-top:14px">No account. Nothing leaves your phone.</p><div class="actions"><button class="btn primary block" data-n>Fair enough</button></div>`;
-    if(step===1) g.innerHTML=`${steps}<h1>Why does this matter to you?</h1><p>One line. You’ll see it on days you need it.</p><textarea id="onbwhy" style="margin-top:18px" placeholder="e.g. I want to trust myself again.">${esc(why)}</textarea><div class="actions row"><button class="btn ghost" data-b>Back</button><button class="btn ghost" data-n>Skip</button><button class="btn primary grow" data-n>Next</button></div>`;
-    if(step===2) g.innerHTML=`${steps}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions row"><button class="btn ghost" data-b>Back</button><button class="btn primary grow" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
-    g.querySelectorAll('[data-b]').forEach(b=>b.onclick=()=>{ if(step===1) why=g.querySelector('#onbwhy')?.value.trim()||why; haptic(); if(step>0){step--;draw();} });
-    g.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>{ if(step===1) why=g.querySelector('#onbwhy').value.trim(); haptic(); if(step<2){step++;draw();} else finish(); });
+    if(step===1){
+      const n=Math.max(whys.length, whyIdx+1);
+      const show=whys[whyIdx]??draft;
+      const pills=whys.length?`<div class="chips" style="margin-top:12px">${whys.map((w,i)=>`<button type="button" class="chip ${i===whyIdx?'on':''}" data-why="${i}">${esc(w.length>28?w.slice(0,28)+'…':w)}</button>`).join('')}</div>`:'';
+      g.innerHTML=`${steps}<div class="row between" style="margin-bottom:8px"><button type="button" class="iconbtn" data-wb aria-label="Previous why" ${whyIdx<=0&&!whys.length?'disabled style="opacity:.3"':''}>‹</button><span class="tiny muted">Why ${whyIdx+1}${whys.length?` of ${Math.max(whys.length, whyIdx+1)}`:''}</span><button type="button" class="iconbtn" data-wa aria-label="Add another why">+</button></div><h1>Why does this matter to you?</h1><p>One line each. Add as many as you want — you’ll see them on days you need them.</p>${pills}<textarea id="onbwhy" style="margin-top:18px" placeholder="e.g. I want to trust myself again." maxlength="200">${esc(show)}</textarea><div class="actions row"><button class="btn ghost" data-b>‹ Back</button><button class="btn ghost" data-n>Skip</button><button class="btn primary grow" data-n>Next</button></div>`;
+    }
+    if(step===2) g.innerHTML=`${steps}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions row"><button class="btn ghost" data-b>‹ Back</button><button class="btn primary grow" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
+    g.querySelectorAll('[data-b]').forEach(b=>b.onclick=()=>{ if(step===1) commitDraft(); haptic(); if(step>0){step--;draw();} });
+    g.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>{ if(step===1) commitDraft(); haptic(); if(step<2){step++;draw();} else finish(); });
+    const wb=g.querySelector('[data-wb]'); if(wb) wb.onclick=()=>{ commitDraft(); haptic(); if(whyIdx>0){ whyIdx--; draft=whys[whyIdx]||''; draw(); } else if(step===1){ /* stay */ } };
+    const wa=g.querySelector('[data-wa]'); if(wa) wa.onclick=()=>{ commitDraft(); const cur=(whys[whyIdx]||'').trim(); if(!cur && !(g.querySelector('#onbwhy')?.value||'').trim()){ toast('Write this one first'); return; } haptic(); whyIdx=whys.length; draft=''; draw(); setTimeout(()=>g.querySelector('#onbwhy')?.focus(),50); };
+    g.querySelectorAll('[data-why]').forEach(b=>b.onclick=()=>{ commitDraft(); whyIdx=Number(b.dataset.why); draft=whys[whyIdx]||''; haptic(); draw(); });
+    const ta=g.querySelector('#onbwhy'); if(ta) ta.oninput=()=>{ draft=ta.value; };
     g.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{const v=b.dataset.p;if(picks.has(v))picks.delete(v);else{picks.add(v);targets[v]=Number(b.dataset.mt)||null;}draw();});
     const oa=g.querySelector('#onbadd'); if(oa){ const add=()=>{const v=g.querySelector('#onbtask').value.trim();if(v){picks.add(v);targets[v]=null;draw();}}; oa.onclick=add; g.querySelector('#onbtask').onkeydown=e=>{if(e.key==='Enter')add();}; }
   };
-  const finish=()=>{ S.flags.why=why; [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null})); S.flags.onboarded=true; save(); g.remove(); next(); };
+  const finish=()=>{ commitDraft(); const cleaned=whys.map(w=>w.trim()).filter(Boolean); S.flags.whys=cleaned; S.flags.why=cleaned[0]||''; [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null})); S.flags.onboarded=true; save(); g.remove(); next(); };
   draw();
 }
 
