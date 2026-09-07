@@ -1,0 +1,14 @@
+{
+  "name": "Steady",
+  "short_name": "Steady",
+  "description": "A quiet, local-first habit tracker. Keep your word to yourself.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1a19",
+  "theme_color": "#0f1a19",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

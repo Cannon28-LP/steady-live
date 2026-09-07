@@ -1,0 +1,1202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Steady</title>
+<meta name="description" content="A quiet, local-first habit tracker. Keep your word to yourself.">
+<meta name="theme-color" content="#0f1a19">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Steady">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+:root{
+  --font-system:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-rounded:ui-rounded,"SF Pro Rounded","Nunito","Segoe UI",system-ui,sans-serif;
+  --font-serif:ui-serif,"Iowan Old Style","Palatino","Georgia",serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --font:var(--font-system);
+  --fs:16px; --r:18px; --r-sm:12px; --r-pill:999px; --gap:14px; --pad:16px;
+  --dur:.22s; --ease:cubic-bezier(.2,.8,.2,1);
+  --tabbar:74px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{font-size:var(--fs)}
+body{margin:0;font-family:var(--font);background:var(--bg);color:var(--fg);line-height:1.45;
+  overscroll-behavior-y:none;-webkit-font-smoothing:antialiased;min-height:100dvh}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:none;padding:0}
+h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em}
+p{margin:0}
+.muted{color:var(--fg2)}
+.small{font-size:.86rem}
+.tiny{font-size:.78rem}
+[hidden]{display:none!important}
+.reduce *{transition:none!important;animation:none!important}
+
+#app{max-width:520px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 10px) var(--pad) calc(var(--tabbar) + env(safe-area-inset-bottom) + 24px);min-height:100dvh}
+.page{animation:pagein var(--dur) var(--ease)}
+@keyframes pagein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:8px 0 18px}
+.head h1{font-size:2rem;line-height:1.1}
+.head .eyebrow{font-size:.9rem;color:var(--fg2);margin-bottom:2px}
+.headpills{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.headpills .pill{padding:6px 10px;font-size:.82rem}
+.pill.coins{color:var(--accent);background:var(--accent-soft);border-color:transparent;transition:transform .12s}
+.pill.coins:active{transform:scale(.94)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:var(--pad)}
+.card+.card,.card+.section,.section+.card,.section+.section{margin-top:var(--gap)}
+.section h2{font-size:1.05rem;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.section h2 .muted{font-weight:500;font-size:.85rem}
+
+.pill{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:var(--r-pill);background:var(--surface2);border:1px solid var(--line);font-size:.85rem;font-weight:600;white-space:nowrap}
+.pill.accent{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 18px;border-radius:var(--r-sm);font-weight:650;background:var(--surface2);border:1px solid var(--line);transition:transform .12s var(--ease),background var(--dur),opacity var(--dur);min-height:44px}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--accent);color:var(--accent-fg);border-color:transparent;box-shadow:var(--glow)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--fg2)}
+.btn.danger{color:var(--danger)}
+.btn.block{width:100%}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.btn.sm{padding:8px 12px;min-height:36px;font-size:.88rem;border-radius:10px}
+.row{display:flex;align-items:center;gap:10px}
+.row.between{justify-content:space-between}
+.grow{flex:1;min-width:0}
+.stack>*+*{margin-top:10px}
+
+input[type=text],input[type=search],textarea{width:100%;padding:12px 14px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface2);outline:none;transition:border-color var(--dur),box-shadow var(--dur)}
+input[type=text]:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+textarea{resize:vertical;min-height:80px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Today ring */
+.ring-card{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.ring{position:relative;width:118px;height:118px}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:10;stroke-linecap:round}
+.ring .track{stroke:var(--surface2)}
+.ring .bar{stroke:var(--accent);transition:stroke-dashoffset .7s var(--ease);filter:var(--glow-f)}
+.ring .center{position:absolute;inset:0;display:grid;place-items:center;text-align:center;line-height:1}
+.ring .center b{font-size:1.7rem;font-weight:700;letter-spacing:-.03em}
+.ring .center span{display:block;font-size:.72rem;color:var(--fg2);margin-top:5px}
+.ring-meta h3{font-size:1.15rem;margin-bottom:4px}
+.whisper{font-style:italic;color:var(--fg2);font-size:.92rem;margin:14px 2px 4px;text-wrap:balance}
+
+/* Task list */
+.tasks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.task{display:flex;align-items:center;gap:12px;padding:14px;border-radius:var(--r-sm);background:var(--surface);border:1px solid var(--line);transition:border-color var(--dur),background var(--dur),transform var(--dur),opacity var(--dur);text-align:left;width:100%}
+.task .box{width:24px;height:24px;border-radius:8px;border:2px solid var(--fg3);display:grid;place-items:center;flex:none;transition:all var(--dur)}
+.task .box svg{width:14px;height:14px;opacity:0;transform:scale(.5);transition:all var(--dur)}
+.task.selected{border-color:var(--accent);background:var(--accent-soft)}
+.task.selected .box{border-color:var(--accent);background:var(--accent)}
+.task.selected .box svg{opacity:1;transform:none;color:var(--accent-fg)}
+.task .name{font-weight:600;flex:1}
+.task .val{color:var(--fg2);font-size:.82rem;font-weight:600}
+.tag{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:var(--r-pill);background:var(--surface2);color:var(--fg2);font-size:.7rem;font-weight:600;vertical-align:middle}
+.timerow{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.timerow .chip{padding:7px 12px;font-size:.85rem}
+.otval{color:var(--accent);font-weight:700}
+input[type=number]{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface2);outline:none}
+input[type=number]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.task .str{display:block;height:3px;border-radius:3px;background:var(--surface2);margin-top:6px;width:120px;overflow:hidden}
+.task .str i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.dots.big{gap:6px}.dots.big i{width:14px;height:14px;border-radius:4px}.dots i.t{border:2px solid var(--accent);background:transparent}.dots i.f{background:var(--fg3)}
+.task.done{opacity:.6}
+.task.done .box{border-color:var(--accent);background:var(--accent)}
+.task.done .box svg{opacity:1;transform:none;color:var(--accent-fg)}
+.task.done .name{text-decoration:line-through;text-decoration-color:var(--fg3)}
+.task.leaving{opacity:0;transform:translateX(30px) scale(.97)}
+.task.dense{padding:10px 12px}
+
+.confirm-bar{position:fixed;left:50%;transform:translateX(-50%) translateY(20px);bottom:calc(var(--tabbar) + env(safe-area-inset-bottom) + 10px);width:min(92vw,480px);z-index:20;opacity:0;pointer-events:none;transition:all var(--dur) var(--ease)}
+.confirm-bar.show{opacity:1;transform:translateX(-50%);pointer-events:auto}
+.confirm-bar .btn{width:100%;padding:15px;border-radius:16px;font-size:1.02rem}
+
+details.fold{border-top:1px solid var(--line);margin-top:14px;padding-top:10px}
+details.fold summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;font-weight:600;color:var(--fg2);font-size:.9rem;padding:6px 0}
+details.fold summary::-webkit-details-marker{display:none}
+details.fold summary::after{content:"›";font-size:1.2rem;transition:transform var(--dur)}
+details.fold[open] summary::after{transform:rotate(90deg)}
+
+.empty{text-align:center;padding:28px 12px;color:var(--fg2)}
+.empty b{display:block;color:var(--fg);font-size:1.05rem;margin-bottom:4px}
+
+/* Tab bar */
+.tabbar{position:fixed;bottom:0;left:0;right:0;z-index:30;padding:8px 12px calc(env(safe-area-inset-bottom) + 8px);display:flex;justify-content:center;pointer-events:none}
+.tabbar nav{pointer-events:auto;display:grid;grid-template-columns:repeat(5,1fr);width:min(100%,480px);background:color-mix(in srgb,var(--surface) 78%,transparent);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid var(--line);border-radius:26px;padding:6px;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.tabbar .ind{position:absolute;top:6px;bottom:6px;width:calc(20% - 2.4px);left:6px;border-radius:20px;background:var(--accent-soft);transition:transform .28s var(--ease)}
+.tabbar button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:20px;color:var(--fg2);font-size:.7rem;font-weight:600;transition:color var(--dur)}
+.tabbar button svg{width:21px;height:21px}
+.tabbar button{font-size:.66rem}
+.tabbar button.active{color:var(--accent)}
+
+/* Sheets, toasts, overlays */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity var(--dur)}
+.overlay.show{opacity:1}
+.sheet{width:min(100%,520px);max-height:88dvh;overflow:auto;background:var(--surface);border-radius:26px 26px 0 0;padding:10px var(--pad) calc(env(safe-area-inset-bottom) + 20px);transform:translateY(40px);transition:transform .3s var(--ease);border:1px solid var(--line);border-bottom:0}
+.overlay.show .sheet{transform:none}
+.sheet .grab{width:38px;height:5px;border-radius:5px;background:var(--fg3);margin:4px auto 16px}
+.sheet h2{font-size:1.3rem;margin-bottom:6px}
+.sheet .foot{display:flex;gap:10px;margin-top:18px}
+.sheet .foot .btn{flex:1}
+.modal{width:min(92vw,400px);background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:22px;margin-bottom:40vh;transform:scale(.96);transition:transform var(--dur) var(--ease)}
+.overlay.center{align-items:center}
+.overlay.show .modal{transform:none}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%) translateY(16px);bottom:calc(var(--tabbar) + env(safe-area-inset-bottom) + 12px);pointer-events:none;z-index:50;background:var(--fg);color:var(--bg);padding:12px 14px 12px 18px;border-radius:14px;display:flex;align-items:center;gap:14px;box-shadow:0 12px 30px rgba(0,0,0,.25);opacity:0;transition:all var(--dur) var(--ease);font-weight:600;font-size:.92rem;max-width:92vw;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%);pointer-events:auto}
+body.has-confirm .toast{bottom:calc(var(--tabbar) + env(safe-area-inset-bottom) + 84px)}
+.toast button{color:var(--accent-on-dark);font-weight:700;padding:6px 8px;border-radius:8px}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:8px 13px;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--surface2);font-size:.88rem;font-weight:600;transition:all var(--dur)}
+.chip.on{background:var(--accent);color:var(--accent-fg);border-color:transparent}
+.chip.add{border-style:dashed;color:var(--fg2)}
+
+/* Gate screens */
+.gate{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;justify-content:center;padding:32px 28px calc(env(safe-area-inset-bottom) + 28px);max-width:520px;margin:0 auto}
+.gate .q{font-size:1.65rem;line-height:1.3;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
+.gate .q::before{content:"“";color:var(--accent);font-size:2.5rem;line-height:0;vertical-align:-.2em;margin-right:2px}
+.gate .by{margin-top:16px;color:var(--fg2)}
+.gate .actions{margin-top:40px}
+.gate.onb{justify-content:flex-start;padding-top:calc(env(safe-area-inset-top) + 60px)}
+.gate.onb h1{font-size:2.1rem;line-height:1.15;margin-bottom:14px}
+.gate.onb p{color:var(--fg2);font-size:1.05rem;max-width:36ch}
+.gate .steps{display:flex;gap:6px;margin-bottom:28px}
+.gate .steps i{width:22px;height:4px;border-radius:4px;background:var(--surface2)}
+.gate .steps i.on{background:var(--accent)}
+
+/* Progress */
+.weekchart{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;align-items:end;height:130px;padding-top:6px}
+.weekchart .col{display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+.weekchart .bar{width:100%;border-radius:8px 8px 4px 4px;background:var(--accent);min-height:4px;transition:height .5s var(--ease);opacity:.9}
+.weekchart .bar.zero{background:var(--surface2)}
+.weekchart .bar.future{background:transparent;border:1px dashed var(--line)}
+.weekchart .n{font-size:.75rem;color:var(--fg2);font-weight:600}
+.weekchart .col.today .n{color:var(--accent)}
+.heat{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.heat .dow{font-size:.7rem;color:var(--fg2);text-align:center;font-weight:600}
+.heat .cell{aspect-ratio:1;border-radius:8px;background:var(--surface2);display:grid;place-items:center;font-size:.72rem;font-weight:600;color:var(--fg2);border:1px solid transparent;transition:transform .12s}
+.heat .cell:active{transform:scale(.92)}
+.heat .cell.l1{background:color-mix(in srgb,var(--accent) 25%,var(--surface2));color:var(--fg)}
+.heat .cell.l2{background:color-mix(in srgb,var(--accent) 50%,var(--surface2));color:var(--fg)}
+.heat .cell.l3{background:color-mix(in srgb,var(--accent) 75%,var(--surface2));color:var(--accent-fg)}
+.heat .cell.l4{background:var(--accent);color:var(--accent-fg)}
+.heat .cell.today{border-color:var(--fg)}
+.heat .cell.sel{outline:2px solid var(--accent);outline-offset:1px}
+.heat .cell.future{opacity:.35}
+.heat .cell.note::after{content:"";position:absolute}
+.heat .cell{position:relative}
+.heat .cell.hasnote::after{content:"";width:4px;height:4px;border-radius:50%;background:currentColor;position:absolute;bottom:3px;right:4px;opacity:.7}
+.seg{display:flex;background:var(--surface2);border-radius:12px;padding:3px;gap:2px}
+.seg button{flex:1;padding:8px 6px;border-radius:9px;font-weight:600;font-size:.85rem;color:var(--fg2);transition:all var(--dur)}
+.seg button.on{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.stat{padding:12px;border-radius:var(--r-sm);background:var(--surface2)}
+.stat b{display:block;font-size:1.45rem;letter-spacing:-.03em;line-height:1.1}
+.stat span{font-size:.8rem;color:var(--fg2)}
+.list{list-style:none;margin:0;padding:0}
+.list li{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);align-items:center}
+.list li:first-child{border-top:0;padding-top:0}
+.dots{display:flex;gap:4px}
+.dots i{width:10px;height:10px;border-radius:3px;background:var(--surface2)}
+.dots i.d{background:var(--accent)}
+.dots i.m{background:var(--danger);opacity:.6}
+.taskstat summary{display:flex;justify-content:space-between;align-items:center;cursor:pointer;list-style:none;padding:12px 0;font-weight:600}
+.taskstat summary::-webkit-details-marker{display:none}
+.taskstat{border-top:1px solid var(--line)}
+.taskstat:first-child{border-top:0}
+.taskstat .body{padding-bottom:12px}
+
+/* Shop */
+.balance{font-size:2.6rem;font-weight:700;letter-spacing:-.04em;line-height:1}
+.balance small{font-size:1rem;color:var(--fg2);font-weight:600;letter-spacing:0;margin-left:6px}
+.titlebar{height:6px;border-radius:6px;background:var(--surface2);overflow:hidden;margin-top:8px}
+.titlebar i{display:block;height:100%;background:var(--accent);border-radius:6px;transition:width .6s var(--ease)}
+.reward{display:flex;flex-direction:column;gap:10px}
+.reward .bar{height:8px;border-radius:8px;background:var(--surface2);overflow:hidden}
+.reward .bar i{display:block;height:100%;background:var(--accent);border-radius:8px}
+.reward.locked .bar i{background:var(--fg3)}
+.locker-item{opacity:1}
+.locker-item.used{opacity:.5}
+
+/* Settings */
+.acc{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);overflow:hidden}
+.acc+.acc{margin-top:10px}
+.acc summary{padding:16px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;font-weight:650}
+.acc summary::-webkit-details-marker{display:none}
+.acc summary .muted{font-weight:500;font-size:.85rem}
+.acc .body{padding:0 16px 16px}
+.opt{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid var(--line);gap:12px}
+.opt:first-child{border-top:0}
+.opt label{font-weight:600}
+.opt .hint{font-size:.8rem;color:var(--fg2);font-weight:400}
+.swatches{display:flex;gap:8px;flex-wrap:wrap}
+.sw{width:34px;height:34px;border-radius:50%;border:2px solid transparent;transition:transform .12s}
+.sw.on{border-color:var(--fg);transform:scale(1.1)}
+.toggle{width:50px;height:30px;border-radius:30px;background:var(--surface2);border:1px solid var(--line);position:relative;transition:background var(--dur);flex:none}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:var(--fg2);transition:all var(--dur) var(--ease)}
+.toggle.on{background:var(--accent);border-color:transparent}
+.toggle.on::after{left:25px;background:var(--accent-fg)}
+input[type=color]{width:34px;height:34px;border:0;padding:0;background:none;border-radius:50%;overflow:hidden}
+.editrow{display:flex;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.editrow:first-child{border-top:0}
+.editrow .name{flex:1;font-weight:600}
+.editrow.archived .name{color:var(--fg2);text-decoration:line-through}
+.iconbtn{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--fg2);background:var(--surface2)}
+.iconbtn svg{width:18px;height:18px}
+
+/* Tour */
+.tour-spot{position:fixed;z-index:70;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.6);pointer-events:none;transition:all .3s var(--ease)}
+.tour-card{position:fixed;z-index:71;left:50%;transform:translateX(-50%);width:min(90vw,380px);background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 20px 50px rgba(0,0,0,.4)}
+.tour-card p{margin-bottom:12px}
+.tour-card .row{justify-content:space-between}
+
+/* Progress */
+.hero .heroval{font-size:3rem;font-weight:700;letter-spacing:-.04em;line-height:1;display:flex;align-items:baseline;gap:8px}
+.hero .heroval small{font-size:1.2rem;color:var(--fg2);font-weight:600}
+.ring.sm{width:76px;height:76px;flex:none}
+.delta{font-size:.8rem;font-weight:700;letter-spacing:0;padding:2px 7px;border-radius:var(--r-pill);background:var(--surface2);color:var(--fg2)}
+.delta.up{color:var(--accent);background:var(--accent-soft)}
+.delta.down{color:var(--danger);background:color-mix(in srgb,var(--danger) 14%,transparent)}
+.stat b .delta{font-size:.7rem;vertical-align:middle}
+.callout{border-left:3px solid var(--accent)}
+.wdays{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-top:4px}
+.wd{display:flex;flex-direction:column;align-items:center;gap:5px}
+.wdbar{height:84px;width:100%;background:var(--surface2);border-radius:8px;display:flex;align-items:flex-end;overflow:hidden}
+.wdbar i{display:block;width:100%;background:var(--accent);border-radius:8px;transition:height .5s var(--ease)}
+.wdbar i.low{background:var(--danger);opacity:.75}
+.wdbar i.none{background:transparent}
+.wd .n{font-size:.75rem;font-weight:700;color:var(--fg2)}
+.tod{display:grid;grid-template-columns:88px 1fr 36px;align-items:center;gap:10px;padding:5px 0}
+.todbar{height:8px;border-radius:8px;background:var(--surface2);overflow:hidden}
+.todbar i{display:block;height:100%;background:var(--accent);border-radius:8px;transition:width .5s var(--ease)}
+.todbar i.warn{background:var(--danger);opacity:.7}
+.tod .tiny{text-align:right}
+.legend{display:flex;align-items:center;gap:5px;justify-content:flex-end;margin-top:10px}
+.legend i{width:15px;height:15px;border-radius:5px;background:var(--surface2);display:block}
+.legend i.l1{background:color-mix(in srgb,var(--accent) 25%,var(--surface2))}
+.legend i.l2{background:color-mix(in srgb,var(--accent) 50%,var(--surface2))}
+.legend i.l3{background:color-mix(in srgb,var(--accent) 75%,var(--surface2))}
+.legend i.l4{background:var(--accent)}
+.taskcard{padding:14px}
+.taskcard summary{list-style:none;cursor:pointer;display:flex}
+.taskcard summary::-webkit-details-marker{display:none}
+.taskcard .strbar{height:5px;border-radius:5px;background:var(--surface2);overflow:hidden;margin-top:8px}
+.taskcard .strbar i{display:block;height:100%;background:var(--accent);border-radius:5px;transition:width .5s var(--ease)}
+.taskcard .body{padding-top:12px;margin-top:12px;border-top:1px solid var(--line)}
+.avatar{width:40px;height:40px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;font-size:1.1rem;flex:none}
+.pairstreak .heroval{font-size:2.4rem;font-weight:700;letter-spacing:-.03em;display:flex;align-items:baseline;gap:6px}
+.pairstreak .heroval small{font-size:.95rem;color:var(--fg2);font-weight:600}
+.pairfire{width:54px;height:54px;border-radius:50%;background:var(--surface2);display:grid;place-items:center;color:var(--fg3)}
+.pairfire.lit{background:var(--accent-soft);color:var(--accent)}
+.pairfire svg{width:26px;height:26px}
+.bar.quest{height:10px;border-radius:10px;background:var(--surface2);overflow:hidden}
+.bar.quest i{display:block;height:100%;background:var(--accent);border-radius:10px;transition:width .6s var(--ease)}
+.todo{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:var(--r-sm);background:var(--surface2);transition:opacity var(--dur),transform var(--dur)}
+.todo .name{flex:1;font-weight:500;min-width:0}
+.todo .tick{width:24px;height:24px;border-radius:50%;border:2px solid var(--fg3);display:grid;place-items:center;flex:none;transition:all var(--dur)}
+.todo .tick svg{width:13px;height:13px;opacity:0;transform:scale(.5);transition:all var(--dur)}
+.todo .tick.on,.todo.ticking .tick{border-color:var(--accent);background:var(--accent)}
+.todo .tick.on svg,.todo.ticking .tick svg{opacity:1;transform:none;color:var(--accent-fg)}
+.todo.ticking{opacity:0;transform:translateX(24px)}
+.todo.done{opacity:.55}
+.todo.done .name{text-decoration:line-through;text-decoration-color:var(--fg3)}
+.iconbtn.ghosty{background:transparent;opacity:.5;width:30px;height:30px}
+.iconbtn.ghosty svg{width:15px;height:15px}
+canvas#fx{position:fixed;inset:0;pointer-events:none;z-index:80}
+.sr{position:absolute;left:-9999px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="tabbar" id="tabbar" hidden>
+  <nav>
+    <div class="ind" id="tabind"></div>
+    <button data-tab="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Today</button>
+    <button data-tab="progress"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>Progress</button>
+    <button data-tab="friends"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Friends</button>
+    <button data-tab="shop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Shop</button>
+    <button data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></svg>Settings</button>
+  </nav>
+</div>
+<div class="confirm-bar" id="confirmbar"><button class="btn primary" id="confirmbtn">Mark done</button></div>
+<div class="toast" id="toast" role="status"></div>
+<canvas id="fx"></canvas>
+<script>
+/* ============ Steady — local-first consistency tracker ============ */
+const KEY = 'steady.v2';
+/* ---- Friends sync config ----
+   Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
+   public — row-level security in supabase.sql is what actually protects the data.
+   Leave blank and the Friends tab runs in demo mode with a local fake friend.
+   Only aggregates ever leave the device: cleared/done/expected counts, streak,
+   consistency and level. Task names, notes, miss reasons and your "why" never sync. */
+const SYNC = {
+  url:    'https://rjytcvajeysfnfmtgakm.supabase.co',
+  anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
+};
+const MAX_REWARDS = 5, BUY_STRENGTH = 70, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
+/* Prices are denominated in days of work, not fixed coins, so task count changes what you do — never what you can afford. */
+const OT_PER = 5, OT_TASK_CAP = 10, OT_DAY_CAP = 20; // 1 coin per 5 min over target, capped per task and per day
+const TIER_DAYS = {week:7, fortnight:14};
+const TIER_LABEL = {week:'Week', fortnight:'Fortnight'};
+const round10 = n => Math.round(n/10)*10;
+const anyTimed = () => activeTasks().some(t=>t.target);
+const dayRate = () => Math.max(1, activeTasks().length) * (TASK_BASE*1.3 + CLEAR_PER_TASK) + (anyTimed()?OT_DAY_CAP/2:0); // a cleared day at healthy strength
+const tierCost = t => round10(dayRate()*(TIER_DAYS[t]||TIER_DAYS.week));
+const chestCoins = () => round10(dayRate());
+const freezeCost = () => round10(dayRate()*1.5);
+const TITLES = [['Drifter',1],['Steady',5],['Committed',12],['Relentless',20]]; // by level
+const xpToNext = L => Math.round(60*Math.pow(L,1.2));
+const loginBonus = s => s<2?0:s<7?5:s<30?10:15;
+const DEFAULT_REASONS = ['Forgot','No time','Not feeling it','Something came up'];
+const DEFAULT_QUOTES = [
+  ['We are what we repeatedly do. Excellence, then, is not an act but a habit.','Will Durant'],
+  ['Small things done consistently beat big things done occasionally.','—'],
+  ['You do not rise to the level of your goals. You fall to the level of your systems.','James Clear'],
+  ['Motivation gets you started. Habit keeps you going.','Jim Ryun'],
+  ['It always seems impossible until it is done.','Nelson Mandela'],
+  ['How you do anything is how you do everything.','—'],
+  ['Discipline is choosing between what you want now and what you want most.','Abraham Lincoln (attrib.)'],
+  ['A river cuts through rock not because of its power, but its persistence.','James N. Watkins'],
+  ['Show up. Especially on the days you don’t want to.','—'],
+  ['The secret of getting ahead is getting started.','Mark Twain'],
+];
+const THEMES = {
+  teal:{h:175,s:22,accent:'#2dd4bf'}, pink:{h:340,s:22,accent:'#f472b6'},
+  grey:{h:220,s:6,accent:'#a3a3a3'}, black:{h:0,s:0,accent:'#ffffff'},
+  blue:{h:222,s:24,accent:'#60a5fa'}, green:{h:145,s:20,accent:'#4ade80'},
+};
+const ACCENTS = ['#2dd4bf','#60a5fa','#a78bfa','#f472b6','#fb923c','#facc15','#4ade80','#f87171'];
+
+const uid = () => Math.random().toString(36).slice(2,10);
+const pad = n => String(n).padStart(2,'0');
+const dkey = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const today = () => dkey(new Date());
+const parse = k => { const [y,m,d]=k.split('-').map(Number); return new Date(y,m-1,d); };
+const addDays = (k,n) => { const d=parse(k); d.setDate(d.getDate()+n); return dkey(d); };
+const fmt = (k,o={weekday:'short',day:'numeric',month:'short'}) => parse(k).toLocaleDateString(undefined,o);
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+
+function fresh(){
+  return {
+    tasks:[], rewards:[], locker:[], customReasons:[],
+    quotes: DEFAULT_QUOTES.map(([text,author])=>({id:uid(),text,author,custom:false})),
+    days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
+    me:null, friends:{}, pairs:{}, demo:false, outbox:[], cheersIn:[], todos:[],
+    settings:{theme:'teal',mode:'dark',accent:null,density:'comfy',corners:'round',font:'system',textSize:100,motion:true,haptics:true,glow:true},
+    flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
+    pendingMisses:[], undo:null,
+  };
+}
+let S = load();
+function load(){
+  try{ const raw=localStorage.getItem(KEY); if(!raw) return fresh();
+    const s=fresh(); const p=JSON.parse(raw);
+    const m={...s,...p,settings:{...s.settings,...(p.settings||{})},flags:{...s.flags,...(p.flags||{})}};
+    if(m.points.coins===undefined){ m.points={coins:m.points.balance||0,xp:m.points.lifetime||0}; } // migrate v2 pot → coins/xp
+    m.rewards.forEach(r=>{ if(!TIER_DAYS[r.tier]) r.tier = r.tier==='big' ? 'fortnight' : 'week'; }); // small/medium/big → day-based tiers
+    return m;
+  }catch(e){ return fresh(); }
+}
+function save(){ localStorage.setItem(KEY, JSON.stringify(S)); }
+
+/* ---------- List ----------
+   Deliberately outside the economy: no points, no strength, no miss gate.
+   Its job is to give you something to reach for, not another thing to fail. */
+function todosToday(){ return S.todos.filter(t=>!t.done && t.day && t.day<=today()).sort((a,b)=>a.createdAt-b.createdAt); }
+function todosDone(){ return S.todos.filter(t=>t.done && t.doneDay===today()); }
+function backlog(){ return S.todos.filter(t=>!t.done && !t.day).sort((a,b)=>b.createdAt-a.createdAt); }
+function addTodo(text,toToday=true){ S.todos.push({id:uid(),text,day:toToday?today():null,done:false,createdAt:Date.now()}); save(); }
+function toggleTodo(id){ const t=S.todos.find(x=>x.id===id); if(!t) return;
+  t.done=!t.done; t.doneDay=t.done?today():null; if(t.done&&!t.day) t.day=today(); save(); }
+function pullTodo(id){ const t=S.todos.find(x=>x.id===id); if(t){ t.day=today(); save(); } }
+function dropTodo(id){ S.todos=S.todos.filter(x=>x.id!==id); save(); }
+function pushTodo(id){ const t=S.todos.find(x=>x.id===id); if(t){ t.day=null; save(); } } // back to the backlog
+
+/* ---------- Friends ---------- */
+const CHEER_COINS = 5, QUEST_GOAL_PER_PERSON = 5; // 5 cleared days each across the week
+function me(){ if(!S.me){ S.me={id:uid()+uid(),name:'',code:('STDY'+Math.random().toString(36).slice(2,6)).toUpperCase()}; save(); } return S.me; }
+function myDay(k=today()){ const s=dayStats(k); return {date:k,cleared:!!S.days[k]?.cleared,done:s.done,expected:s.expected,streak:S.streak.login,consistency:avgStrength(),level:level().L,title:title().name}; }
+function friendList(){ return Object.values(S.friends); }
+function clearedOn(f,k){ return !!f.days?.[k]?.cleared; }
+/* Shared streak: a day counts only if you both cleared it. Today is optional so it doesn't read as broken before bedtime. */
+function pairStreak(f){
+  let n=0, k=(S.days[today()]?.cleared && clearedOn(f,today())) ? today() : addDays(today(),-1);
+  while(S.days[k]?.cleared && clearedOn(f,k)){ n++; k=addDays(k,-1); }
+  return n;
+}
+function questWeek(){ return weekOf(today()); }
+function questProgress(f){
+  const mon=questWeek(); let mine=0, theirs=0;
+  for(let i=0;i<7;i++){ const k=addDays(mon,i); if(S.days[k]?.cleared) mine++; if(clearedOn(f,k)) theirs++; }
+  return {mine,theirs,total:mine+theirs,goal:QUEST_GOAL_PER_PERSON*2};
+}
+function checkQuest(f){
+  const p=S.pairs[f.id]||(S.pairs[f.id]={}); const wk=questWeek();
+  const q=questProgress(f);
+  if(q.total>=q.goal && p.questPaid!==wk){ p.questPaid=wk; const c=chestCoins(); S.points.coins+=c; S.points.xp+=c; save(); return c; }
+  return 0;
+}
+function canCheer(f){ const p=S.pairs[f.id]||{}; return p.cheerDate!==today(); }
+
+/* Sync adapter. Two implementations behind one interface so the UI never knows which is live. */
+let _sb=null;
+async function sb(){
+  if(_sb) return _sb;
+  const m=await import('https://esm.sh/@supabase/supabase-js@2');
+  _sb=m.createClient(SYNC.url,SYNC.anonKey);
+  const {data}=await _sb.auth.getSession();
+  if(!data.session) await _sb.auth.signInAnonymously();
+  return _sb;
+}
+const Sync = {
+  configured(){ return !!(SYNC.url && SYNC.anonKey); },
+  live(){ return this.configured() && !S.demo; },
+  async register(name){
+    me().name=name; save();
+    if(!this.live()) return;
+    const c=await sb(); const {data:{user}}=await c.auth.getUser();
+    await c.from('profiles').upsert({id:user.id,code:me().code,display_name:name});
+    S.me.id=user.id; save();
+  },
+  async addByCode(code){
+    code=code.trim().toUpperCase();
+    if(code===me().code) throw new Error('That is your own code.');
+    if(!this.live()){ // demo: fabricate a friend with plausible history
+      const f={id:'demo-'+code,name:'Sam',code,days:{},demo:true};
+      for(let i=0;i<28;i++){ const k=addDays(today(),-i); f.days[k]={cleared:Math.random()<(i<7?0.75:0.6),consistency:71,streak:12,level:6,title:'Committed'}; }
+      f.consistency=71; f.streak=12; f.level=6; f.title='Committed';
+      S.friends[f.id]=f; save(); return f;
+    }
+    const c=await sb();
+    const {data:p,error}=await c.from('profiles').select('id,display_name,code').eq('code',code).single();
+    if(error||!p) throw new Error('No one with that code.');
+    const {data:{user}}=await c.auth.getUser();
+    await c.from('friendships').upsert({a_id:user.id,b_id:p.id});
+    S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{}}; save();
+    await this.pull(); return S.friends[p.id];
+  },
+  async push(){
+    if(!this.live()) return;
+    try{ const c=await sb(); const {data:{user}}=await c.auth.getUser();
+      const rows=[myDay(),myDay(addDays(today(),-1))].map(d=>({...d,user_id:user.id}));
+      await c.from('daily_stats').upsert(rows,{onConflict:'user_id,date'});
+      S.outbox=[]; save();
+    }catch(e){ S.outbox=[myDay()]; save(); } // retried on next open
+  },
+  async pull(){
+    if(!this.live()) return this._demoDrift();
+    const c=await sb(); const ids=Object.keys(S.friends); if(!ids.length) return;
+    const since=addDays(today(),-30);
+    const {data}=await c.from('daily_stats').select('*').in('user_id',ids).gte('date',since);
+    (data||[]).forEach(r=>{ const f=S.friends[r.user_id]; if(!f) return;
+      f.days[r.date]={cleared:r.cleared,done:r.done,expected:r.expected};
+      if(r.date===today()||!f.consistency){ f.consistency=r.consistency; f.streak=r.streak; f.level=r.level; f.title=r.title; } });
+    const {data:{user}}=await c.auth.getUser();
+    const {data:ch}=await c.from('cheers').select('*').eq('to_id',user.id).eq('applied',false);
+    let got=0; for(const x of (ch||[])){ if(x.kind==='cheer'){ S.points.coins+=CHEER_COINS; got+=CHEER_COINS; } }
+    if(ch?.length) await c.from('cheers').update({applied:true}).in('id',ch.map(x=>x.id));
+    if(got) S.flags.pendingToast=`A cheer landed · +${got} coins`;
+    save();
+  },
+  _demoDrift(){ const f=friendList()[0]; if(f?.demo && !f.days[today()]) { f.days[today()]={cleared:Math.random()<0.7}; save(); } },
+  async cheer(f,kind){
+    const p=S.pairs[f.id]||(S.pairs[f.id]={}); p.cheerDate=today(); save();
+    if(!this.live()) return;
+    const c=await sb(); const {data:{user}}=await c.auth.getUser();
+    await c.from('cheers').insert({from_id:user.id,to_id:f.id,kind,date:today(),applied:false});
+  },
+};
+
+/* ---------- Theme ---------- */
+function applyTheme(){
+  const st=S.settings, t=THEMES[st.theme]||THEMES.teal;
+  const dark = st.mode==='dark' || (st.mode==='system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  const acc = st.accent || t.accent;
+  const r=document.documentElement.style;
+  const hs=(l)=>`hsl(${t.h} ${t.s}% ${l}%)`;
+  if(dark){
+    r.setProperty('--bg',hs(st.theme==='black'?0:7)); r.setProperty('--surface',hs(st.theme==='black'?6:11));
+    r.setProperty('--surface2',hs(st.theme==='black'?11:16)); r.setProperty('--line',`hsl(${t.h} ${t.s}% ${st.theme==='black'?14:20}% / .8)`);
+    r.setProperty('--fg',hs(96)); r.setProperty('--fg2',hs(62)); r.setProperty('--fg3',hs(32));
+  } else {
+    r.setProperty('--bg',hs(96)); r.setProperty('--surface',hs(100)); r.setProperty('--surface2',hs(93));
+    r.setProperty('--line',`hsl(${t.h} ${t.s}% 84% / .9)`);
+    r.setProperty('--fg',hs(10)); r.setProperty('--fg2',hs(42)); r.setProperty('--fg3',hs(72));
+  }
+  r.setProperty('--accent',acc);
+  r.setProperty('--accent-fg', luminance(acc)>0.5?'#0b0f0e':'#ffffff');
+  r.setProperty('--accent-on-dark', dark? acc : lighten(acc));
+  r.setProperty('--accent-soft',`color-mix(in srgb, ${acc} ${dark?18:14}%, transparent)`);
+  r.setProperty('--danger','#f87171');
+  r.setProperty('--glow', st.glow?`0 6px 24px color-mix(in srgb, ${acc} 35%, transparent)`:'none');
+  r.setProperty('--glow-f', st.glow?`drop-shadow(0 0 6px color-mix(in srgb, ${acc} 60%, transparent))`:'none');
+  r.setProperty('--font',`var(--font-${st.font})`);
+  r.setProperty('--fs',`${16*st.textSize/100}px`);
+  const rad={sharp:[6,4],soft:[12,8],round:[18,12],pill:[26,16]}[st.corners]||[18,12];
+  r.setProperty('--r',rad[0]+'px'); r.setProperty('--r-sm',rad[1]+'px');
+  r.setProperty('--pad',st.density==='compact'?'12px':'16px'); r.setProperty('--gap',st.density==='compact'?'10px':'14px');
+  document.body.classList.toggle('reduce',!st.motion);
+  document.querySelector('meta[name=theme-color]').content=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()||'#0f1a19';
+}
+function hexrgb(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));}
+function luminance(h){const [r,g,b]=hexrgb(h).map(v=>{v/=255;return v<=.03928?v/12.92:((v+.055)/1.055)**2.4});return .2126*r+.7152*g+.0722*b;}
+function lighten(h){const [r,g,b]=hexrgb(h);return `rgb(${[r,g,b].map(v=>Math.round(v+(255-v)*.5)).join(',')})`;}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{applyTheme();});
+
+function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) return; navigator.vibrate(kind==='heavy'?[18,40,18]:kind==='success'?[10,30,10,30,10]:8); }
+
+/* ---------- Task helpers ---------- */
+const activeOn = (t,k) => t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k));
+const activeTasks = (k=today()) => S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order);
+function day(k){ return S.days[k] || (S.days[k]={tasks:{},points:0,bonus:0,note:'',perfect:false}); }
+function statusOf(k,tid){ return S.days[k]?.tasks?.[tid]?.status || 'open'; }
+function expectedOn(k){ // task ids expected that day
+  const d=S.days[k]; if(d && d.finalized) return Object.keys(d.tasks);
+  return activeTasks(k).map(t=>t.id);
+}
+function dayStats(k){
+  const ids=expectedOn(k); const done=ids.filter(id=>statusOf(k,id)==='done').length;
+  return {expected:ids.length,done,missed:ids.filter(id=>statusOf(k,id)==='missed').length,points:(S.days[k]?.points||0)+(S.days[k]?.bonus||0),perfect:ids.length>0&&done===ids.length};
+}
+/* Loop-style habit strength: 0–100, climbs ~5/day, decays 5%/day. Never resets to zero on a miss. */
+function strengthOf(t,k=today()){ let s=0; for(let x=t.createdAt;x<=k;x=addDays(x,1)){ const st=statusOf(x,t.id); if(x===k&&st==='open') break; s=s*0.95+(st==='done'?5:0); } return clamp(Math.round(s),0,100); }
+function avgStrength(k=today()){ const ts=activeTasks(k); if(!ts.length) return 0; return Math.round(ts.reduce((a,t)=>a+strengthOf(t,k),0)/ts.length); }
+function taskValue(t){ return Math.round(TASK_BASE*(1+0.5*strengthOf(t,addDays(today(),-1))/100)); }
+/* Overtime pays coins only — never XP — so long sessions can't buy levels or titles. Consistency does that. */
+function overtimeFor(t,mins){ if(!t.target||!mins) return 0; return clamp(Math.floor((mins-t.target)/OT_PER),0,OT_TASK_CAP); }
+function overtimeToday(k=today()){ return Object.values(S.days[k]?.tasks||{}).reduce((a,x)=>a+(x.bonus||0),0); }
+function level(){ let L=1,xp=S.points.xp; while(xp>=xpToNext(L)){xp-=xpToNext(L);L++;} return {L,into:xp,need:xpToNext(L)}; }
+function title(){ const L=level().L; let t=TITLES[0]; for(const x of TITLES) if(L>=x[1]) t=x; const next=TITLES[TITLES.indexOf(t)+1]; return {name:t[0],level:L,next:next?{name:next[0],at:next[1]}:null}; }
+function weekOf(k){ return addDays(k,-((parse(k).getDay()+6)%7)); }
+/* Rolling windows so any period can be compared with the one before it. */
+const RANGE_DAYS={day:1,week:7,month:30,year:365};
+function windowStats(r,back=0){
+  const n=RANGE_DAYS[r]||7, end=addDays(today(),-n*back), start=addDays(end,-(n-1));
+  let e=0,d=0,p=0,pf=0,m=0,mins=0;
+  for(let x=start;x<=end;x=addDays(x,1)){ const s=dayStats(x); e+=s.expected;d+=s.done;p+=s.points;m+=s.missed; if(s.perfect)pf++;
+    for(const t of Object.values(S.days[x]?.tasks||{})) if(t.minutes) mins+=t.minutes; }
+  return {rate:e?Math.round(100*d/e):0,points:p,perfect:pf,missed:m,minutes:mins,days:n,expected:e};
+}
+function weekdayPattern(weeks=8){
+  const out=Array.from({length:7},()=>({e:0,d:0}));
+  for(let i=0;i<weeks*7;i++){ const k=addDays(today(),-i); const s=dayStats(k); if(!s.expected) continue;
+    const w=(parse(k).getDay()+6)%7; out[w].e+=s.expected; out[w].d+=s.done; }
+  return out.map(x=>x.e?Math.round(100*x.d/x.e):null);
+}
+function timeOfDay(){
+  const b=[0,0,0]; for(const d of Object.values(S.days)) for(const t of Object.values(d.tasks||{}))
+    if(t.doneAt){ const h=new Date(t.doneAt).getHours(); b[h<12?0:h<17?1:2]++; }
+  return b;
+}
+function reasonBreakdown(days=90){
+  const cut=addDays(today(),-days), c={}; let n=0;
+  for(const m of allMisses()) if(m.date>=cut && m.reason){ c[m.reason]=(c[m.reason]||0)+1; n++; }
+  return {total:n,items:Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([r,v])=>[r,Math.round(100*v/n)])};
+}
+const historyDays = () => Object.values(S.days).filter(d=>d.finalized).length;
+function weakLink(){
+  if(historyDays()<14) return null; // needs enough history to be a fair call
+  const ts=activeTasks().map(t=>({t,s:strengthOf(t)})).sort((a,b)=>a.s-b.s);
+  if(ts.length<2) return null; const {t,s}=ts[0]; if(s>=80 || ts[1].s-s<10) return null;
+  const dows={}; for(const [k,d] of Object.entries(S.days)) if(d.tasks?.[t.id]?.status==='missed'){ const n=parse(k).toLocaleDateString(undefined,{weekday:'long'}); dows[n]=(dows[n]||0)+1; }
+  const worst=Object.entries(dows).sort((a,b)=>b[1]-a[1])[0];
+  return {name:t.name,strength:s,day:worst&&worst[1]>=2?worst[0]:null};
+}
+function weekCleared(mon){ let c=0,any=false; for(let i=0;i<7;i++){const s=dayStats(addDays(mon,i)); if(s.expected)any=true; if(s.perfect)c++;} return {cleared:c,any}; }
+function quoteToday(){ const q=S.quotes; if(!q.length) return null; const n=parse(today()).getTime()/86400000|0; return q[n%q.length]; }
+
+/* ---------- Day boundary / streak ---------- */
+function rollover(){
+  const t=today(); const last=S.flags.lastOpen;
+  if(last===t) return;
+  // finalize every day between last open and today
+  if(last){ let k=last; while(k<t){ finalize(k); k=addDays(k,1);} }
+  // login streak — a streak freeze covers exactly one skipped day
+  const notes=[];
+  if(last && addDays(last,1)===t) S.streak.login+=1;
+  else if(last && addDays(last,2)===t && S.freezes>0){ S.freezes--; S.streak.login+=1; day(addDays(t,-1)).frozen=true; notes.push('Streak freeze used — streak kept'); }
+  else S.streak.login=1;
+  S.streak.best=Math.max(S.streak.best,S.streak.login);
+  const d=day(t);
+  const lb=loginBonus(S.streak.login);
+  if(lb && !d.bonusGiven){ d.bonus=lb; d.bonusGiven=true; S.points.coins+=lb; S.points.xp+=lb; }
+  // weekly chest for the week that just finished
+  const lastMon=addDays(weekOf(t),-7);
+  if(last && !S.chests[lastMon]){ const w=weekCleared(lastMon); if(w.any){ S.chests[lastMon]=w.cleared>=CHEST_DAYS?'won':'missed'; if(w.cleared>=CHEST_DAYS){ const cc=chestCoins(); S.points.coins+=cc; S.points.xp+=cc; notes.push(`Weekly chest: ${w.cleared} days cleared · +${cc}`); } } }
+  if(notes.length) S.flags.pendingToast=notes.join(' · ');
+  S.flags.lastOpen=t; S.undo=null; sel.clear(); save();
+}
+function finalize(k){
+  const d=day(k); if(d.finalized) return;
+  for(const t of activeTasks(k)){
+    if(!d.tasks[t.id]) d.tasks[t.id]={status:'missed'};
+    if(d.tasks[t.id].status==='missed' && !d.tasks[t.id].reason) S.pendingMisses.push({date:k,taskId:t.id});
+  }
+  d.finalized=true;
+}
+setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } },30000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } });
+
+/* ---------- Completing ---------- */
+const sel=new Set();
+function completeSelected(mins){
+  const k=today(), ids=[...sel]; if(!ids.length) return;
+  const d=day(k), tasks=activeTasks(k), n=tasks.length;
+  let coins=0, xp=0; const changed=[]; let otRoom=OT_DAY_CAP-overtimeToday(k);
+  for(const id of ids){
+    if(d.tasks[id]?.status==='done') continue;
+    const t=tasks.find(x=>x.id===id); const v=taskValue(t);
+    const m=mins?.[id]||null;
+    const bonus=clamp(overtimeFor(t,m),0,Math.max(0,otRoom)); otRoom-=bonus;
+    d.tasks[id]={status:'done',doneAt:Date.now(),value:v,bonus,minutes:m};
+    coins+=v+bonus; xp+=v; changed.push(id);
+  }
+  const doneCount=Object.values(d.tasks).filter(x=>x.status==='done').length;
+  let cleared=false;
+  if(doneCount===n && !d.cleared){ d.cleared=true; d.clearBonus=CLEAR_PER_TASK*n; coins+=d.clearBonus; xp+=d.clearBonus; cleared=true; }
+  d.points+=coins; S.points.coins+=coins; S.points.xp+=xp; d.perfect=doneCount===n;
+  S.undo={date:k,ids:changed,coins,xp,cleared};
+  sel.clear(); save();
+  haptic(cleared?'success':'light');
+  changed.forEach(id=>document.querySelector(`[data-task="${id}"]`)?.classList.add('leaving'));
+  setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick(); toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`, 'Undo', undoLast); if(cleared) celebrate(); }, S.settings.motion?220:0);
+}
+function undoLast(){
+  const u=S.undo; if(!u) return; const d=day(u.date);
+  u.ids.forEach(id=>{ delete d.tasks[id]; });
+  if(u.cleared){ d.cleared=false; d.clearBonus=0; }
+  d.points-=u.coins; S.points.coins-=u.coins; S.points.xp-=u.xp; d.perfect=false;
+  S.undo=null; save(); haptic(); render(); toast('Undone');
+}
+
+/* ---------- Toast ---------- */
+let toastT;
+function toast(msg,action,fn){
+  const el=document.getElementById('toast'); clearTimeout(toastT);
+  el.innerHTML=`<span>${esc(msg)}</span>${action?`<button id="toastact">${esc(action)}</button>`:''}`;
+  if(action) el.querySelector('#toastact').onclick=()=>{ el.classList.remove('show'); fn&&fn(); };
+  el.classList.add('show'); toastT=setTimeout(()=>el.classList.remove('show'),action?6000:2200);
+}
+/* ---------- Confetti ---------- */
+function celebrate(){
+  if(!S.settings.motion) return;
+  const c=document.getElementById('fx'),x=c.getContext('2d'); c.width=innerWidth;c.height=innerHeight;
+  const acc=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const P=Array.from({length:90},()=>({x:innerWidth/2,y:innerHeight*.35,vx:(Math.random()-.5)*14,vy:-Math.random()*14-4,r:Math.random()*5+3,c:Math.random()<.6?acc:'#fff',a:Math.random()*6,s:Math.random()*.2-.1}));
+  let f=0; (function step(){ x.clearRect(0,0,c.width,c.height); P.forEach(p=>{p.vy+=.45;p.x+=p.vx;p.y+=p.vy;p.a+=p.s;x.save();x.translate(p.x,p.y);x.rotate(p.a);x.globalAlpha=Math.max(0,1-f/70);x.fillStyle=p.c;x.fillRect(-p.r/2,-p.r/2,p.r,p.r*1.6);x.restore();}); if(++f<80) requestAnimationFrame(step); else x.clearRect(0,0,c.width,c.height); })();
+}
+/* ---------- Router ---------- */
+let tab='today', listState={backlogOpen:false}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview'};
+const $app=document.getElementById('app');
+const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
+  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
+  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  archive:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg>',
+  coin:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9.5A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5.5 1.5" stroke-linecap="round"/></svg>',
+  flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
+
+function setTab(t){ tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>{haptic();setTab(b.dataset.tab)});
+function render(){
+  document.querySelectorAll('.tabbar button').forEach((b,i)=>{ const on=b.dataset.tab===tab; b.classList.toggle('active',on); if(on) document.getElementById('tabind').style.transform=`translateX(${i*100}%)`; });
+  $app.innerHTML=`<div class="page">${({today:vToday,progress:vProgress,friends:vFriends,shop:vShop,settings:vSettings})[tab]()}</div>`;
+  bind();
+}
+
+/* ---------- Today ---------- */
+function vToday(){
+  const k=today(), tasks=activeTasks(k), d=S.days[k]||{}, st=dayStats(k);
+  const open=tasks.filter(t=>statusOf(k,t.id)!=='done'), done=tasks.filter(t=>statusOf(k,t.id)==='done');
+  const q=quoteToday(); const n=tasks.length;
+  const circ=2*Math.PI*52, pct=n?st.done/n:0;
+  const mon=weekOf(k); const wk=Array.from({length:7},(_,i)=>{const dk=addDays(mon,i);const s=dayStats(dk);return {dk,cleared:s.perfect,fut:dk>k||!s.expected,frozen:S.days[dk]?.frozen}});
+  const wc=wk.filter(x=>x.cleared).length;
+  const lb=loginBonus(S.streak.login+1);
+  return `
+  <div class="head"><div><div class="eyebrow">${fmt(k,{weekday:'long',day:'numeric',month:'long'})}</div><h1>Today</h1></div>
+    <div class="headpills"><span class="pill ${S.streak.login>=2?'accent':''}" data-tour="streak">${ICON.flame} ${S.streak.login}d</span>
+      <button class="pill coins" data-go="shop" data-tour="coins">${ICON.coin} ${S.points.coins.toLocaleString()}</button></div></div>
+  <div class="card ring-card" data-tour="ring">
+    <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${circ}" stroke-dashoffset="${circ*(1-pct)}"/></svg>
+      <div class="center"><div><b>+${d.points||0}</b><span>today</span></div></div></div>
+    <div class="ring-meta">
+      <h3>${n===0?'Nothing set yet':d.cleared?'Day cleared':`${st.done} of ${n} done`}</h3>
+      <p class="muted small">${n===0?'Add tasks in Settings to start earning.':d.cleared?`Clear bonus +${d.clearBonus} banked.`:`${open.length} left · clear all for +${CLEAR_PER_TASK*n}`}</p>
+      ${d.bonus?`<p class="small" style="margin-top:6px;color:var(--accent)">+${d.bonus} streak bonus today</p>`:`<p class="tiny muted" style="margin-top:6px">Tomorrow's streak bonus: +${lb}</p>`}
+    </div>
+  </div>
+  <div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=CHEST_DAYS?`Earned · +${chestCoins()} lands Monday`:`Clear ${CHEST_DAYS} of 7 for +${chestCoins()} · ${wc} so far`}</p></div>
+    <div class="dots big">${wk.map(x=>`<i class="${x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}"></i>`).join('')}</div></div></div>
+  ${q?`<p class="whisper">${esc(q.text)}${q.author&&q.author!=='—'?` <span class="tiny">— ${esc(q.author)}</span>`:''}</p>`:''}
+  <div class="section" style="margin-top:14px">
+    ${n===0?`<div class="card empty"><b>No tasks yet</b>Pick two or three things you want to keep doing.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="tasks">Add tasks</button></div>`:
+    open.length===0?`<div class="card empty"><b>All done</b>Everything's ticked. See you tomorrow.</div>`:
+    `<ul class="tasks" data-tour="tasks">${open.map(t=>{const s=strengthOf(t);return `<li><button class="task ${sel.has(t.id)?'selected':''} ${S.settings.density==='compact'?'dense':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${taskValue(t)}</span></button></li>`}).join('')}</ul>
+    <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below. The bar is habit strength — it lifts what each task pays.</p>`}
+    ${done.length?`<details class="fold"><summary><span>Done today (${done.length})</span><span class="tiny">back tomorrow</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>`<li><div class="task done"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(d.tasks[t.id]?.value||0)+(d.tasks[t.id]?.bonus||0)}${d.tasks[t.id]?.minutes?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${d.tasks[t.id].minutes}m</span>`:''}</span></div></li>`).join('')}</ul></details>`:''}
+  </div>
+  ${vList(n>0&&open.length===0)}`;
+}
+
+function vList(dayClear){
+  const list=todosToday(), bl=backlog(), dn=todosDone();
+  const idle=dayClear&&!list.length&&bl.length;
+  return `
+  <div class="section" data-tour="list"><h2>Today's list <span class="muted">no points, just a list</span></h2>
+    ${idle?`<div class="card callout" style="margin-bottom:10px"><b>Day's cleared.</b><p class="small muted">At a loose end? Pull something over from your backlog.</p>
+      <div class="chips" style="margin-top:10px">${bl.slice(0,3).map(t=>`<button class="chip" data-pull="${t.id}">${esc(t.text)}</button>`).join('')}</div></div>`:''}
+    <div class="card">
+      <div class="row" style="margin-bottom:${list.length||dn.length?'12px':'0'}"><input type="text" id="newtodo" placeholder="Something to get done…" maxlength="80"><button class="btn primary sm" id="addtodo">Add</button></div>
+      ${list.length?`<ul class="tasks">${list.map(t=>`<li><div class="todo"><button class="tick" data-todo="${t.id}" aria-label="Done">${ICON.check}</button><span class="name">${esc(t.text)}${t.day<today()?`<span class="tag">carried over</span>`:''}</span><button class="iconbtn ghosty" data-tdrop="${t.id}" aria-label="Remove">${ICON.trash}</button></div></li>`).join('')}</ul>`:
+        dn.length?'':`<p class="tiny muted" style="margin-top:10px">Nothing on the list. Add anything you don't want rattling around your head.</p>`}
+      ${dn.length?`<details class="fold"><summary><span>Ticked off (${dn.length})</span></summary><ul class="tasks" style="margin-top:8px">${dn.map(t=>`<li><div class="todo done"><button class="tick on" data-todo="${t.id}">${ICON.check}</button><span class="name">${esc(t.text)}</span></div></li>`).join('')}</ul></details>`:''}
+    </div>
+    <details class="fold" id="blfold" style="border:0;padding-top:6px" ${listState.backlogOpen?'open':''}><summary><span>Backlog (${bl.length})</span><span class="tiny">things for another day</span></summary>
+      <div class="card" style="margin-top:8px">
+        <div class="row" style="margin-bottom:${bl.length?'12px':'0'}"><input type="text" id="newbacklog" placeholder="Add to backlog…" maxlength="80"><button class="btn sm" id="addbacklog">Add</button></div>
+        ${bl.length?`<ul class="tasks">${bl.map(t=>`<li><div class="todo"><span class="name grow">${esc(t.text)}</span><button class="btn sm" data-pull="${t.id}">Today</button><button class="iconbtn ghosty" data-tdrop="${t.id}" aria-label="Remove">${ICON.trash}</button></div></li>`).join('')}</ul>`:
+          `<p class="tiny muted">Park ideas here so you always have something to reach for.</p>`}
+      </div></details>
+  </div>`;
+}
+
+/* ---------- Progress ---------- */
+const DELTA=(now,prev)=>{ if(prev===null||prev===undefined) return ''; const d=now-prev; if(!d) return `<span class="delta flat">—</span>`;
+  return `<span class="delta ${d>0?'up':'down'}">${d>0?'▲':'▼'}${Math.abs(d)}</span>`; };
+
+function vProgress(){
+  const L=level();
+  const sub=progState.sub||'overview';
+  const head=`<div class="head"><div><div class="eyebrow">${S.points.xp} XP · level ${L.L}</div><h1>Progress</h1></div></div>
+    <div class="seg" style="margin-bottom:14px">${[['overview','Overview'],['calendar','Calendar'],['tasks','Tasks']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-sub="${v}">${l}</button>`).join('')}</div>`;
+  return head + ({overview:pOverview,calendar:pCalendar,tasks:pTasks})[sub]();
+}
+
+function pOverview(){
+  const hist=historyDays();
+  const str=avgStrength(), prev=hist>=30?avgStrength(addDays(today(),-30)):null;
+  const R=windowStats(progState.range), P=windowStats(progState.range,1); const cmp=P.expected>0;
+  const wd=weekdayPattern(), tod=timeOfDay(), todMax=Math.max(1,...tod);
+  const wl=weakLink(), rb=reasonBreakdown(), rec=records();
+  const chests=Object.values(S.chests).filter(x=>x==='won').length;
+  const label={day:'yesterday',week:'previous 7 days',month:'previous 30 days',year:'previous year'}[progState.range];
+  const hrs=R.minutes>=60?`${(R.minutes/60).toFixed(1)}h`:`${R.minutes}m`;
+  return `
+  <div class="card hero" data-tour="hero">
+    <div class="row between" style="align-items:flex-start"><div><div class="eyebrow">Consistency</div><div class="heroval">${str}<small>%</small> ${DELTA(str,prev)}</div>
+      <p class="tiny muted">Average habit strength${prev!==null?` · ${str>=prev?'up':'down'} from ${prev}% a month ago`:hist<7?` · building up, ${7-hist} day${7-hist===1?'':'s'} until trends appear`:''}</p></div>
+      <div class="ring sm"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${2*Math.PI*52}" stroke-dashoffset="${2*Math.PI*52*(1-str/100)}"/></svg></div></div>
+    <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap"><span class="pill">${ICON.flame} ${S.streak.login} day streak</span><span class="pill">${chests} chest${chests===1?'':'s'}</span>${S.freezes?`<span class="pill accent">freeze ready</span>`:''}</div>
+  </div>
+
+  <div class="card" data-tour="stats"><div class="seg">${['day','week','month','year'].map(r=>`<button class="${progState.range===r?'on':''}" data-range="${r}">${{day:'Day',week:'Week',month:'Month',year:'Year'}[r]}</button>`).join('')}</div>
+    <p class="tiny muted" style="margin:10px 2px 0">${cmp?`Compared with the ${label}`:'No earlier period to compare with yet'}</p>
+    <div class="stats"><div class="stat"><b>${R.rate}% ${cmp?DELTA(R.rate,P.rate):''}</b><span>completed</span></div>
+      <div class="stat"><b>${R.points} ${cmp?DELTA(R.points,P.points):''}</b><span>coins earned</span></div>
+      <div class="stat"><b>${R.perfect} ${cmp?DELTA(R.perfect,P.perfect):''}</b><span>days cleared</span></div>
+      <div class="stat"><b>${R.minutes?hrs:R.missed} ${R.minutes||!cmp?'':DELTA(R.missed,P.missed)}</b><span>${R.minutes?'time logged':'missed'}</span></div></div></div>
+
+  ${wl?`<div class="card callout"><b>Weak link: ${esc(wl.name)}</b><p class="small muted">Strength ${wl.strength}%${wl.day?` — most often missed on a ${wl.day}.`:'. Everything else is holding up better.'}</p></div>`:''}
+
+  ${hist<14?'':`<div class="card" data-tour="pattern"><div class="section" style="margin:0"><h2>By weekday <span class="muted">last 8 weeks</span></h2></div>
+    <div class="wdays">${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=>{const v=wd[i];return `<div class="wd"><div class="wdbar"><i class="${v===null?'none':v<50?'low':''}" style="height:${v===null?0:Math.max(v,3)}%"></i></div><span class="n">${d[0]}</span><span class="tiny muted">${v===null?'–':v+'%'}</span></div>`}).join('')}</div></div>`}
+
+  ${tod[0]+tod[1]+tod[2]>0?`<div class="card"><div class="section" style="margin:0"><h2>When you finish</h2></div>
+    ${[['Morning',tod[0]],['Afternoon',tod[1]],['Evening',tod[2]]].map(([l,v])=>`<div class="tod"><span class="small">${l}</span><div class="todbar"><i style="width:${100*v/todMax}%"></i></div><span class="tiny muted">${v}</span></div>`).join('')}</div>`:''}
+
+  ${rb.total?`<div class="card"><div class="section" style="margin:0"><h2>Why you miss <span class="muted">${rb.total} in 90 days</span></h2></div>
+    ${rb.items.map(([r,pc])=>`<div class="tod"><span class="small">${esc(r)}</span><div class="todbar"><i class="warn" style="width:${pc}%"></i></div><span class="tiny muted">${pc}%</span></div>`).join('')}</div>`:''}
+
+  <details class="acc"><summary>Records</summary><div class="body"><ul class="list">
+    <li><span>Best login streak</span><b>${rec.bestLogin} d</b></li>
+    <li><span>Longest run of cleared days</span><b>${rec.perfectRun} d</b></li>
+    <li><span>Best week</span><b>${rec.bestWeek} coins</b></li>
+    <li><span>Weekly chests won</span><b>${chests}</b></li>
+    <li><span>Weakest weekday</span><b>${rec.worstDay||'—'}</b></li></ul></div></details>`;
+}
+
+function pCalendar(){
+  const k=today(); const [y,m]=progState.month.split('-').map(Number);
+  const first=new Date(y,m-1,1), off=(first.getDay()+6)%7, days=new Date(y,m,0).getDate();
+  let cells=''; for(let i=0;i<off;i++) cells+='<div></div>';
+  for(let i=1;i<=days;i++){ const dk=`${y}-${pad(m)}-${pad(i)}`; const s=dayStats(dk); const p=s.expected?s.done/s.expected:0;
+    const lvl=s.expected===0||dk>k?'':p>=1?'l4':p>=.66?'l3':p>=.33?'l2':p>0?'l1':'';
+    cells+=`<button class="cell ${lvl} ${dk===k?'today':''} ${dk===progState.sel?'sel':''} ${dk>k?'future':''} ${S.days[dk]?.note?'hasnote':''}" data-day="${dk}">${i}</button>`; }
+  const selS=dayStats(progState.sel);
+  const selTasks=expectedOn(progState.sel).map(id=>({t:S.tasks.find(x=>x.id===id),st:S.days[progState.sel]?.tasks?.[id]})).filter(x=>x.t);
+  const mstat=(()=>{ let e=0,d=0,c=0; for(let i=1;i<=days;i++){const dk=`${y}-${pad(m)}-${pad(i)}`; if(dk>=k) continue; const s=dayStats(dk); e+=s.expected;d+=s.done; if(s.perfect)c++;} return {rate:e?Math.round(100*d/e):0,cleared:c,any:e>0}; })();
+  return `
+  <div class="card" data-tour="heat">
+    <div class="row between" style="margin-bottom:4px"><button class="iconbtn" data-month="-1">‹</button><b>${first.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</b><button class="iconbtn" data-month="1" ${progState.month>=k.slice(0,7)?'disabled style="opacity:.3"':''}>›</button></div>
+    <p class="tiny muted" style="text-align:center;margin-bottom:12px">${mstat.any?`${mstat.rate}% completed · ${mstat.cleared} day${mstat.cleared===1?'':'s'} cleared`:'No history this month'}</p>
+    <div class="heat">${['M','T','W','T','F','S','S'].map(x=>`<div class="dow">${x}</div>`).join('')}${cells}</div>
+    <div class="legend"><span class="tiny muted">Less</span>${['','l1','l2','l3','l4'].map(c=>`<i class="${c}"></i>`).join('')}<span class="tiny muted">More</span></div>
+  </div>
+  <div class="card"><div class="row between" style="margin-bottom:10px"><b>${fmt(progState.sel,{weekday:'long',day:'numeric',month:'long'})}</b><span class="small muted">${selS.expected?`${selS.done}/${selS.expected} · ${selS.points} coins`:'no tasks'}</span></div>
+    ${progState.sel>today()?'<p class="muted small">Not here yet.</p>':selTasks.length?`<ul class="list">${selTasks.map(x=>`<li><span>${esc(x.t.name)}</span><span class="small ${x.st?.status==='done'?'':'muted'}" style="${x.st?.status==='done'?'color:var(--accent)':''}">${x.st?.status==='done'?`done${x.st.minutes?' · '+x.st.minutes+'m':''}`:x.st?.status==='missed'?`missed${x.st.reason?' · '+esc(x.st.reason):''}`:'open'}</span></li>`).join('')}</ul>`:'<p class="muted small">Nothing scheduled.</p>'}
+    ${progState.sel>today()?'':`<textarea id="daynote" placeholder="Note for this day…" rows="2" style="margin-top:12px">${esc(S.days[progState.sel]?.note||'')}</textarea>`}</div>`;
+}
+
+function pTasks(){
+  const list=S.tasks.filter(t=>!t.archived).map(t=>({t,s:strengthOf(t)})).sort((a,b)=>b.s-a.s);
+  if(!list.length) return '<div class="card empty"><b>No tasks yet</b>Add some in Settings and this fills up.</div>';
+  return list.map(({t,s})=>{ const ts=taskStats(t);
+    return `<details class="card taskcard"><summary><div class="grow"><div class="row between"><b>${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}</b><span class="small ${s<50?'muted':''}" style="${s>=50?'color:var(--accent)':''}">${s}%</span></div>
+      <div class="strbar"><i style="width:${s}%"></i></div>
+      <div class="row between" style="margin-top:8px"><span class="dots">${ts.recent.map(x=>`<i class="${x==='done'?'d':x==='missed'?'m':''}"></i>`).join('')}</span><span class="tiny muted">last 14 days</span></div></div></summary>
+      <div class="body">
+        <div class="stats"><div class="stat"><b>${ts.streak}</b><span>current streak</span></div><div class="stat"><b>${ts.best}</b><span>best streak</span></div>
+          <div class="stat"><b>${ts.done}</b><span>done</span></div><div class="stat"><b>${ts.misses}</b><span>missed</span></div>
+          ${t.target?`<div class="stat"><b>${ts.hours}</b><span>total time</span></div><div class="stat"><b>${ts.avgMin}m</b><span>avg (target ${t.target}m)</span></div>`:''}</div>
+        ${ts.reasons.length?`<div style="margin-top:12px">${ts.reasons.slice(0,3).map(([r,n])=>`<div class="tod"><span class="small">${esc(r)}</span><div class="todbar"><i class="warn" style="width:${100*n/ts.misses}%"></i></div><span class="tiny muted">${n}</span></div>`).join('')}</div>`:''}
+        ${ts.comments.length?`<ul class="list small" style="margin-top:10px">${ts.comments.map(c=>`<li><span class="muted">${fmt(c.date)}</span><span style="text-align:right">${esc(c.comment)}</span></li>`).join('')}</ul>`:''}
+      </div></details>`; }).join('');
+}
+
+function allMisses(){ const out=[]; for(const [k,d] of Object.entries(S.days)) for(const [id,x] of Object.entries(d.tasks||{})) if(x.status==='missed'){const t=S.tasks.find(t=>t.id===id); out.push({date:k,name:t?.name||'(deleted)',reason:x.reason,comment:x.comment});} return out.sort((a,b)=>a.date<b.date?-1:1); }
+function records(){
+  const k=today(); const keys=Object.keys(S.days).sort(); let run=0,best=0; 
+  if(keys.length){ for(let x=keys[0];x<=k;x=addDays(x,1)){ if(dayStats(x).perfect){run++;best=Math.max(best,run);} else run=0; } }
+  const weeks={}; for(const x of keys){const d=parse(x);const w=addDays(x,-((d.getDay()+6)%7)); weeks[w]=(weeks[w]||0)+dayStats(x).points;}
+  const reasons={},dows={}; for(const m of allMisses()){ if(m.reason) reasons[m.reason]=(reasons[m.reason]||0)+1; const dn=parse(m.date).toLocaleDateString(undefined,{weekday:'long'}); dows[dn]=(dows[dn]||0)+1; }
+  const top=o=>Object.entries(o).sort((a,b)=>b[1]-a[1])[0]?.[0];
+  return {bestLogin:S.streak.best,perfectRun:best,bestWeek:Math.max(0,...Object.values(weeks)),topReason:top(reasons),worstDay:top(dows)};
+}
+function taskStats(t){
+  const k=today(); let streak=0,best=0,run=0,done=0,misses=0; const reasons={},comments=[];
+  for(let x=t.createdAt;x<=k;x=addDays(x,1)){ const s=statusOf(x,t.id); if(s==='done'){run++;best=Math.max(best,run);done++;} else if(s==='missed'){run=0;misses++;const r=S.days[x].tasks[t.id];if(r.reason)reasons[r.reason]=(reasons[r.reason]||0)+1;if(r.comment)comments.push({date:x,comment:r.comment});} }
+  // current streak: consecutive done ending today or yesterday
+  let x=statusOf(k,t.id)==='done'?k:addDays(k,-1); while(x>=t.createdAt&&statusOf(x,t.id)==='done'){streak++;x=addDays(x,-1);}
+  const recent=Array.from({length:14},(_,i)=>statusOf(addDays(k,i-13),t.id));
+  const mins=[]; for(const d of Object.values(S.days)){ const e=d.tasks?.[t.id]; if(e?.minutes) mins.push(e.minutes); }
+  const total=mins.reduce((a,b)=>a+b,0);
+  return {streak,best,done,misses,reasons:Object.entries(reasons).sort((a,b)=>b[1]-a[1]),comments:comments.slice(-5).reverse(),recent,
+    hours:total>=60?`${(total/60).toFixed(1)}h`:`${total}m`, avgMin:mins.length?Math.round(total/mins.length):0};
+}
+
+/* ---------- Friends ---------- */
+function vFriends(){
+  const m=me(), fs=friendList();
+  const setup=!m.name;
+  return `
+  <div class="head"><div><div class="eyebrow">${Sync.live()?'Synced':'Local only'}</div><h1>Friends</h1></div></div>
+  ${setup?`<div class="card"><b>Pick a name they'll see</b><p class="small muted" style="margin:6px 0 12px">Only your daily totals, streak, consistency and level are shared. Task names, notes, reasons and your why stay on this device.</p>
+    <div class="row"><input type="text" id="myname" placeholder="Your name" maxlength="24"><button class="btn primary" id="savename">Save</button></div></div>`:
+  `<div class="card" data-tour="code"><div class="row between"><div><div class="eyebrow">Your code</div><b style="font-size:1.4rem;letter-spacing:.08em">${m.code}</b></div><button class="btn sm" id="copycode">Copy</button></div>
+    <div class="row" style="margin-top:12px"><input type="text" id="addcode" placeholder="Add a friend's code" maxlength="12" style="text-transform:uppercase"><button class="btn primary" id="addfriend">Add</button></div>
+    ${!Sync.configured()?`<p class="tiny muted" style="margin-top:10px">No server configured — adding a code creates a demo friend so you can see how it works. See the README to switch on real syncing.</p>`:''}</div>`}
+
+  ${fs.map(f=>{ const ps=pairStreak(f), q=questProgress(f), cleared=clearedOn(f,today()), mineCleared=!!S.days[today()]?.cleared;
+    return `<div class="section" data-tour="friend"><h2>${esc(f.name)} <span class="muted">${f.title||''}</span></h2>
+    <div class="card"><div class="row between"><div class="row" style="gap:10px"><span class="avatar">${esc((f.name||'?')[0]).toUpperCase()}</span>
+      <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0} day streak · level ${f.level??1}</p></div></div>
+      <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></div>
+
+    <div class="card pairstreak"><div class="row between"><div><div class="eyebrow">Shared streak</div><div class="heroval">${ps}<small>days</small></div>
+      <p class="tiny muted">${ps?'Days you both cleared in a row.':'Starts the first day you both clear.'}</p></div>
+      <div class="pairfire ${ps?'lit':''}">${ICON.flame}</div></div>
+      <div class="row" style="gap:8px;margin-top:12px"><span class="pill ${mineCleared?'accent':''}">You ${mineCleared?'✓':'—'}</span><span class="pill ${cleared?'accent':''}">${esc(f.name)} ${cleared?'✓':'—'}</span></div></div>
+
+    <div class="card"><div class="row between" style="margin-bottom:8px"><b>This week's quest</b><span class="small ${q.total>=q.goal?'':'muted'}" style="${q.total>=q.goal?'color:var(--accent)':''}">${Math.min(q.total,q.goal)}/${q.goal}</span></div>
+      <p class="small muted" style="margin-bottom:10px">Clear ${QUEST_GOAL_PER_PERSON} days each. Hit it together and you both get +${chestCoins()} coins.</p>
+      <div class="bar quest"><i style="width:${clamp(100*q.total/q.goal,0,100)}%"></i></div>
+      <div class="row between" style="margin-top:8px"><span class="tiny muted">You ${q.mine}</span><span class="tiny muted">${esc(f.name)} ${q.theirs}</span></div>
+      ${q.total>=q.goal?`<p class="small" style="color:var(--accent);margin-top:10px">Quest complete — chest collected.</p>`:''}</div>
+
+    <button class="btn ${canCheer(f)?'primary':''} block" data-cheer="${f.id}" data-kind="${cleared?'cheer':'nudge'}" ${canCheer(f)?'':'disabled'}>
+      ${!canCheer(f)?'Already sent today':cleared?`Cheer ${esc(f.name)} · +${CHEER_COINS} to them`:`Nudge ${esc(f.name)}`}</button>
+    <p class="tiny muted" style="margin:8px 4px 0;text-align:center">${cleared?'A cheer sends them coins. One a day.':'A nudge is just a wave — no coins, no guilt trip.'}</p>
+    </div>`; }).join('')}
+
+  ${!setup&&!fs.length?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak and a weekly quest.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`:''}`;
+}
+
+/* ---------- Shop ---------- */
+function vShop(){
+  const T=title(), L=level(); const str=avgStrength(); const canRate=str>=BUY_STRENGTH; const active=S.rewards.filter(x=>x.active);
+  return `
+  <div class="head"><div><div class="eyebrow">Coins to spend</div><h1>Shop</h1></div></div>
+  <div class="card" data-tour="balance"><div class="balance">${S.points.coins}<small>coins</small></div>
+    <div class="row between" style="margin-top:14px"><span class="pill accent">Level ${L.L} · ${T.name}</span><span class="tiny muted">${L.into} / ${L.need} XP</span></div>
+    <div class="titlebar"><i style="width:${clamp(100*L.into/L.need,0,100)}%"></i></div>
+    <p class="tiny muted" style="margin-top:8px">${T.next?`${T.next.name} at level ${T.next.at}. `:'Top title. '}XP is never spent — only coins are.</p></div>
+  <div class="card" data-tour="gate" style="border-color:${canRate?'var(--accent)':'var(--line)'}"><div class="row between"><div><b>${canRate?'Buying unlocked':'Buying locked'}</b><p class="small muted">${canRate?`Average habit strength ${str}%. Stays open while it's ${BUY_STRENGTH}%+.`:`Average habit strength ${str}%. Reaches ${BUY_STRENGTH}% with a steady run — one miss won't reset it.`}</p></div><b style="font-size:1.5rem;color:${canRate?'var(--accent)':'var(--fg2)'}">${str}%</b></div></div>
+  ${(()=>{const fc=freezeCost();return `<div class="card reward ${S.points.coins>=fc&&!S.freezes?'':'locked'}" data-tour="freeze"><div class="row between"><b>Streak freeze</b><span class="small muted">${fc} coins</span></div><p class="small muted">Covers one missed day so your login streak survives. Hold one at a time.</p>
+    <button class="btn ${S.freezes?'':S.points.coins>=fc?'primary':''} block" data-freeze ${S.freezes||S.points.coins<fc?'disabled':''}>${S.freezes?'Holding one':S.points.coins>=fc?'Buy':`${fc-S.points.coins} more coins`}</button></div>`})()}
+  <div class="section"><h2>Rewards <span class="muted">priced in days of work</span></h2>
+    ${active.length?active.map(x=>{const cost=tierCost(x.tier); const afford=S.points.coins>=cost; const ok=afford&&canRate; return `<div class="card reward ${ok?'':'locked'}"><div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">About ${TIER_DAYS[x.tier]} cleared days</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
+      <button class="btn ${ok?'primary':''} block" data-buy="${x.id}" ${ok?'':'disabled'}>${ok?'Buy':!afford?`${cost-S.points.coins} more coins`:`Strength below ${BUY_STRENGTH}%`}</button></div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+  <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
+    ${S.locker.length?`<div class="card"><ul class="list">${[...S.locker].reverse().map(x=>`<li class="locker-item ${x.usedAt?'used':''}"><div><div>${esc(x.name)}</div><div class="tiny muted">${x.usedAt?'Used '+fmt(x.usedAt):'Bought '+fmt(x.boughtAt)}</div></div>${x.usedAt?'':`<button class="btn sm" data-use="${x.id}">Mark used</button>`}</li>`).join('')}</ul></div>`:'<div class="card"><p class="muted small">Things you buy land here.</p></div>'}</div>`;
+}
+function buy(id){
+  const r=S.rewards.find(x=>x.id===id); if(!r) return; const cost=tierCost(r.tier); if(S.points.coins<cost||avgStrength()<BUY_STRENGTH) return;
+  modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. Your level and XP don't change.</p>`,'Buy',()=>{
+    S.points.coins-=cost; S.locker.push({id:uid(),rewardId:id,name:r.name,boughtAt:today()}); save(); haptic('success'); render(); toast('Bought · in your locker'); });
+}
+function buyFreeze(){ const fc=freezeCost(); if(S.freezes||S.points.coins<fc) return; S.points.coins-=fc; S.freezes=1; save(); haptic('success'); render(); toast('Streak freeze ready'); }
+
+/* ---------- Settings ---------- */
+function vSettings(){
+  const st=S.settings; const tg=(k,on)=>`<button class="toggle ${on?'on':''}" data-toggle="${k}" role="switch" aria-checked="${on}"></button>`;
+  const segS=(k,opts)=>`<div class="seg">${opts.map(([v,l])=>`<button class="${st[k]===v?'on':''}" data-set="${k}" data-val="${v}">${l}</button>`).join('')}</div>`;
+  return `
+  <div class="head"><div><div class="eyebrow">Steady</div><h1>Settings</h1></div></div>
+  <details class="acc" id="acc-tasks" data-tour="tasks"><summary>Tasks <span class="muted">${activeTasks().length} active</span></summary><div class="body">
+    <div class="row" style="margin-bottom:10px"><input type="text" id="newtask" placeholder="e.g. Walk the dog" maxlength="60"><input type="number" id="newtarget" placeholder="min" min="1" max="600" style="width:78px;padding:12px 10px;text-align:center"><button class="btn primary" id="addtask">Add</button></div>
+    <p class="tiny muted" style="margin:-4px 0 10px">Minutes are optional. Set one and you'll be asked how long it took — every ${OT_PER} minutes past the target pays +1 coin, up to +${OT_TASK_CAP} per task and +${OT_DAY_CAP} a day.</p>
+    ${S.tasks.length?S.tasks.slice().sort((a,b)=>a.archived-b.archived||a.order-b.order).map(t=>`<div class="editrow ${t.archived?'archived':''}"><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}</span>${t.archived?`<button class="btn sm" data-unarchive="${t.id}">Restore</button>`:`<button class="iconbtn" data-rename="${t.id}" aria-label="Rename">${ICON.edit}</button><button class="iconbtn" data-archive="${t.id}" aria-label="Archive">${ICON.archive}</button>`}</div>`).join(''):'<p class="muted small">Add the things you want to keep doing daily.</p>'}
+    <p class="tiny muted" style="margin-top:10px">Points split evenly across active tasks. Archiving keeps history.</p></div></details>
+  <details class="acc" id="acc-rewards"><summary>Rewards <span class="muted">${S.rewards.filter(x=>x.active).length} / ${MAX_REWARDS}</span></summary><div class="body">
+    <div class="stack" style="margin-bottom:10px"><input type="text" id="newreward" placeholder="e.g. Takeaway night" maxlength="60" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
+      <div class="row"><div class="seg grow" id="tierseg">${Object.keys(TIER_DAYS).map((t,i)=>`<button class="${i===0?'on':''}" data-tier="${t}">${TIER_LABEL[t]} · ${tierCost(t)}</button>`).join('')}</div><button class="btn primary" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div></div>
+    ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}<span class="tiny muted" style="font-weight:400;margin-left:8px">${TIER_LABEL[x.tier]} · ${tierCost(x.tier)} coins</span></span><button class="iconbtn" data-delreward="${x.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')||'<p class="muted small">A week-tier reward costs seven cleared days, a fortnight-tier one costs fourteen. Prices follow your task count, so adding tasks never makes rewards cheaper.</p>'}</div></details>
+  <details class="acc"><summary>Quotes <span class="muted">${S.quotes.length}</span></summary><div class="body">
+    <div class="row" style="margin-bottom:10px"><input type="text" id="newquote" placeholder="Add your own…" maxlength="200"><button class="btn primary" id="addquote">Add</button></div>
+    ${S.quotes.filter(q=>q.custom).map(q=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(q.text)}</span><button class="iconbtn" data-delquote="${q.id}">${ICON.trash}</button></div>`).join('')}
+    <p class="tiny muted" style="margin-top:10px">${S.quotes.filter(q=>!q.custom).length} built-in quotes rotate daily alongside yours.</p></div></details>
+  <details class="acc" data-tour="look"><summary>Look <span class="muted">${st.theme} · ${st.mode}</span></summary><div class="body">
+    <div class="opt"><label>Theme</label><div class="swatches">${Object.entries(THEMES).map(([n,t])=>`<button class="sw ${st.theme===n?'on':''}" data-set="theme" data-val="${n}" style="background:hsl(${t.h} ${t.s+20}% ${n==='black'?8:35}%)" aria-label="${n}"></button>`).join('')}</div></div>
+    <div class="opt"><label>Mode</label>${segS('mode',[['dark','Dark'],['light','Light'],['system','Auto']])}</div>
+    <div class="opt" style="flex-direction:column;align-items:stretch"><label>Accent</label><div class="swatches" style="margin-top:8px">${ACCENTS.map(c=>`<button class="sw ${(st.accent||THEMES[st.theme].accent)===c?'on':''}" data-set="accent" data-val="${c}" style="background:${c}"></button>`).join('')}<input type="color" id="customaccent" value="${st.accent||THEMES[st.theme].accent}" aria-label="Custom accent"><button class="btn sm ghost" data-set="accent" data-val="">Theme default</button></div></div>
+    <div class="opt"><label>Density</label>${segS('density',[['comfy','Comfy'],['compact','Compact']])}</div>
+    <div class="opt"><label>Corners</label>${segS('corners',[['sharp','Sharp'],['soft','Soft'],['round','Round'],['pill','Pill']])}</div>
+    <div class="opt"><label>Font</label>${segS('font',[['system','System'],['rounded','Rounded'],['serif','Serif'],['mono','Mono']])}</div>
+    <div class="opt"><label>Text size <span class="hint">${st.textSize}%</span></label><div class="row"><button class="btn sm" data-size="-10">A−</button><button class="btn sm" data-size="10">A+</button></div></div>
+    <div class="opt"><label>Motion</label>${tg('motion',st.motion)}</div>
+    <div class="opt"><label>Haptics <span class="hint">where supported</span></label>${tg('haptics',st.haptics)}</div>
+    <div class="opt"><label>Glow</label>${tg('glow',st.glow)}</div>
+    <div class="opt"><label>Reset look</label><button class="btn sm" id="resetlook">Defaults</button></div></div></details>
+  <details class="acc"><summary>Your why <span class="muted">${S.flags.why?'set':'empty'}</span></summary><div class="body"><textarea id="why" placeholder="Why does being consistent matter to you?">${esc(S.flags.why)}</textarea><p class="tiny muted" style="margin-top:8px">Saved as you type.</p></div></details>
+  <details class="acc"><summary>Help</summary><div class="body small muted stack">
+    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, times its habit strength (up to ×1.5). Coins are spent in the shop. XP is never spent — it drives your level and title.</p>
+    <p><b style="color:var(--fg)">Habit strength.</b> Each task has a 0–100% strength that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Give a task a target in minutes and you'll be asked how long it took when you tick it. Every ${OT_PER} minutes past the target pays +1 coin (max +${OT_TASK_CAP} per task, +${OT_DAY_CAP} a day). Going over pays coins only, never XP — long sessions can't buy levels. Under the target still counts as done.</p>
+    <p><b style="color:var(--fg)">Day cleared.</b> Finish everything and you get +${CLEAR_PER_TASK} per task on top — more tasks, bigger bonus.</p>
+    <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days (Mon–Sun) and a free day's coins (+${chestCoins()}) land on Monday.</p>
+    <p><b style="color:var(--fg)">Streak.</b> Open the app daily. +5 from day two, +10 from day seven, +15 from day thirty. A streak freeze (${freezeCost()} coins) covers one missed day.</p>
+    <p><b style="color:var(--fg)">Shop.</b> Rewards cost days, not coins: a week-tier reward is ${TIER_DAYS.week} cleared days (${tierCost('week')} right now), a fortnight-tier one is ${TIER_DAYS.fortnight} (${tierCost('fortnight')}). Prices rise and fall with your task count, so more tasks never means faster rewards. You can only spend when average habit strength is ${BUY_STRENGTH}%+. Missing never costs you anything.</p>
+    <p><b style="color:var(--fg)">Today's list.</b> The list under your tasks is outside the whole economy — no coins, no strength, no miss gate. Unfinished items just carry over. The backlog is a pool to pull from when you have cleared your day and are at a loose end.</p>
+    <p><b style="color:var(--fg)">Friends.</b> Pair up by swapping codes. You get a shared streak (days you both cleared) and a weekly quest — clear ${QUEST_GOAL_PER_PERSON} days each and you both get a chest. Cheer them when they've cleared (+${CHEER_COINS} coins to them, once a day) or nudge when they haven't. There's no leaderboard, deliberately.</p>
+    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. If you add a friend, only aggregates sync: cleared/done counts, streak, consistency and level. Task names, day notes, miss reasons and your why never leave this device.</p>
+    <div class="row" style="margin-top:8px"><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div></div></details>`;
+}
+/* ---------- Event binding ---------- */
+function bind(){
+  const q=s=>$app.querySelector(s), qa=s=>[...$app.querySelectorAll(s)];
+  qa('[data-go]').forEach(b=>b.onclick=()=>{ const open=b.dataset.open; setTab(b.dataset.go); if(open){ const acc=document.getElementById('acc-'+open); if(acc){acc.open=true; acc.querySelector('input')?.focus();} } });
+  // Today
+  qa('[data-task]').forEach(b=>b.onclick=()=>{ const id=b.dataset.task; sel.has(id)?sel.delete(id):sel.add(id); b.classList.toggle('selected'); haptic(); updateConfirm(); });
+  updateConfirm();
+  // Progress
+  // List
+  const nl=q('#newtodo'); if(nl){ const add=()=>{const v=nl.value.trim(); if(!v) return; addTodo(v,true); haptic(); render(); document.getElementById('newtodo')?.focus();};
+    q('#addtodo').onclick=add; nl.onkeydown=e=>{if(e.key==='Enter')add();}; }
+  const bf=q('#blfold'); if(bf) bf.addEventListener('toggle',()=>{ listState.backlogOpen=bf.open; });
+  const nb=q('#newbacklog'); if(nb){ const add=()=>{const v=nb.value.trim(); if(!v) return; addTodo(v,false); haptic(); render(); document.getElementById('newbacklog')?.focus();};
+    q('#addbacklog').onclick=add; nb.onkeydown=e=>{if(e.key==='Enter')add();}; }
+  qa('[data-todo]').forEach(b=>b.onclick=()=>{ const el=b.closest('.todo'); const id=b.dataset.todo; const t=S.todos.find(x=>x.id===id);
+    haptic(); if(!t.done&&S.settings.motion){ el.classList.add('ticking'); setTimeout(()=>{toggleTodo(id);render();},200); } else { toggleTodo(id); render(); } });
+  qa('[data-pull]').forEach(b=>b.onclick=()=>{ pullTodo(b.dataset.pull); haptic(); render(); toast('Moved to today'); });
+  qa('[data-tdrop]').forEach(b=>b.onclick=()=>{ const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
+    toast('Removed','Undo',()=>{ S.todos.push(t); save(); render(); }); });
+  // Friends
+  const sn=q('#savename'); if(sn) sn.onclick=async()=>{ const v=q('#myname').value.trim(); if(!v) return; await Sync.register(v); haptic(); render(); };
+  const cc=q('#copycode'); if(cc) cc.onclick=()=>{ navigator.clipboard?.writeText(me().code); toast('Code copied'); };
+  const af=q('#addfriend'); if(af){ const add=async()=>{ const v=q('#addcode').value.trim(); if(!v) return; af.disabled=true; af.textContent='…';
+      try{ const f=await Sync.addByCode(v); haptic('success'); render(); toast(`${f.name} added`); }
+      catch(e){ af.disabled=false; af.textContent='Add'; toast(e.message||'Could not add that code'); } };
+    af.onclick=add; q('#addcode').onkeydown=e=>{if(e.key==='Enter')add();}; }
+  qa('[data-cheer]').forEach(b=>b.onclick=async()=>{ const f=S.friends[b.dataset.cheer]; const kind=b.dataset.kind;
+    await Sync.cheer(f,kind); haptic('success'); render(); toast(kind==='cheer'?`Cheer sent to ${f.name}`:`Nudge sent to ${f.name}`); });
+  qa('[data-sub]').forEach(b=>b.onclick=()=>{progState.sub=b.dataset.sub;haptic();render();window.scrollTo({top:0});});
+  qa('[data-day]').forEach(b=>b.onclick=()=>{progState.sel=b.dataset.day;render();});
+  qa('[data-month]').forEach(b=>b.onclick=()=>{const [y,m]=progState.month.split('-').map(Number);const d=new Date(y,m-1+Number(b.dataset.month),1);progState.month=`${d.getFullYear()}-${pad(d.getMonth()+1)}`;render();});
+  qa('[data-jump]').forEach(b=>b.onclick=()=>{progState.month=b.dataset.jump;render();});
+  qa('[data-range]').forEach(b=>b.onclick=()=>{progState.range=b.dataset.range;render();});
+  const dn=q('#daynote'); if(dn) dn.oninput=()=>{ day(progState.sel).note=dn.value; save(); };
+  // Shop
+  qa('[data-buy]').forEach(b=>b.onclick=()=>buy(b.dataset.buy));
+  const fz=q('[data-freeze]'); if(fz) fz.onclick=buyFreeze;
+  qa('[data-use]').forEach(b=>b.onclick=()=>{const x=S.locker.find(l=>l.id===b.dataset.use); x.usedAt=today(); save(); haptic(); render(); toast('Enjoy it.');});
+  // Settings — tasks
+  const nt=q('#newtask'); const addT=()=>{ const v=nt.value.trim(); if(!v) return; const tg=clamp(Math.round(Number(q('#newtarget').value)||0),0,600);
+    S.tasks.push({id:uid(),name:v,createdAt:today(),order:S.tasks.length,archived:false,target:tg||null}); save(); haptic(); render(); document.getElementById('acc-tasks').open=true; document.getElementById('newtask').focus(); toast('Task added'); };
+  if(nt){ q('#addtask').onclick=addT; nt.onkeydown=e=>{if(e.key==='Enter')addT();}; q('#newtarget').onkeydown=e=>{if(e.key==='Enter')addT();}; }
+  qa('[data-rename]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.rename); editTask(t);});
+  qa('[data-archive]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.archive); modal(`<h2>Archive “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. History stays in Progress.</p>`,'Archive',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();render();document.getElementById('acc-tasks').open=true;toast('Archived');});});
+  qa('[data-unarchive]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.unarchive); t.archived=false;delete t.archivedAt;t.createdAt=t.createdAt>today()?today():t.createdAt;save();render();document.getElementById('acc-tasks').open=true;});
+  // rewards
+  qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
+  const nr=q('#newreward'); const addR=()=>{ const v=nr.value.trim(); if(!v||S.rewards.filter(x=>x.active).length>=MAX_REWARDS) return; const tier=q('[data-tier].on')?.dataset.tier||'week'; S.rewards.push({id:uid(),name:v,active:true,tier}); save(); haptic(); render(); document.getElementById('acc-rewards').open=true; };
+  if(nr){ q('#addreward').onclick=addR; nr.onkeydown=e=>{if(e.key==='Enter')addR();}; }
+  qa('[data-delreward]').forEach(b=>b.onclick=()=>{const x=S.rewards.find(r=>r.id===b.dataset.delreward);x.active=false;save();render();document.getElementById('acc-rewards').open=true;});
+  // quotes
+  const nq=q('#newquote'); if(nq){ q('#addquote').onclick=()=>{const v=nq.value.trim();if(!v)return;S.quotes.push({id:uid(),text:v,author:'',custom:true});save();render();$app.querySelectorAll('.acc')[2].open=true;}; }
+  qa('[data-delquote]').forEach(b=>b.onclick=()=>{S.quotes=S.quotes.filter(x=>x.id!==b.dataset.delquote);save();render();$app.querySelectorAll('.acc')[2].open=true;});
+  // look
+  const keepLook=()=>{ const acc=qa('.acc')[3]; if(acc) acc.open=true; };
+  qa('[data-set]').forEach(b=>b.onclick=()=>{ S.settings[b.dataset.set]=b.dataset.val||null; save(); applyTheme(); haptic(); render(); keepLook(); });
+  const ca=q('#customaccent'); if(ca) ca.oninput=()=>{S.settings.accent=ca.value;save();applyTheme();}; if(ca) ca.onchange=()=>{render();keepLook();};
+  qa('[data-toggle]').forEach(b=>b.onclick=()=>{S.settings[b.dataset.toggle]=!S.settings[b.dataset.toggle];save();applyTheme();haptic();render();keepLook();});
+  qa('[data-size]').forEach(b=>b.onclick=()=>{S.settings.textSize=clamp(S.settings.textSize+Number(b.dataset.size),80,130);save();applyTheme();render();keepLook();});
+  const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings=fresh().settings;save();applyTheme();render();keepLook();toast('Look reset');};
+  const why=q('#why'); if(why) why.oninput=()=>{S.flags.why=why.value;save();};
+  const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
+  const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
+  const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, points and rewards. This cannot be undone.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
+}
+function updateConfirm(){
+  const bar=document.getElementById('confirmbar'), btn=document.getElementById('confirmbtn');
+  const n=sel.size; bar.classList.toggle('show',n>0&&tab==='today'); document.body.classList.toggle('has-confirm',n>0&&tab==='today');
+  btn.textContent=n>1?`Mark ${n} done`:'Mark done'; btn.onclick=()=>{ haptic('heavy'); const timed=[...sel].map(id=>S.tasks.find(t=>t.id===id)).filter(t=>t?.target); timed.length?timeSheet(timed):completeSelected(); };
+}
+
+/* ---------- Modal & sheet ---------- */
+function overlay(html,cls=''){ const o=document.createElement('div'); o.className='overlay '+cls; o.innerHTML=html; document.body.appendChild(o); requestAnimationFrame(()=>o.classList.add('show')); return o; }
+function close(o){ o.classList.remove('show'); setTimeout(()=>o.remove(),250); }
+function modal(html,ok,fn,danger){
+  const o=overlay(`<div class="modal">${html}<div class="foot" style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn ${danger?'danger':'primary'}" style="flex:1" data-ok>${esc(ok)}</button></div></div>`,'center');
+  o.querySelector('[data-x]').onclick=()=>close(o); o.onclick=e=>{if(e.target===o)close(o)}; o.querySelector('[data-ok]').onclick=()=>{close(o);fn();};
+}
+function prompt$(titleTxt,val,fn){
+  const o=overlay(`<div class="modal"><h2>${esc(titleTxt)}</h2><input type="text" id="pv" value="${esc(val)}" style="margin-top:12px" maxlength="60"><div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
+  const i=o.querySelector('#pv'); setTimeout(()=>{i.focus();i.select();},100);
+  o.querySelector('[data-x]').onclick=()=>close(o); const ok=()=>{const v=i.value.trim();if(v){close(o);fn(v);}}; o.querySelector('[data-ok]').onclick=ok; i.onkeydown=e=>{if(e.key==='Enter')ok();};
+}
+
+function editTask(t){
+  const o=overlay(`<div class="modal"><h2>Edit task</h2><div class="stack" style="margin-top:12px"><input type="text" id="en" value="${esc(t.name)}" maxlength="60">
+    <div class="row"><input type="number" id="et" value="${t.target||''}" placeholder="Target minutes (optional)" min="1" max="600" style="flex:1;padding:12px 14px"><button class="btn sm" id="eclear">Clear</button></div>
+    <p class="tiny muted">With a target set, you'll be asked how long it took each time you tick it off.</p></div>
+    <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
+  o.querySelector('#eclear').onclick=()=>{o.querySelector('#et').value='';};
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  o.querySelector('[data-ok]').onclick=()=>{ const n=o.querySelector('#en').value.trim(); if(!n) return; t.name=n; const tg=clamp(Math.round(Number(o.querySelector('#et').value)||0),0,600); t.target=tg||null; save(); close(o); render(); document.getElementById('acc-tasks').open=true; };
+}
+
+/* ---------- Time sheet (timed tasks) ---------- */
+function timeSheet(timed){
+  const mins={}; timed.forEach(t=>mins[t.id]=t.target);
+  const room=()=>OT_DAY_CAP-overtimeToday();
+  const opts=t=>[t.target,t.target+5,t.target+10,t.target+15,t.target+30];
+  const card=t=>`<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
+    <div class="timerow">${opts(t).map((m,i)=>`<button class="chip ${i===0?'on':''}" data-m="${m}">${m}m${i===0?'':''}</button>`).join('')}<button class="chip add" data-other>Other</button></div></div>`;
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>How long did ${timed.length===1?'it':'each'} take?</h2><p class="muted small" style="margin-bottom:14px">Under the target still counts as done. Over pays +1 coin per ${OT_PER} minutes.</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot"><button class="btn" data-skip>Skip</button><button class="btn primary" data-ok>Mark done</button></div></div>`);
+  const refresh=()=>{ let left=room();
+    timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
+      c.innerHTML=b?`<span class="otval">+${b}</span> coins`:mins[t.id]<t.target?`under target`:`target ${t.target}m`; });
+    o.querySelector('[data-ok]').textContent=sel.size>1?`Mark ${sel.size} done`:'Mark done';
+    const cap=o.querySelector('[data-cap]'); if(cap) cap.hidden=left>0; };
+  timed.forEach(t=>{ const el=o.querySelector(`[data-time="${t.id}"]`);
+    const pick=(m,btn)=>{ el.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); btn?.classList.add('on'); mins[t.id]=m; haptic(); refresh(); };
+    el.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>pick(Number(b.dataset.m),b));
+    el.querySelector('[data-other]').onclick=()=>promptNum('Minutes on “'+t.name+'”',mins[t.id],v=>{ const b=document.createElement('button'); b.className='chip on'; b.textContent=v+'m'; b.dataset.m=v; b.onclick=()=>pick(v,b); el.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); el.querySelector('[data-other]').before(b); mins[t.id]=v; refresh(); });
+  });
+  o.querySelector('[data-skip]').onclick=()=>{ close(o); completeSelected(); };
+  o.querySelector('[data-ok]').onclick=()=>{ close(o); completeSelected(mins); };
+  refresh();
+}
+function promptNum(titleTxt,val,fn){
+  const o=overlay(`<div class="modal"><h2>${esc(titleTxt)}</h2><input type="number" id="pv" value="${val}" min="1" max="600" style="margin-top:12px;width:100%;padding:12px 14px"><div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
+  const i=o.querySelector('#pv'); setTimeout(()=>{i.focus();i.select();},100);
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  const ok=()=>{ const v=clamp(Math.round(Number(i.value)||0),1,600); close(o); fn(v); };
+  o.querySelector('[data-ok]').onclick=ok; i.onkeydown=e=>{if(e.key==='Enter')ok();};
+}
+
+/* ---------- Miss-why gate ---------- */
+function missGate(){
+  const pend=S.pendingMisses; if(!pend.length) return false;
+  const reasons=[...DEFAULT_REASONS,...S.customReasons]; const picked={};
+  const item=(p,i)=>{const t=S.tasks.find(x=>x.id===p.taskId); return `<div class="card" style="padding:12px" data-miss="${i}"><div class="row between"><b>${esc(t?.name||'Task')}</b><span class="tiny muted">${fmt(p.date)}</span></div><div class="chips" style="margin-top:10px">${reasons.map(r=>`<button class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-custom>+ Other</button></div><input type="text" placeholder="Anything to add? (optional)" style="margin-top:10px;padding:9px 12px" data-c maxlength="120"></div>`;};
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${pend.length===1?'One thing slipped':pend.length+' things slipped'}</h2><p class="muted small" style="margin-bottom:14px">No points lost. Just say why — patterns show up in Progress.</p>${pend.length>1?`<div class="chips" style="margin-bottom:12px"><span class="tiny muted" style="align-self:center">Same for all:</span>${reasons.map(r=>`<button class="chip" data-all="${esc(r)}">${esc(r)}</button>`).join('')}</div>`:''}<div class="stack">${pend.map(item).join('')}</div><div class="foot"><button class="btn primary" data-ok disabled>Save</button></div></div>`);
+  const okb=o.querySelector('[data-ok]');
+  const check=()=>{okb.disabled=Object.keys(picked).length<pend.length;};
+  o.querySelectorAll('[data-miss]').forEach(card=>{ const i=card.dataset.miss;
+    card.querySelectorAll('[data-r]').forEach(c=>c.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');picked[i]=c.dataset.r;haptic();check();});
+    card.querySelector('[data-custom]').onclick=()=>prompt$('What got in the way?','',v=>{ if(!S.customReasons.includes(v)){S.customReasons.push(v);save();} const b=document.createElement('button');b.className='chip on';b.textContent=v;b.dataset.r=v;b.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));b.classList.add('on');picked[i]=v;check();}; card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); card.querySelector('[data-custom]').before(b); picked[i]=v; check(); });
+  });
+  o.querySelectorAll('[data-all]').forEach(a=>a.onclick=()=>{ o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on')); a.classList.add('on'); o.querySelectorAll('[data-miss]').forEach(card=>{ card.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x.dataset.r===a.dataset.all)); picked[card.dataset.miss]=a.dataset.all; }); haptic(); check(); });
+  okb.onclick=()=>{ o.querySelectorAll('[data-miss]').forEach(card=>{const i=card.dataset.miss;const p=pend[i];const e=day(p.date).tasks[p.taskId]; if(e){e.reason=picked[i];const c=card.querySelector('[data-c]').value.trim();if(c)e.comment=c;}}); S.pendingMisses=[]; save(); close(o); haptic(); render(); toast('Noted. Fresh day.'); };
+  return true;
+}
+
+/* ---------- Quote gate ---------- */
+function quoteGate(next){
+  const q=quoteToday(); if(!q||S.flags.quoteDate===today()){ next(); return; }
+  const g=document.createElement('div'); g.className='gate';
+  g.innerHTML=`<p class="q">${esc(q.text)}</p><p class="by">${q.author&&q.author!=='—'?esc(q.author):''}</p><div class="actions"><button class="btn primary block" id="startday">Start the day</button>${S.flags.why?`<p class="tiny muted" style="margin-top:18px;text-align:center">Your why: ${esc(S.flags.why)}</p>`:''}</div>`;
+  document.body.appendChild(g);
+  g.querySelector('#startday').onclick=()=>{ S.flags.quoteDate=today(); save(); haptic(); g.style.transition='opacity .3s'; g.style.opacity=0; setTimeout(()=>{g.remove();next();},300); };
+}
+
+/* ---------- Onboarding ---------- */
+function onboarding(next){
+  if(S.flags.onboarded){ next(); return; }
+  let step=0; const picks=new Set(); const targets={}; let why='';
+  const g=document.createElement('div'); g.className='gate onb'; document.body.appendChild(g);
+  const SUG=[['Walk',20],['Read',15],['No phone in bed',0],['Drink 2L water',0],['Tidy up',10],['Stretch',10],['Journal',0],['Study',30]];
+  const draw=()=>{
+    const steps=`<div class="steps">${[0,1,2].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
+    if(step===0) g.innerHTML=`${steps}<h1>Consistency isn’t a mood.</h1><p>Big goals fail because they depend on how you feel that day. Small promises kept daily don’t.</p><p style="margin-top:14px">Steady gives every day a 100-point pot, splits it across your tasks, and pays out for showing up. Miss one and nothing is taken away — you just say why, so you can see your patterns.</p><p style="margin-top:14px">No account. Nothing leaves your phone.</p><div class="actions"><button class="btn primary block" data-n>Fair enough</button></div>`;
+    if(step===1) g.innerHTML=`${steps}<h1>Why does this matter to you?</h1><p>One line. You’ll see it on days you need it.</p><textarea id="onbwhy" style="margin-top:18px" placeholder="e.g. I want to trust myself again.">${esc(why)}</textarea><div class="actions row"><button class="btn ghost" data-n>Skip</button><button class="btn primary grow" data-n>Next</button></div>`;
+    if(step===2) g.innerHTML=`${steps}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions"><button class="btn primary block" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
+    g.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>{ if(step===1) why=g.querySelector('#onbwhy').value.trim(); haptic(); if(step<2){step++;draw();} else finish(); });
+    g.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{const v=b.dataset.p;if(picks.has(v))picks.delete(v);else{picks.add(v);targets[v]=Number(b.dataset.mt)||null;}draw();});
+    const oa=g.querySelector('#onbadd'); if(oa){ const add=()=>{const v=g.querySelector('#onbtask').value.trim();if(v){picks.add(v);targets[v]=null;draw();}}; oa.onclick=add; g.querySelector('#onbtask').onkeydown=e=>{if(e.key==='Enter')add();}; }
+  };
+  const finish=()=>{ S.flags.why=why; [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null})); S.flags.onboarded=true; save(); g.remove(); next(); };
+  draw();
+}
+
+/* ---------- Spotlight tour ---------- */
+const TOURS={
+  today:[['ring','Coins earned today. Each task pays 10, boosted by its habit strength.'],['tasks','Tap to pick, confirm at the bottom. The thin bar is strength — it grows when you show up and only dents when you don’t.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.'],['list','Anything else you want done today. No points, no penalty — it is here so you always have something to reach for.']],
+  progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
+  shop:[['balance','Coins to spend. XP fills the level bar and is never spent.'],['gate','Spending unlocks when average habit strength is 70%+.'],['freeze','Cheap insurance: one missed day, streak intact.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
+  settings:[['tasks','Add, rename or archive tasks. Points re-split automatically.'],['look','Make it yours — theme, accent, corners, font, motion.']],
+  friends:[['code','Swap codes to pair up. Only totals sync — never task names or notes.'],['friend','A shared streak and a weekly quest you clear together. No ranking.']],
+};
+function tour(page){
+  if(S.flags.tours[page]||!TOURS[page]||document.querySelector('.gate,.overlay')) return;
+  const steps=TOURS[page].filter(([id])=>$app.querySelector(`[data-tour="${id}"]`)); if(!steps.length) return;
+  let i=0; const spot=document.createElement('div'); spot.className='tour-spot'; const card=document.createElement('div'); card.className='tour-card';
+  document.body.append(spot,card);
+  const draw=()=>{ const [id,txt]=steps[i]; const el=$app.querySelector(`[data-tour="${id}"]`); el.scrollIntoView({block:'center',behavior:'smooth'});
+    setTimeout(()=>{ const r=el.getBoundingClientRect(); Object.assign(spot.style,{top:r.top-6+'px',left:r.left-6+'px',width:r.width+12+'px',height:r.height+12+'px'});
+      card.innerHTML=`<p>${txt}</p><div class="row"><span class="tiny muted">${i+1} of ${steps.length}</span><span class="row"><button class="btn sm ghost" data-skip>Skip</button><button class="btn sm primary" data-next>${i<steps.length-1?'Next':'Got it'}</button></span></div>`;
+      const below=r.bottom+180<innerHeight; card.style.top=below?r.bottom+16+'px':''; card.style.bottom=below?'':innerHeight-r.top+16+'px';
+      card.querySelector('[data-next]').onclick=()=>{haptic(); if(++i<steps.length) draw(); else end();}; card.querySelector('[data-skip]').onclick=end; },260); };
+  const end=()=>{ spot.remove(); card.remove(); S.flags.tours[page]=true; save(); };
+  draw();
+}
+
+/* ---------- Boot ---------- */
+function friendsTick(){
+  if(!friendList().length) return;
+  Sync.pull().then(()=>{ let paid=0; friendList().forEach(f=>{ paid+=checkQuest(f); });
+    if(paid) toast(`Quest complete · +${paid} coins`);
+    if(tab==='friends') render(); }).catch(()=>{});
+  Sync.push().catch(()=>{});
+}
+function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); } if(!missGate()) tour(tab); }
+function boot(){
+  applyTheme();
+  onboarding(()=>{ rollover(); quoteGate(()=>{ document.getElementById('tabbar').hidden=false; render(); setTimeout(maybeGates,300); friendsTick(); }); });
+}
+if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
+boot();
+</script>
+</body>
+</html>
