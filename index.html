@@ -86,6 +86,7 @@ textarea{resize:vertical;min-height:80px}
 .ring .center b{font-size:1.7rem;font-weight:700;letter-spacing:-.03em}
 .ring .center span{display:block;font-size:.72rem;color:var(--fg2);margin-top:5px}
 .ring-meta h3{font-size:1.15rem;margin-bottom:4px}
+.affline{margin:10px 4px 0;text-align:center;font-style:italic;color:var(--fg2);font-size:.95rem;line-height:1.45}
 .whisper{font-style:italic;color:var(--fg2);font-size:.92rem;margin:14px 2px 4px;text-wrap:balance}
 
 /* Task list */
@@ -700,6 +701,11 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let tab='today', listState={backlogOpen:false}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview'};
+let affShown='';
+function affirmations(){ const a=S.flags.whys; if(Array.isArray(a)&&a.length) return a.map(x=>String(x).trim()).filter(Boolean); const w=(S.flags.why||'').trim(); return w?[w]:[]; }
+function pickAffirmation(){ const a=affirmations(); if(!a.length){ affShown=''; return ''; } if(a.length===1){ affShown=a[0]; return affShown; } let pick=a[Math.floor(Math.random()*a.length)]; let guard=0; while(pick===affShown && guard++<8) pick=a[Math.floor(Math.random()*a.length)]; affShown=pick; return pick; }
+function affLine(){ const txt=affShown||pickAffirmation(); return txt?`<p class="affline" data-tour="affirmation">${esc(txt)}</p>`:''; }
+
 const $app=document.getElementById('app');
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -708,11 +714,14 @@ const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   coin:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9.5A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5.5 1.5" stroke-linecap="round"/></svg>',
   flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
 
-function setTab(t){ tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+function setTab(t){ tab=t; sel.clear(); pickAffirmation(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
 document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>{haptic();setTab(b.dataset.tab)});
 function render(){
   document.querySelectorAll('.tabbar button').forEach((b,i)=>{ const on=b.dataset.tab===tab; b.classList.toggle('active',on); if(on) document.getElementById('tabind').style.transform=`translateX(${i*100}%)`; });
   $app.innerHTML=`<div class="page">${({today:vToday,progress:vProgress,friends:vFriends,shop:vShop,settings:vSettings})[tab]()}</div>`;
+  if(!affShown) pickAffirmation();
+  const page=$app.querySelector('.page'); const head=page?.querySelector('.head');
+  if(head && affirmations().length && !page.querySelector('[data-tour="affirmation"]')){ const wrap=document.createElement('div'); wrap.innerHTML=affLine(); if(wrap.firstChild) head.after(wrap.firstChild); }
   bind();
 }
 
@@ -729,6 +738,7 @@ function vToday(){
   <div class="head"><div><div class="eyebrow">${fmt(k,{weekday:'long',day:'numeric',month:'long'})}</div><h1>Today</h1></div>
     <div class="headpills"><span class="pill ${S.streak.login>=2?'accent':''}" data-tour="streak">${ICON.flame} ${S.streak.login}d</span>
       <button class="pill coins" data-go="shop" data-tour="coins">${ICON.coin} ${S.points.coins.toLocaleString()}</button></div></div>
+  ${affLine()}
   <div class="card ring-card" data-tour="ring">
     <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${circ}" stroke-dashoffset="${circ*(1-pct)}"/></svg>
       <div class="center"><div><b>+${d.points||0}</b><span>today</span></div></div></div>
@@ -980,10 +990,10 @@ function vSettings(){
     <div class="opt"><label>Haptics <span class="hint">where supported</span></label>${tg('haptics',st.haptics)}</div>
     <div class="opt"><label>Glow</label>${tg('glow',st.glow)}</div>
     <div class="opt"><label>Reset look</label><button class="btn sm" id="resetlook">Defaults</button></div></div></details>
-  <details class="acc"><summary>Your why <span class="muted">${(S.flags.whys||[]).length?(S.flags.whys.length+' set'):(S.flags.why?'set':'empty')}</span></summary><div class="body">
-    ${(S.flags.whys||(S.flags.why?[S.flags.why]:[])).map((w,i)=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(w)}</span><button class="iconbtn" data-delwhy="${i}" aria-label="Remove">${ICON.trash}</button></div>`).join('')||'<p class="muted small">Nothing yet.</p>'}
-    <div class="row" style="margin-top:10px"><input type="text" id="newwhy" placeholder="Add another why…" maxlength="200"><button class="btn primary" id="addwhy">Add</button></div>
-    <p class="tiny muted" style="margin-top:8px">Shown on the morning quote screen, rotating by day.</p></div></details>
+  <details class="acc" id="acc-affirmations"><summary>Affirmations <span class="muted">${affirmations().length?affirmations().length+' saved':'empty'}</span></summary><div class="body">
+    ${affirmations().map((w,i)=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(w)}</span><button class="iconbtn" data-delwhy="${i}" aria-label="Remove">${ICON.trash}</button></div>`).join('')||'<p class="muted small">Nothing yet. Add lines you want to see when you open Steady.</p>'}
+    <div class="row" style="margin-top:10px"><input type="text" id="newwhy" placeholder="Add an affirmation…" maxlength="200"><button class="btn primary" id="addwhy">Add</button></div>
+    <p class="tiny muted" style="margin-top:8px">One is picked at random when you open the app and again each time you change tabs. Morning screen shows one too.</p></div></details>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, times its habit strength (up to ×1.5). Coins are spent in the shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task has a 0–100% strength that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
@@ -1058,7 +1068,7 @@ function bind(){
   qa('[data-size]').forEach(b=>b.onclick=()=>{S.settings.textSize=clamp(S.settings.textSize+Number(b.dataset.size),80,130);save();applyTheme();render();keepLook();});
   const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings=fresh().settings;save();applyTheme();render();keepLook();toast('Look reset');};
   const syncWhys=()=>{ if(!Array.isArray(S.flags.whys)) S.flags.whys=[]; S.flags.why=S.flags.whys[0]||''; save(); };
-  const aw=q('#addwhy'); if(aw){ const add=()=>{ const v=q('#newwhy').value.trim(); if(!v) return; if(!Array.isArray(S.flags.whys)) S.flags.whys=[]; S.flags.whys.push(v); syncWhys(); haptic(); render(); document.querySelectorAll('.acc')[4]?.setAttribute('open',''); const a=[...document.querySelectorAll('.acc')].find(x=>x.textContent.includes('Your why')); if(a) a.open=true; }; aw.onclick=add; q('#newwhy').onkeydown=e=>{if(e.key==='Enter')add();}; }
+  const aw=q('#addwhy'); if(aw){ const add=()=>{ const v=q('#newwhy').value.trim(); if(!v) return; if(!Array.isArray(S.flags.whys)) S.flags.whys=[]; S.flags.whys.push(v); syncWhys(); haptic(); render(); document.querySelectorAll('.acc')[4]?.setAttribute('open',''); const a=[...document.querySelectorAll('.acc')].find(x=>x.id==='acc-affirmations'||x.textContent.includes('Affirmations')); if(a) a.open=true; }; aw.onclick=add; q('#newwhy').onkeydown=e=>{if(e.key==='Enter')add();}; }
   qa('[data-delwhy]').forEach(b=>b.onclick=()=>{ const i=Number(b.dataset.delwhy); S.flags.whys.splice(i,1); syncWhys(); haptic(); render(); const a=[...document.querySelectorAll('.acc')].find(x=>x.querySelector('#addwhy')); if(a) a.open=true; });
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
   const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
@@ -1144,7 +1154,8 @@ function missGate(){
 function quoteGate(next){
   const q=quoteToday(); if(!q||S.flags.quoteDate===today()){ next(); return; }
   const g=document.createElement('div'); g.className='gate';
-  g.innerHTML=`<p class="q">${esc(q.text)}</p><p class="by">${q.author&&q.author!=='—'?esc(q.author):''}</p><div class="actions"><button class="btn primary block" id="startday">Start the day</button>${(S.flags.whys?.length?S.flags.whys:(S.flags.why?[S.flags.why]:[]))[0]?`<p class="tiny muted" style="margin-top:18px;text-align:center">Your why: ${esc((S.flags.whys?.length?S.flags.whys:[S.flags.why])[(parse(today()).getDate()-1)%(S.flags.whys?.length||1)])}</p>`:''}</div>`;
+  const aff=pickAffirmation();
+  g.innerHTML=`<p class="q">${esc(q.text)}</p><p class="by">${q.author&&q.author!=='—'?esc(q.author):''}</p><div class="actions"><button class="btn primary block" id="startday">Start the day</button>${aff?`<p class="affline" style="margin-top:18px">${esc(aff)}</p>`:''}</div>`;
   document.body.appendChild(g);
   g.querySelector('#startday').onclick=()=>{ S.flags.quoteDate=today(); save(); haptic(); g.style.transition='opacity .3s'; g.style.opacity=0; setTimeout(()=>{g.remove();next();},300); };
 }
@@ -1163,7 +1174,7 @@ function onboarding(next){
       const n=Math.max(whys.length, whyIdx+1);
       const show=whys[whyIdx]??draft;
       const pills=whys.length?`<div class="chips" style="margin-top:12px">${whys.map((w,i)=>`<button type="button" class="chip ${i===whyIdx?'on':''}" data-why="${i}">${esc(w.length>28?w.slice(0,28)+'…':w)}</button>`).join('')}</div>`:'';
-      g.innerHTML=`${steps}<div class="row between" style="margin-bottom:8px"><button type="button" class="iconbtn" data-wb aria-label="Previous why" ${whyIdx<=0&&!whys.length?'disabled style="opacity:.3"':''}>‹</button><span class="tiny muted">Why ${whyIdx+1}${whys.length?` of ${Math.max(whys.length, whyIdx+1)}`:''}</span><button type="button" class="iconbtn" data-wa aria-label="Add another why">+</button></div><h1>Why does this matter to you?</h1><p>One line each. Add as many as you want — you’ll see them on days you need them.</p>${pills}<textarea id="onbwhy" style="margin-top:18px" placeholder="e.g. I want to trust myself again." maxlength="200">${esc(show)}</textarea><div class="actions row"><button class="btn ghost" data-b>‹ Back</button><button class="btn ghost" data-n>Skip</button><button class="btn primary grow" data-n>Next</button></div>`;
+      g.innerHTML=`${steps}<div class="row between" style="margin-bottom:8px"><button type="button" class="iconbtn" data-wb aria-label="Previous why" ${whyIdx<=0&&!whys.length?'disabled style="opacity:.3"':''}>‹</button><span class="tiny muted">Why ${whyIdx+1}${whys.length?` of ${Math.max(whys.length, whyIdx+1)}`:''}</span><button type="button" class="iconbtn" data-wa aria-label="Add another why">+</button></div><h1>Why does this matter to you?</h1><p>One line each. These become your affirmations — Steady picks one at random when you need it.</p>${pills}<textarea id="onbwhy" style="margin-top:18px" placeholder="e.g. I want to trust myself again." maxlength="200">${esc(show)}</textarea><div class="actions row"><button class="btn ghost" data-b>‹ Back</button><button class="btn ghost" data-n>Skip</button><button class="btn primary grow" data-n>Next</button></div>`;
     }
     if(step===2) g.innerHTML=`${steps}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions row"><button class="btn ghost" data-b>‹ Back</button><button class="btn primary grow" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
     g.querySelectorAll('[data-b]').forEach(b=>b.onclick=()=>{ if(step===1) commitDraft(); haptic(); if(step>0){step--;draw();} });
