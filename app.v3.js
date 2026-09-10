@@ -73,12 +73,25 @@ function rewardPrice(r){
    You say how often you want a thing; the app works out the price from what you
    actually earn. Then the Shop shows whether your wishes fit inside a month. */
 const FREQS = [
-  {id:'weekly',    label:'Weekly',        per:4.33},
-  {id:'fortnight', label:'Fortnightly',   per:2.17},
-  {id:'monthly',   label:'Monthly',       per:1},
-  {id:'rare',      label:'Now and then',  per:0.5},
+  {id:'weekly',    label:'Weekly',      per:4.33},
+  {id:'fortnight', label:'Fortnightly', per:2.17},
+  {id:'monthly',   label:'Monthly',     per:1},
+  {id:'custom',    label:'Custom',      per:null},   // you say how many times a month
 ];
 const freqOf = id => FREQS.find(f=>f.id===id) || FREQS[2];
+const MAX_PER_MONTH = 30;
+/* Times a month, whichever way it was set. */
+function perMonthOf(r){
+  if(rewardFreq(r)==='custom') return clamp(Number(r.perMonth)||1, 0.25, MAX_PER_MONTH);
+  return freqOf(rewardFreq(r)).per;
+}
+function freqLabel(r){
+  if(rewardFreq(r)==='custom'){ const n=perMonthOf(r); return `${Math.round(n*10)/10}× a month`; }
+  return freqOf(rewardFreq(r)).label;
+}
+function perFor(freqId, perMonth){
+  return freqId==='custom' ? clamp(Number(perMonth)||1, 0.25, MAX_PER_MONTH) : freqOf(freqId).per;
+}
 const BUDGET_SHARE = 0.8;                 // leave slack for freezes, challenges and chests
 /* Real coins a month: measured if there's history, estimated from the task list if not. */
 function monthlyIncome(){
@@ -88,21 +101,20 @@ function monthlyIncome(){
   return {coins:Math.max(1,round10(clearDayPay()*30.4*0.75)), real:false};
 }
 function rewardFreq(r){ return r.freq || 'monthly'; }
-function monthlyCostOf(r){ return rewardPrice(r)*freqOf(rewardFreq(r)).per; }
+function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
 /* What each reward should cost if the active set is to fit the budget. */
-function suggestFromFreq(freqId, others){
+function suggestFromFreq(freqId, others, perMonth){
   const inc=monthlyIncome().coins*BUDGET_SHARE;
   const list=(others||S.rewards.filter(x=>x.active));
-  const shares=list.length+1;                     // this one plus the rest
-  const share=inc/shares;
-  return Math.max(MIN_REWARD_PRICE, round10(share/freqOf(freqId).per));
+  const share=inc/(list.length+1);                // this one plus the rest
+  return Math.max(MIN_REWARD_PRICE, round10(share/perFor(freqId, perMonth)));
 }
 function budgetState(){
   const inc=monthlyIncome();
   const active=S.rewards.filter(x=>x.active);
   const spend=active.reduce((a,r)=>a+monthlyCostOf(r),0);
   const pct=inc.coins?Math.round(100*spend/inc.coins):0;
-  const redemptions=active.reduce((a,r)=>a+freqOf(rewardFreq(r)).per,0);
+  const redemptions=active.reduce((a,r)=>a+perMonthOf(r),0);
   return {income:inc.coins, real:inc.real, spend:Math.round(spend), pct,
     redemptions:Math.round(redemptions*10)/10, active,
     level: pct>100?'over' : pct>90?'tight' : 'ok'};
@@ -114,9 +126,9 @@ function rebalancePlan(){
   const share=inc/b.active.length;
   return b.active.map(r=>{
     const from=rewardPrice(r);
-    const to=Math.max(MIN_REWARD_PRICE, round10(share/freqOf(rewardFreq(r)).per));
+    const to=Math.max(MIN_REWARD_PRICE, round10(share/perMonthOf(r)));
     const progress=Math.min(1,(S.points.coins||0)/from);
-    return {r,from,to,freq:rewardFreq(r),raises:to>from,halfway:progress>=0.5};
+    return {r,from,to,freq:rewardFreq(r),label:freqLabel(r),per:perMonthOf(r),raises:to>from,halfway:progress>=0.5};
   }).filter(x=>x.to!==x.from);
 }
 function applyRebalance(plan){ plan.forEach(x=>{ x.r.price=x.to; }); save(); }
@@ -1182,7 +1194,7 @@ function celebrate(){
   let f=0; (function step(){ x.clearRect(0,0,c.width,c.height); P.forEach(p=>{p.vy+=.45;p.x+=p.vx;p.y+=p.vy;p.a+=p.s;x.save();x.translate(p.x,p.y);x.rotate(p.a);x.globalAlpha=Math.max(0,1-f/70);x.fillStyle=p.c;x.fillRect(-p.r/2,-p.r/2,p.r,p.r*1.6);x.restore();}); if(++f<80) requestAnimationFrame(step); else x.clearRect(0,0,c.width,c.height); })();
 }
 /* ---------- Router ---------- */
-let remOpen=false, rewOpen=false, newRewardFreq='monthly';
+let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
 let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today'}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview'};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
@@ -1665,13 +1677,16 @@ function vSettings(){
       <input type="text" id="newreward" placeholder="e.g. Takeaway night" maxlength="60" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
       <div><span class="plabel">How often would you like this?</span>
         <div class="chips" id="freqpicks">${FREQS.map(f=>`<button type="button" class="chip ${newRewardFreq===f.id?'on':''}" data-freq="${f.id}">${f.label}</button>`).join('')}</div></div>
-      <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" step="10" value="${suggestFromFreq(newRewardFreq)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
+      ${newRewardFreq==='custom'?`<div class="row" style="align-items:center;gap:8px">
+        <input type="number" id="newper" min="1" max="${MAX_PER_MONTH}" step="1" value="${newRewardPer}" style="width:78px;padding:12px 8px;text-align:center">
+        <span class="small muted">times a month</span></div>`:''}
+      <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" step="10" value="${suggestFromFreq(newRewardFreq,null,newRewardPer)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
         <button class="btn primary grow" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
-      <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq))}</p>
+      <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq,null,newRewardPer))}</p>
       <p class="tiny muted">Suggested from what you actually earn. Type over it if you disagree — the budget above keeps you honest.</p>
     </div>
     ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}
-      <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${freqOf(rewardFreq(x)).label.toLowerCase()} · ${Math.round(monthlyCostOf(x))}/month</span></span>
+      <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
       <button class="iconbtn" data-editreward="${x.id}" aria-label="Edit">${ICON.edit}</button><button class="iconbtn" data-delreward="${x.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')
       ||'<p class="muted small">Tell it how often you want something and it works out the price from what you earn.</p>'}</div></details>
   <details class="acc"><summary>Quotes <span class="muted">${S.quotes.length}</span></summary><div class="body">
@@ -1725,7 +1740,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Day cleared.</b> Finish every task and you get +${CLEAR_PER_TASK} per task on top. Nothing ever subtracts points.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days (Mon–Sun) and a free day's coins (+${chestCoins()}) land on Monday.</p>
     <p><b style="color:var(--fg)">Streak.</b> Open the app daily. +5 from day two, +10 from day seven, +15 from day thirty. A streak freeze (${freezeCost()} coins) covers one missed day.</p>
-    <p><b style="color:var(--fg)">Shop.</b> You say how often you'd like a reward — weekly, fortnightly, monthly, now and then — and the price is worked out from what you actually earn (measured over your last four weeks, not a theoretical perfect run). Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; over 90% it goes amber, over 100% red. <b>Balance these for me</b> rescales every price to fit while keeping your chosen frequencies, and shows you the before and after first — nothing changes until you tap Apply. Adding a reward makes the others cheaper, because a fixed income split more ways costs less each time: you can have more different rewards, or rarer and more meaningful ones, not both.</p>
+    <p><b style="color:var(--fg)">Shop.</b> You say how often you'd like a reward — weekly, fortnightly, monthly, or a custom number of times a month — and the price is worked out from what you actually earn (measured over your last four weeks, not a theoretical perfect run). Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; over 90% it goes amber, over 100% red. <b>Balance these for me</b> rescales every price to fit while keeping your chosen frequencies, and shows you the before and after first — nothing changes until you tap Apply. Adding a reward makes the others cheaper, because a fixed income split more ways costs less each time: you can have more different rewards, or rarer and more meaningful ones, not both.</p>
     <p><b style="color:var(--fg)">Old note.</b> You set each reward's price in coins. Week and fortnight chips are 7 and 14 clear days from the tasks you have set (each task pays ${TASK_BASE} plus ${CLEAR_PER_TASK} for clearing). As you type a price, the days shown are that price divided by a clear day. Lowering a price asks you to confirm. You can only spend when average habit strength is ${BUY_STRENGTH}%+. Missing never costs you anything.</p>
     <p><b style="color:var(--fg)">Task cap.</b> Up to ${MAX_TASKS} tasks.</p>
     <p><b style="color:var(--fg)">Today's list.</b> The list under your tasks is outside the whole economy — no coins, no strength, no miss gate. Unfinished items just carry over. The backlog is a pool to pull from when you have cleared your day and are at a loose end.</p>
@@ -1843,11 +1858,16 @@ function bind(){
   qa('[data-freq]').forEach(b=>b.onclick=()=>{ newRewardFreq=b.dataset.freq;
     const keep=(nr?.value||''); haptic(); rewOpen=true; render();
     const n2=document.getElementById('newreward'); if(n2) n2.value=keep; });
+  const nper=q('#newper'); if(nper) nper.oninput=()=>{ newRewardPer=clamp(Math.round(Number(nper.value)||1),1,MAX_PER_MONTH);
+    const np2=document.getElementById('newprice'); if(np2){ np2.value=suggestFromFreq('custom',null,newRewardPer); }
+    refreshEta(); };
   const rb=q('[data-rebalance]'); if(rb) rb.onclick=()=>rebalanceSheet();
   const addR=()=>{ const v=(nr?.value||'').trim(); if(!v||S.rewards.filter(x=>x.active).length>=MAX_REWARDS) return;
-    let price=Math.round(Number(np?.value)||0); if(!price) price=suggestFromFreq(newRewardFreq);
+    let price=Math.round(Number(np?.value)||0); if(!price) price=suggestFromFreq(newRewardFreq,null,newRewardPer);
     if(price<MIN_REWARD_PRICE){ toast('Minimum '+MIN_REWARD_PRICE+' coins'); return; }
-    S.rewards.push({id:uid(),name:v,active:true,tier:'custom',price,freq:newRewardFreq}); save(); haptic(); rewOpen=true; render();
+    const rec={id:uid(),name:v,active:true,tier:'custom',price,freq:newRewardFreq};
+    if(newRewardFreq==='custom') rec.perMonth=clamp(Math.round(Number(q('#newper')?.value)||newRewardPer),1,MAX_PER_MONTH);
+    S.rewards.push(rec); save(); haptic(); rewOpen=true; render();
     const b=budgetState();
     if(b.level==='over') toast('Over budget — tap Balance these for me','Balance',()=>rebalanceSheet());
     else toast('Reward added'); };
@@ -1929,17 +1949,25 @@ function editReward(r){
   const sp=suggestedPrices();
   const o=overlay(`<div class="modal"><h2>Price for “${esc(r.name)}”</h2>
     <div style="margin-top:12px"><span class="plabel">How often</span>
-      <div class="chips" id="efreq">${FREQS.map(f=>`<button type="button" class="chip ${rewardFreq(r)===f.id?'on':''}" data-ef="${f.id}">${f.label}</button>`).join('')}</div></div>
+      <div class="chips" id="efreq">${FREQS.map(f=>`<button type="button" class="chip ${rewardFreq(r)===f.id?'on':''}" data-ef="${f.id}">${f.label}</button>`).join('')}</div>
+      <div class="row" id="eperwrap" style="align-items:center;gap:8px;margin-top:8px;${rewardFreq(r)==='custom'?'':'display:none'}">
+        <input type="number" id="eper" min="1" max="${MAX_PER_MONTH}" step="1" value="${Math.round(perMonthOf(r))}" style="width:78px;padding:10px 8px;text-align:center">
+        <span class="small muted">times a month</span></div></div>
     <input type="number" id="ep" value="${cur}" min="${MIN_REWARD_PRICE}" step="10" style="margin-top:12px">
     <div class="chips" style="margin-top:10px"><button type="button" class="chip" data-epreset="${sp.week}">A week · ${sp.week}</button><button type="button" class="chip" data-epreset="${sp.fortnight}">A fortnight · ${sp.fortnight}</button></div>
     <p class="tiny muted" id="eeta" style="margin-top:10px">${earnEta(cur)}</p>
     <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
   const i=o.querySelector('#ep'); const eta=o.querySelector('#eeta');
   let ef=rewardFreq(r);
+  const eperWrap=o.querySelector('#eperwrap'), eper=o.querySelector('#eper');
+  const epv=()=>clamp(Math.round(Number(eper?.value)||1),1,MAX_PER_MONTH);
   o.querySelectorAll('[data-ef]').forEach(b=>b.onclick=()=>{ ef=b.dataset.ef;
     o.querySelectorAll('[data-ef]').forEach(x=>x.classList.toggle('on',x===b));
+    if(eperWrap) eperWrap.style.display = ef==='custom' ? '' : 'none';
     const others=S.rewards.filter(x=>x.active&&x.id!==r.id);
-    o.querySelector('#ep').value=suggestFromFreq(ef,others); upd(); haptic(); });
+    o.querySelector('#ep').value=suggestFromFreq(ef,others,epv()); upd(); haptic(); });
+  if(eper) eper.oninput=()=>{ const others=S.rewards.filter(x=>x.active&&x.id!==r.id);
+    o.querySelector('#ep').value=suggestFromFreq('custom',others,epv()); upd(); };
   const upd=()=>{ const n=Math.round(Number(i.value)||0); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):earnEta(n); };
   i.oninput=upd;
   o.querySelectorAll('[data-epreset]').forEach(b=>b.onclick=()=>{ i.value=b.dataset.epreset; o.querySelectorAll('[data-epreset]').forEach(x=>x.classList.toggle('on',x===b)); upd(); });
@@ -1949,10 +1977,10 @@ function editReward(r){
     if(n<cur){
       close(o);
       const instant=S.points.coins>=n && S.points.coins<cur;
-      modal(`<h2>Lower the price?</h2><p class="muted">${esc(r.name)} from ${cur} to ${n} coins.${instant?' You will be able to buy it immediately.':''}</p>`,'Lower it',()=>{ r.price=n; r.tier='custom'; r.freq=ef; save(); rewOpen=true; render(); });
+      modal(`<h2>Lower the price?</h2><p class="muted">${esc(r.name)} from ${cur} to ${n} coins.${instant?' You will be able to buy it immediately.':''}</p>`,'Lower it',()=>{ r.price=n; r.tier='custom'; r.freq=ef; if(ef==='custom') r.perMonth=epv(); else delete r.perMonth; save(); rewOpen=true; render(); });
       return;
     }
-    r.price=n; r.tier='custom'; r.freq=ef; save(); close(o); rewOpen=true; render();
+    r.price=n; r.tier='custom'; r.freq=ef; if(ef==='custom') r.perMonth=epv(); else delete r.perMonth; save(); close(o); rewOpen=true; render();
   };
 }
 
@@ -2136,12 +2164,12 @@ function rebalanceSheet(){
   const plan=rebalancePlan();
   if(!plan.length){ toast('Already balanced'); return; }
   const b=budgetState();
-  const after=plan.reduce((a,x)=>a+x.to*freqOf(x.freq).per,0)
+  const after=plan.reduce((a,x)=>a+x.to*x.per,0)
     + b.active.filter(r=>!plan.some(x=>x.r.id===r.id)).reduce((a,r)=>a+monthlyCostOf(r),0);
   const warn=plan.filter(x=>x.raises&&x.halfway);
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Rebalance your rewards?</h2>
     <p class="muted small" style="margin-bottom:12px">Frequencies stay exactly as you set them. Only the prices move.</p>
-    <ul class="list">${plan.map(x=>`<li><div><div>${esc(x.r.name)}</div><div class="tiny muted">${freqOf(x.freq).label.toLowerCase()}</div></div>
+    <ul class="list">${plan.map(x=>`<li><div><div>${esc(x.r.name)}</div><div class="tiny muted">${esc(x.label.toLowerCase())}</div></div>
       <div style="text-align:right"><span class="tiny muted" style="text-decoration:line-through">${x.from}</span>
       <b style="margin-left:8px;color:${x.raises?'var(--danger)':'var(--accent)'}">${x.to}</b></div></li>`).join('')}</ul>
     <p class="tiny muted" style="margin-top:10px">Afterwards: ${Math.round(after)} a month of your ~${b.income}.</p>
