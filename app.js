@@ -14,8 +14,11 @@ const SYNC = {
 };
 const MAX_REWARDS = 10, BUY_STRENGTH = 70, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
 const MAX_TASKS = 10, MIN_REWARD_PRICE = 10;
-const CHAL_PEOPLE_MAX = 4;
-const CHAL_PARTY = {legendary:1, rare:2, common:2};
+const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
+const CREW_MAX = 8;              // past this a chat stops being a conversation
+const CHAL_PARTY_MAX = 6;
+const CREW_BONUS_PER_HEAD = 0.10, CREW_BONUS_CAP = 2.0;
+const CHAL_PARTY = {legendary:CHAL_PARTY_MAX, rare:CHAL_PARTY_MAX, common:CHAL_PARTY_MAX};
 /* Rewards are priced in coins you set. Week/fortnight chips suggest your real earn rate. */
 const OT_PER = 5, OT_TASK_CAP = 10, OT_DAY_CAP = 20; // 1 coin per 5 min over target, capped per task and per day
 const TIER_DAYS = {week:7, fortnight:14};
@@ -165,6 +168,7 @@ function fresh(){
     quotes: [],
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
     recaps:[], me:null, auth:'out', friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null,
+    crews:[], msgs:{}, muted:[],
     settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true},
     flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
     pendingMisses:[], undo:null,
@@ -283,6 +287,82 @@ function buildRecap(n,name){
 function earnRecap(){ const due=dueRecap(); if(!due) return null;
   const r=buildRecap(due.n,due.name); S.recaps.push(r); save(); return r; }
 
+/* ---------- Quick chat ----------
+   Fixed phrases only, Rocket-League style. Nobody can type anything, so there is
+   nothing to moderate, nothing to leak, and no way to be nasty in it. Phrases are
+   chosen to be hard to use as a dig — no sarcasm-bait, no thumbs-down. */
+const PHRASES = [
+  {g:'Rallying',  items:[
+    {id:'p1',  t:"Let's clear it today."},
+    {id:'p2',  t:"I'm in."},
+    {id:'p3',  t:"Come on then."},
+    {id:'p4',  t:"Who's up for a challenge?"},
+  ]},
+  {g:'Progress',  items:[
+    {id:'p5',  t:"Done for today."},
+    {id:'p6',  t:"All cleared."},
+    {id:'p7',  t:"Halfway there."},
+    {id:'p8',  t:"Just my last one to go."},
+  ]},
+  {g:'Honest',    items:[
+    {id:'p9',  t:"I slipped today."},
+    {id:'p10', t:"Rough day, sorry."},
+    {id:'p11', t:"Ran out of time."},
+    {id:'p12', t:"Wasn't feeling it."},
+    {id:'p13', t:"I'll make it up tomorrow."},
+  ]},
+  {g:'Support',   items:[
+    {id:'p14', t:"You've got this."},
+    {id:'p15', t:"Don't sweat it — tomorrow."},
+    {id:'p16', t:"Proud of you."},
+    {id:'p17', t:"Good going."},
+    {id:'p18', t:"Same here, honestly."},
+  ]},
+  {g:'Checking in',items:[
+    {id:'p19', t:"You still in?"},
+    {id:'p20', t:"How's it going?"},
+    {id:'p21', t:"Need a nudge?"},
+    {id:'p22', t:"Thanks for the push."},
+  ]},
+];
+const EMOTES = ['💪','🔥','👏','🙌','❤️','🙏','😅','😴','☕','🎯'];
+const PHRASE_MAP = Object.fromEntries(PHRASES.flatMap(g=>g.items.map(i=>[i.id,i.t])));
+const MSG_LIMIT_PER_MIN = 8;                      // stops phrase spamming
+
+/* ---------- Crews (group chats) ---------- */
+function crewList(){ return S.crews||(S.crews=[]); }
+function crewOf(id){ return crewList().find(c=>c.id===id); }
+function crewMembers(c){ return (c.memberIds||[]).map(id=>S.friends[id]).filter(Boolean); }
+function crewSize(c){ return crewMembers(c).length+1; }              // +1 for you
+function crewName(c){
+  if(c.name) return c.name;
+  const n=crewMembers(c).map(f=>f.name);
+  return n.length?(n.length<=2?n.join(' & '):n.slice(0,2).join(', ')+' +'+(n.length-2)):'Empty crew';
+}
+function makeCrew(memberIds,name){
+  const c={id:uid(),name:name||'',memberIds:[...new Set(memberIds)].slice(0,CREW_MAX-1),createdAt:Date.now()};
+  crewList().push(c); S.msgs[c.id]=[]; save(); return c;
+}
+function msgsOf(id){ return (S.msgs[id]||(S.msgs[id]=[])); }
+function rateOk(id){
+  const now=Date.now();
+  return msgsOf(id).filter(m=>m.from==='me'&&now-m.at<60000).length < MSG_LIMIT_PER_MIN;
+}
+function sendMsg(crewId,kind,code){
+  if(!rateOk(crewId)) return false;
+  msgsOf(crewId).push({id:uid(),from:'me',kind,code,at:Date.now()});
+  S.msgs[crewId]=msgsOf(crewId).slice(-200);
+  save(); Sync.sendMessage(crewId,kind,code).catch(()=>{});
+  return true;
+}
+function crewUnread(c){ const seen=c.seenAt||0; return msgsOf(c.id).filter(m=>m.from!=='me'&&m.at>seen).length; }
+function markCrewSeen(c){ c.seenAt=Date.now(); save(); }
+function isMuted(id){ return (S.muted||[]).includes(id); }
+function toggleMute(id){ S.muted=S.muted||[]; S.muted=isMuted(id)?S.muted.filter(x=>x!==id):[...S.muted,id]; save(); }
+
+/* Group challenges pay more per head, capped so a big crew is not a shortcut. */
+function crewMultiplier(n){ return Math.min(CREW_BONUS_CAP, 1 + CREW_BONUS_PER_HEAD*Math.max(0,n-2)); }
+
 /* ---------- Friends ---------- */
 const CHEER_COINS = 5;
 const DEMO_NAMES = ['Sam','Maya','Emily','Harry','Alex','Jordan'];
@@ -342,9 +422,9 @@ function chalCounts(list){
 }
 function tierSlotOpen(tier, list){
   const n=chalCounts(list);
-  if(tier==='legendary') return n.legendary<1;
-  if(tier==='rare') return n.rare<1 && n.common===0;
-  if(tier==='common') return n.common<2 && n.rare===0;
+  if(tier==='legendary') return n.legendary<1;   // the tiers run side by side:
+  if(tier==='rare')      return n.rare<1;        // one legendary, one rare and
+  if(tier==='common')    return n.common<2;      // two commons can all be live
   return false;
 }
 function peopleLeft(list){ return Math.max(0, CHAL_PEOPLE_MAX - chalCounts(list).people); }
@@ -430,13 +510,15 @@ function challengeProgress(ch){
   const combined=mine+theirs.reduce((a,t)=>a+t.n,0);
   return {have:Math.min(combined,need),need,mine,theirs};
 }
-function startChallenge(tier,questId,memberIds){
+function startChallenge(tier,questId,memberIds,crewId){
   const def=findChallenge(questId);
   if(!def||def.tier!==tier) return null;
   const ids=[...new Set(memberIds||[])].filter(id=>S.friends[id]);
-  const draft={id:uid(),questId,tier,startedAt:today(),memberIds:ids};
+  const draft={id:uid(),questId,tier,startedAt:today(),memberIds:ids,crewId:crewId||null};
   if(!slotOk(draft,S.challenges)) return null;
-  S.challenges=chalList().concat(draft); save(); return draft;
+  S.challenges=chalList().concat(draft); save();
+  if(crewId) msgsOf(crewId).push({id:uid(),from:'me',kind:'system',code:`${TIERS_C[tier].label} challenge started: ${def.name}`,at:Date.now()});
+  save(); return draft;
 }
 function dropChallenge(id){
   S.challenges=chalList().filter(c=>c.id!==id); save();
@@ -448,7 +530,9 @@ function claimChest(cid){
   const raw=chalList().find(c=>c.id===cid); if(!raw) return null;
   const ch=liveQuest(raw); if(!ch) return null;
   const pr=challengeProgress(ch); if(pr.have<pr.need) return null;
-  const t=TIERS_C[ch.tier]; const amount=t.rolls[Math.floor(Math.random()*t.rolls.length)];
+  const t=TIERS_C[ch.tier];
+  const heads=(ch.memberIds||[]).length+1;
+  const amount=Math.round(t.rolls[Math.floor(Math.random()*t.rolls.length)]*crewMultiplier(heads)/5)*5;
   S.points.coins+=amount; S.points.xp+=amount;
   for(const f of ch.members){
     const p=pairOf(f);
@@ -457,7 +541,9 @@ function claimChest(cid){
     p.chests.push({tier:ch.tier,amount,at:today(),name:ch.name,crew:ch.members.map(x=>x.name)});
   }
   S.challenges=chalList().filter(c=>c.id!==cid); save();
-  return {tier:ch.tier,amount,name:ch.name,rolls:t.rolls,colour:t.colour};
+  const mult=crewMultiplier(heads);
+  return {tier:ch.tier,amount,name:ch.name,colour:t.colour,heads,
+    rolls:t.rolls.map(r=>Math.round(r*mult/5)*5)};
 }
 function migratePairChallenges(state){
   const m=state||S;
@@ -703,6 +789,41 @@ const Sync = {
     });
     if(changed) save();
   },
+  async sendMessage(crewId,kind,code){
+    if(!this.live()||!this.signedIn()) return;
+    try{ await api('/rest/v1/messages',{method:'POST',
+      body:{crew_id:crewId,from_id:S.me.id,kind,code},headers:{Prefer:'return=minimal'}});
+      S.syncError=null; save();
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  async upsertCrew(c){
+    if(!this.live()||!this.signedIn()) return;
+    try{
+      await api('/rest/v1/crews?on_conflict=id',{method:'POST',
+        body:{id:c.id,owner_id:S.me.id,name:c.name||null},
+        headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+      const rows=[S.me.id,...(c.memberIds||[])].map(uid=>({crew_id:c.id,user_id:uid}));
+      await api('/rest/v1/crew_members?on_conflict=crew_id,user_id',{method:'POST',body:rows,
+        headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+      S.syncError=null; save();
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  async pullMessages(){
+    if(!this.live()||!this.signedIn()) return;
+    const ids=crewList().map(c=>c.id); if(!ids.length) return;
+    try{
+      const since=new Date(Date.now()-7*864e5).toISOString();
+      const rows=await api(`/rest/v1/messages?crew_id=in.(${ids.join(',')})&created_at=gte.${since}&select=*&order=created_at.asc`);
+      (rows||[]).forEach(r=>{
+        if(r.from_id===S.me.id) return;
+        const list=msgsOf(r.crew_id);
+        if(list.some(m=>m.sid===r.id)) return;
+        list.push({id:uid(),sid:r.id,from:r.from_id,kind:r.kind,code:r.code,at:new Date(r.created_at).getTime()});
+      });
+      Object.keys(S.msgs).forEach(k=>{ S.msgs[k]=S.msgs[k].sort((a,b)=>a.at-b.at).slice(-200); });
+      save();
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
   async cheer(f,kind){
     const p=S.pairs[f.id]||(S.pairs[f.id]={}); p.cheerDate=today(); save();
     if(!this.live()||!this.signedIn()) return;
@@ -911,7 +1032,7 @@ const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   coin:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9.5A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5.5 1.5" stroke-linecap="round"/></svg>',
   flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
 
-function setTab(t){ tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+function setTab(t){ endTour(true); tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
 function render(){
   if(!$app || !document.body.contains($app)) $app=document.getElementById('app');
   if(!$app) return;
@@ -1199,16 +1320,18 @@ function challengeCard(raw){
         <button class="btn sm ghost" data-dropchal="${ch.id}">Drop</button></div>`}
   </div>`;
 }
-function startChallengeModal(){
+function startChallengeModal(crewId,after){
+  const crew=crewId?crewOf(crewId):null;
   const busy=chalBusyPeople();
-  const free=friendList().filter(f=>!busy.has(f.id));
+  const free=(crew?crewMembers(crew):friendList()).filter(f=>!busy.has(f.id));
   if(!free.length){ toast('Everyone is already on a challenge'); return; }
   const left=peopleLeft();
-  if(left<1){ toast('Four people already on challenges'); return; }
+  if(left<1){ toast('Too many people on challenges'); return; }
   const openTiers=['legendary','rare','common'].filter(t=>tierSlotOpen(t));
   if(!openTiers.length){ toast('No challenge slots free'); return; }
   const picks=new Set();
-  if(free.length===1) picks.add(free[0].id);
+  if(crew) free.slice(0,CHAL_PARTY_MAX).forEach(f=>picks.add(f.id));   // the chat IS the group — everyone's in by default
+  else if(free.length===1) picks.add(free[0].id);
   let tier=openTiers.includes('legendary')?'legendary':openTiers[0];
   let qid=CHALLENGES[tier][0].id;
   const o=overlay(`<div class="modal tall"><div id="chalform"></div></div>`,'center');
@@ -1217,15 +1340,14 @@ function startChallengeModal(){
     const atCap=picks.size>=cap;
     if(picks.size>cap) [...picks].slice(cap).forEach(id=>picks.delete(id));
     const box=o.querySelector('#chalform');
-    const why=!tierSlotOpen('rare')&&tierSlotOpen('common')?'A common is running, so rare is closed.':
-      !tierSlotOpen('common')&&tierSlotOpen('rare')?'A rare is running, so commons are closed.':
-      !tierSlotOpen('legendary')?'Legendary slot is taken.':'One legendary with one friend, plus a rare or two commons (two people max).';
-    const whoHint=tier==='legendary'?'Legendary is one friend.':'Rare and common take up to two.';
+    const n=chalCounts();
+    const why=`Slots: legendary ${n.legendary}/1 · rare ${n.rare}/1 · common ${n.common}/2. Harder tier, harder challenge, bigger chest.`;
+    const whoHint=`Up to ${CHAL_PARTY_MAX} people on any tier. The more of you, the bigger the pot — and the harder it gets.`;
     box.innerHTML=`<h2>Start a challenge</h2>
       <p class="tiny muted" style="margin-top:6px">${whoHint} ${cap} ${cap===1?'seat':'seats'} left on this one.</p>
       <p class="small" style="margin-top:14px"><b>Who's in</b></p>
       <div class="chips" style="margin-top:8px">${free.map(f=>`<button type="button" class="chip ${picks.has(f.id)?'on':''}" data-fid="${f.id}" ${!picks.has(f.id)&&atCap?'disabled':''}>${esc(f.name)}</button>`).join('')}</div>
-      <p class="tiny muted" style="margin-top:8px">${picks.size} of ${cap} selected</p>
+      <p class="tiny muted" style="margin-top:8px">${picks.size} of ${cap} selected${picks.size>=2?` · pot ×${crewMultiplier(picks.size+1).toFixed(2).replace(/0$/,'')} for ${picks.size+1} people`:''}</p>
       <p class="small" style="margin-top:16px"><b>Tier</b></p>
       <div class="chips" style="margin-top:8px">${['legendary','rare','common'].map(t=>{
         const open=tierSlotOpen(t); const label=TIERS_C[t].label;
@@ -1239,7 +1361,8 @@ function startChallengeModal(){
     box.querySelectorAll('[data-qid]').forEach(b=>b.onclick=()=>{ qid=b.dataset.qid; haptic(); draw(); });
     box.querySelector('[data-x]').onclick=()=>close(o);
     const ok=box.querySelector('[data-ok]');
-    ok.onclick=()=>{ if(!picks.size) return; const started=startChallenge(tier,qid,[...picks]); close(o); if(started){ haptic('success'); render(); toast('Challenge started'); } else toast('Could not start that'); };
+    ok.onclick=()=>{ if(!picks.size) return; const started=startChallenge(tier,qid,[...picks],crewId); close(o);
+      if(started){ haptic('success'); if(after) after(); else render(); toast('Challenge started'); } else toast('Could not start that'); };
   };
   draw();
   o.onclick=e=>{ if(e.target===o) close(o); };
@@ -1276,7 +1399,13 @@ function vFriends(){
     ${!live?`<p class="tiny muted" style="margin-top:10px">No server configured — adding a code creates a demo friend so you can see how it works.</p>`:
       `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}</div>
 
-  ${fs.length?`<div class="section" data-tour="friend"><h2>Challenges <span class="muted">${chalCounts().people} / ${CHAL_PEOPLE_MAX}</span></h2>
+  ${fs.length?`<div class="section" data-tour="crews"><h2>Chats <span class="muted">${crewList().length}</span></h2>
+    ${crewList().length?crewList().map(c=>{const u=crewUnread(c),last=msgsOf(c.id).slice(-1)[0];
+      return `<button class="card crewrow" data-crew="${c.id}"><div class="grow"><div class="row between"><b>${esc(crewName(c))}</b>${u?`<span class="pill accent tiny">${u}</span>`:''}</div>
+        <p class="tiny muted">${crewSize(c)} people${last?` · ${last.kind==='emote'?esc(last.code):esc(PHRASE_MAP[last.code]||'…')}`:' · say something'}</p></div><span class="chev">›</span></button>`;}).join(''):
+      `<div class="card empty"><b>No chats yet</b>Start one with a friend, or a group — challenges get set up inside them.</div>`}
+    <button class="btn ${crewList().length?'':'primary'} block" id="newcrew" style="margin-top:10px">New chat</button></div>
+  <div class="section" data-tour="friend"><h2>Challenges <span class="muted">${chalCounts().people} / ${CHAL_PEOPLE_MAX}</span></h2>
     <p class="tiny muted" style="margin:-4px 0 10px">${slotSummary()}</p>
     <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':peopleLeft()<1?'Four people already on a challenge':'No slot free'}</button>
     ${chalList().map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>One legendary with one friend, plus a rare or two commons (two people each). Grouping on rare or common shares the chest.</div>`}
@@ -1393,8 +1522,10 @@ function vSettings(){
     <p><b style="color:var(--fg)">Shop.</b> You set each reward's price in coins. Week and fortnight chips are 7 and 14 clear days from the tasks you have set (each task pays ${TASK_BASE} plus ${CLEAR_PER_TASK} for clearing). As you type a price, the days shown are that price divided by a clear day. Lowering a price asks you to confirm. You can only spend when average habit strength is ${BUY_STRENGTH}%+. Missing never costs you anything.</p>
     <p><b style="color:var(--fg)">Task cap.</b> Up to ${MAX_TASKS} tasks.</p>
     <p><b style="color:var(--fg)">Today's list.</b> The list under your tasks is outside the whole economy — no coins, no strength, no miss gate. Unfinished items just carry over. The backlog is a pool to pull from when you have cleared your day and are at a loose end.</p>
+    <p><b style="color:var(--fg)">Chats.</b> Group chats of up to ${CREW_MAX}. You can't type — you pick from a set list of phrases and emotes, like the quick chat in a game. Nothing to moderate, nothing to leak, and no way to be unpleasant in it. There's a rate limit so nobody can spam. Challenges are set up inside a chat, and everyone in it joins by default.</p>
+    <p><b style="color:var(--fg)">Group challenges.</b> Up to ${CHAL_PARTY_MAX} people. Each extra head adds ${Math.round(CREW_BONUS_PER_HEAD*100)}% to the pot, capped at double. Bigger groups make the streak-type challenges genuinely harder — one person's bad Tuesday can reset it — so that bonus is payment for real risk.</p>
     <p><b style="color:var(--fg)">Friends.</b> Pair up by swapping codes. Shared streaks, cheers and nudges work with everyone. Cheer them when they've cleared (+${CHEER_COINS} coins to them, once a day) or nudge when they haven't. There's no leaderboard, deliberately.</p>
-    <p><b style="color:var(--fg)">Challenges and chests.</b> You start these. Up to ${CHAL_PEOPLE_MAX} people can be on live challenges at once. One legendary at a time, with one friend. Rare and common can take two people. So a legendary with Emily can run next to a common with Harry — they cannot both sit on the legendary. Finish it and you open <i>one</i> chest (grouping on rare or common shares it): <span style="color:${TIERS_C.common.colour}">Common</span> pays ${TIERS_C.common.rolls.join('/')}, <span style="color:${TIERS_C.rare.colour}">Rare</span> ${TIERS_C.rare.rolls.join('/')}, <span style="color:${TIERS_C.legendary.colour}">Legendary</span> ${TIERS_C.legendary.rolls.join('/')} — which one you get is luck. Combined totals scale with party size so grouping isn't a shortcut. Drop a challenge to free the slot; the timer starts again if you retry. Challenges can't be failed; a bad patch just takes longer.</p>
+    <p><b style="color:var(--fg)">Challenges and chests.</b> You start these. Up to ${CHAL_PEOPLE_MAX} people can be on live challenges at once. You choose the tier when you invite someone, and the tier sets how hard it is. You can have one legendary, one rare and two commons running at the same time — they don't block each other. A friend can only be on one challenge with you at a time. Finish it and you open <i>one</i> chest (grouping on rare or common shares it): <span style="color:${TIERS_C.common.colour}">Common</span> pays ${TIERS_C.common.rolls.join('/')}, <span style="color:${TIERS_C.rare.colour}">Rare</span> ${TIERS_C.rare.rolls.join('/')}, <span style="color:${TIERS_C.legendary.colour}">Legendary</span> ${TIERS_C.legendary.rolls.join('/')} — which one you get is luck. Combined totals scale with party size so grouping isn't a shortcut. Drop a challenge to free the slot; the timer starts again if you retry. Challenges can't be failed; a bad patch just takes longer.</p>
     <p class="tiny">Build ${BUILD}</p>
     <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. If you add a friend, only aggregates sync: cleared/done counts, streak, consistency and level. Task names, day notes, miss reasons and your affirmation never leave this device.</p>
     <div class="row" style="margin-top:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div></div></details>`;
@@ -1454,6 +1585,8 @@ function bind(){
   qa('[data-unfriend]').forEach(b=>b.onclick=()=>{ const f=S.friends[b.dataset.unfriend];
     modal(`<h2>Remove ${esc(f.name)}?</h2><p class="muted">Your shared streak goes with it. If they're on a challenge, they leave it.</p>`,'Remove',async()=>{ await Sync.removeFriend(f.id); render(); toast('Removed'); },true); });
   const sc=q('#startchal'); if(sc) sc.onclick=()=>startChallengeModal();
+  qa('[data-crew]').forEach(b=>b.onclick=()=>chatView(b.dataset.crew));
+  const nc=q('#newcrew'); if(nc) nc.onclick=()=>crewSheet(null);
   qa('[data-chest]').forEach(b=>b.onclick=()=>{ const win=claimChest(b.dataset.chest); if(win) chestScene(win); else toast('Not ready yet'); });
   qa('[data-dropchal]').forEach(b=>b.onclick=()=>{
     const ch=liveQuest(chalList().find(c=>c.id===b.dataset.dropchal)||{});
@@ -1684,11 +1817,17 @@ function onboarding(next){
   const SUG=[['Walk',20],['Read',15],['No phone in bed',0],['Drink 2L water',0],['Tidy up',10],['Stretch',10],['Journal',0],['Study',30]];
   const draw=()=>{
     const steps=`<div class="steps">${[0,1].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
-    if(step===0) g.innerHTML=`${steps}<h1>Affirmation</h1><textarea id="onbwhy" style="margin-top:18px" maxlength="140">${esc(line)}</textarea><div class="actions"><button class="btn primary block" data-n ${line?'':'disabled'}>Next</button></div>`;
+    if(step===0) g.innerHTML=`${steps}<h1>Why are you doing this?</h1>
+      <p>Not the goal — the reason underneath it. What is it you actually want out of keeping your word to yourself?</p>
+      <textarea id="onbwhy" style="margin-top:16px" maxlength="140" placeholder="e.g. I want to be someone who follows through."></textarea>
+      <p class="tiny muted" style="margin-top:10px">This is your affirmation. You'll see it on the opening screen every day, and it sits in Settings where you can change it or add more. On the days you can't be bothered, it's the thing that's meant to catch you.</p>
+      <div class="actions"><button class="btn primary block" data-n ${line?'':'disabled'}>Next</button>
+        <button class="btn ghost block" data-skip0 style="margin-top:8px">Skip — I'll write one later</button></div>`;
     if(step===1) g.innerHTML=`${steps}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions"><button class="btn primary block" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
     g.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>{ if(step===0) line=(g.querySelector('#onbwhy')?.value||'').trim(); haptic(); if(step<1){step++;draw();} else finish(); });
     g.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{const v=b.dataset.p;if(picks.has(v))picks.delete(v);else{if(picks.size>=MAX_TASKS)return;picks.add(v);targets[v]=Number(b.dataset.mt)||null;}draw();});
     const oa=g.querySelector('#onbadd'); if(oa){ const add=()=>{const v=g.querySelector('#onbtask').value.trim();if(v){if(picks.size>=MAX_TASKS)return;picks.add(v);targets[v]=null;draw();}}; oa.onclick=add; g.querySelector('#onbtask').onkeydown=e=>{if(e.key==='Enter')add();}; }
+    const sk=g.querySelector('[data-skip0]'); if(sk) sk.onclick=()=>{ line=''; haptic(); step=1; draw(); };
     const ta=g.querySelector('#onbwhy'); if(ta){ const go=g.querySelector('[data-n]'); ta.oninput=()=>{ go.disabled=!ta.value.trim(); }; setTimeout(()=>ta.focus(),50); }
   };
   const finish=()=>{ if(line) S.whys=[{id:uid(),text:line}]; [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null})); S.flags.onboarded=true; save(); g.remove(); next(); };
@@ -1702,59 +1841,188 @@ const TOURS={
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
   shop:[['balance','Coins to spend. XP fills the level bar and is never spent.'],['gate','Spending unlocks when average habit strength is 70%+.'],['freeze','Cheap insurance: one missed day, streak intact.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
   settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, font colour, designs, type.']],
-  friends:[['code','Swap codes to pair up — adding one pairs you both ways. Only totals sync, never task names or notes.'],['friend','One legendary with one friend. Rare and common take two. One legendary at a time, plus a rare or two commons.']],
+  friends:[['crews','Chats. Fixed phrases and emotes only — no typing, nothing to moderate. Challenges get started inside a chat.'],['code','Swap codes to pair up — adding one pairs you both ways. Only totals sync, never task names or notes.'],['friend','Invite someone to a challenge and pick the tier — that sets how hard it is and how big the chest. One legendary, one rare and two commons can run at once.']],
 };
+let tourLive=null;
+function endTour(markSeen){
+  if(!tourLive) return;
+  tourLive.spot.remove(); tourLive.card.remove();
+  if(markSeen){ S.flags.tours[tourLive.page]=true; save(); }
+  tourLive=null;
+}
 function tour(page){
+  if(tourLive) return;                                             // never stack a second walkthrough
   if(S.flags.tours[page]||!TOURS[page]||document.querySelector('.gate,.overlay')) return;
   const steps=TOURS[page].filter(([id])=>$app.querySelector(`[data-tour="${id}"]`)); if(!steps.length) return;
   let i=0; const spot=document.createElement('div'); spot.className='tour-spot'; const card=document.createElement('div'); card.className='tour-card';
+  tourLive={page,spot,card};
   document.body.append(spot,card);
   const draw=()=>{ const [id,txt]=steps[i]; const el=$app.querySelector(`[data-tour="${id}"]`); el.scrollIntoView({block:'center',behavior:'smooth'});
     setTimeout(()=>{ const r=el.getBoundingClientRect(); Object.assign(spot.style,{top:r.top-6+'px',left:r.left-6+'px',width:r.width+12+'px',height:r.height+12+'px'});
       card.innerHTML=`<p>${txt}</p><div class="row"><span class="tiny muted">${i+1} of ${steps.length}</span><span class="row"><button class="btn sm ghost" data-skip>Skip</button><button class="btn sm primary" data-next>${i<steps.length-1?'Next':'Got it'}</button></span></div>`;
       const below=r.bottom+180<innerHeight; card.style.top=below?r.bottom+16+'px':''; card.style.bottom=below?'':innerHeight-r.top+16+'px';
       card.querySelector('[data-next]').onclick=()=>{haptic(); if(++i<steps.length) draw(); else end();}; card.querySelector('[data-skip]').onclick=end; },260); };
-  const end=()=>{ spot.remove(); card.remove(); S.flags.tours[page]=true; save(); };
+  const end=()=>{ endTour(true); };
   draw();
+}
+
+/* ---------- Chat thread ---------- */
+function crewSheet(existing){
+  const fs=friendList();
+  if(!fs.length){ toast('Add a friend first'); return; }
+  const picked=new Set(existing?existing.memberIds:[]);
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${existing?'Edit chat':'New chat'}</h2>
+    <p class="muted small" style="margin-bottom:12px">Pick who's in. Up to ${CREW_MAX} people including you — challenges are started from inside the chat.</p>
+    <div class="chips" id="crewpicks"></div>
+    <input type="text" id="crewname" placeholder="Name it (optional)" maxlength="30" style="margin-top:12px" value="${esc(existing?.name||'')}">
+    <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>${existing?'Save':'Start'}</button></div></div>`);
+  const draw=()=>{ o.querySelector('#crewpicks').innerHTML=fs.map(f=>`<button class="chip ${picked.has(f.id)?'on':''}" data-m="${f.id}">${esc(f.name)}</button>`).join('');
+    o.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{ const id=b.dataset.m;
+      if(picked.has(id)) picked.delete(id); else { if(picked.size>=CREW_MAX-1){ toast(`Up to ${CREW_MAX} including you`); return; } picked.add(id); }
+      haptic(); draw(); }); };
+  draw();
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  o.querySelector('[data-ok]').onclick=()=>{
+    if(!picked.size){ toast('Pick at least one person'); return; }
+    const name=o.querySelector('#crewname').value.trim();
+    if(existing){ existing.memberIds=[...picked]; existing.name=name; save(); Sync.upsertCrew(existing).catch(()=>{}); close(o); render(); }
+    else { const c=makeCrew([...picked],name); Sync.upsertCrew(c).catch(()=>{}); close(o); render(); chatView(c.id); }
+  };
+}
+
+function chatView(crewId){
+  const c=crewOf(crewId); if(!c) return;
+  markCrewSeen(c);
+  const g=document.createElement('div'); g.className='gate chat'; document.body.appendChild(g);
+  let mode='phrase';
+  const nameOf=id=>id==='me'?'You':(S.friends[id]?.name||'Them');
+  const draw=()=>{
+    const ms=msgsOf(crewId);
+    const ch=chalList().find(x=>x.crewId===crewId);
+    g.innerHTML=`
+    <div class="chat-bar">
+      <button class="btn ghost sm" data-back>‹ Back</button>
+      <div class="chat-title"><b>${esc(crewName(c))}</b><span class="tiny muted">${crewSize(c)} people</span></div>
+      <button class="iconbtn" data-cinfo aria-label="Chat settings">⋯</button>
+    </div>
+    <div class="chat-scroll" id="scroll">
+      ${ch?chalCardInChat(ch):`<div class="card chatchal"><b class="small">No challenge running here</b>
+        <p class="tiny muted" style="margin:4px 0 10px">Pick a tier — harder tier, harder goal, bigger chest. With ${crewSize(c)} of you the pot is ×${crewMultiplier(crewSize(c)).toFixed(2).replace(/0$/,'')}.</p>
+        <button class="btn primary sm block" data-startchal>Start a challenge</button></div>`}
+      ${ms.length?ms.map((m,i)=>{
+        const mine=m.from==='me';
+        const showName=!mine && (i===0 || ms[i-1].from!==m.from);
+        if(m.kind==='system') return `<p class="msgsys">${esc(m.code)}</p>`;
+        return `<div class="msgrow ${mine?'mine':''}">${showName?`<span class="msgwho">${esc(nameOf(m.from))}</span>`:''}
+          <div class="msg ${m.kind==='emote'?'emote':''}">${m.kind==='emote'?esc(m.code):esc(PHRASE_MAP[m.code]||'…')}</div></div>`;
+      }).join(''):`<p class="tiny muted" style="text-align:center;padding:26px 0">Nothing said yet. Pick a phrase below.</p>`}
+    </div>
+    <div class="chat-compose">
+      <div class="seg" style="margin-bottom:8px"><button class="${mode==='phrase'?'on':''}" data-mode="phrase">Phrases</button><button class="${mode==='emote'?'on':''}" data-mode="emote">Emotes</button></div>
+      <div class="composewrap">${mode==='phrase'?
+        PHRASES.map(gr=>`<div class="pgroup"><span class="plabel">${gr.g}</span><div class="chips">${gr.items.map(i=>`<button class="chip" data-say="${i.id}">${esc(i.t)}</button>`).join('')}</div></div>`).join(''):
+        `<div class="emotes">${EMOTES.map(e=>`<button class="emotebtn" data-emote="${e}">${e}</button>`).join('')}</div>`}
+      </div>
+    </div>`;
+    const sc=g.querySelector('#scroll'); sc.scrollTop=sc.scrollHeight;
+    g.querySelector('[data-back]').onclick=()=>{ markCrewSeen(c); g.remove(); render(); };
+    g.querySelector('[data-cinfo]').onclick=()=>chatInfo(c,()=>{ g.remove(); render(); });
+    g.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{ mode=b.dataset.mode; haptic(); draw(); });
+    g.querySelectorAll('[data-say]').forEach(b=>b.onclick=()=>{
+      if(sendMsg(crewId,'phrase',b.dataset.say)){ haptic(); draw(); } else toast('Give it a second'); });
+    g.querySelectorAll('[data-emote]').forEach(b=>b.onclick=()=>{
+      if(sendMsg(crewId,'emote',b.dataset.emote)){ haptic(); draw(); } else toast('Give it a second'); });
+    const sb=g.querySelector('[data-startchal]'); if(sb) sb.onclick=()=>startChallengeModal(crewId,()=>draw());
+    const cb=g.querySelector('[data-chest]'); if(cb) cb.onclick=()=>{ const win=claimChest(cb.dataset.chest); if(win){ g.remove(); render(); chestScene(win); } else toast('Not ready yet'); };
+    const db=g.querySelector('[data-dropchal]'); if(db) db.onclick=()=>modal('<h2>Drop this challenge?</h2><p class="muted">The slot frees up, but progress starts again if you retry.</p>','Drop',()=>{ dropChallenge(db.dataset.dropchal); draw(); },true);
+  };
+  draw();
+}
+function chalCardInChat(raw){
+  const ch=liveQuest(raw)||raw;
+  const pr=challengeProgress(ch), t=TIERS_C[ch.tier], done=pr.have>=pr.need;
+  const q=findChallenge(ch.questId||ch.cid)||{};
+  const mult=crewMultiplier((raw.memberIds||[]).length+1);
+  const lo=Math.round(t.rolls[0]*mult), hi=Math.round(t.rolls[t.rolls.length-1]*mult);
+  return `<div class="card chatchal ${done?'ready':''}" style="--tier:${t.colour}">
+    <div class="row between" style="align-items:flex-start">
+      <div><span class="tierbadge">${t.label}</span><b style="display:block;margin-top:6px">${esc(q.name||'Challenge')}</b>
+        <p class="tiny muted">${esc(q.desc||'')}</p></div>
+      <div class="chestmini ${done?'shake':''}">${chestSVG(ch.tier)}</div></div>
+    <div class="row between" style="margin-top:10px"><span class="tiny muted">${pr.have} of ${pr.need}</span><span class="tiny muted">${lo}–${hi} coins</span></div>
+    <div class="bar quest chal-bar"><i style="width:${clamp(Math.round(100*pr.have/pr.need),0,100)}%"></i></div>
+    ${done?`<button class="btn primary block" style="margin-top:10px" data-chest="${raw.id}">Open the chest</button>`:
+      `<button class="btn ghost sm block" style="margin-top:8px" data-dropchal="${raw.id}">Drop it</button>`}</div>`;
+}
+function chatInfo(c,onLeave){
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${esc(crewName(c))}</h2>
+    <ul class="list" style="margin-bottom:12px">${crewMembers(c).map(f=>`<li><span>${esc(f.name)}</span><span class="tiny muted">${f.consistency??0}%</span></li>`).join('')}</ul>
+    <div class="stack">
+      <button class="btn block" data-edit>Add or remove people</button>
+      <button class="btn block" data-mute>${isMuted(c.id)?'Unmute this chat':'Mute this chat'}</button>
+      <button class="btn block danger" data-leave>Delete chat</button></div>
+    <div class="foot"><button class="btn" data-x>Close</button></div></div>`);
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  o.querySelector('[data-edit]').onclick=()=>{ close(o); crewSheet(c); };
+  o.querySelector('[data-mute]').onclick=()=>{ toggleMute(c.id); close(o); toast(isMuted(c.id)?'Muted':'Unmuted'); };
+  o.querySelector('[data-leave]').onclick=()=>modal('<h2>Delete this chat?</h2><p class="muted">The messages go. Any challenge running in it is dropped.</p>','Delete',()=>{
+    (S.challenges||[]).filter(x=>x.crewId===c.id).forEach(x=>dropChallenge(x.id));
+    S.crews=crewList().filter(x=>x.id!==c.id); delete S.msgs[c.id]; save(); close(o); onLeave&&onLeave(); },true);
 }
 
 /* ---------- Chest opening ---------- */
 function chestScene(win){
   const {tier,amount,name,rolls,colour}=win;
-  document.querySelectorAll('.tour-spot,.tour-card').forEach(e=>e.remove());   // nothing overlaps the moment
+  document.querySelectorAll('.tour-spot,.tour-card').forEach(e=>e.remove());
+  const top=amount===Math.max(...rolls);
   const g=document.createElement('div'); g.className='gate chest '+tier; g.style.setProperty('--tier',colour);
   g.innerHTML=`<div class="chest-wrap">
-    <div class="glow"></div>
-    <div class="chest-eyebrow">${TIERS_C[tier].label} chest</div>
+    <div class="glow"></div><div class="rays"></div><div class="flash"></div>
+    <div class="chest-eyebrow" id="chesteyebrow">${TIERS_C[tier].label} chest</div>
     <h1 class="chest-title">${esc(name)}</h1>
-    <div class="chest-art" id="chestart">${ICON.chest(colour)}<div class="lid"></div></div>
-    <p class="chest-hint" id="chesthint">Tap the chest</p>
+    <div class="chest-stage"><div class="chest-art" id="chestart">${ICON.chest(colour)}</div><div class="pedestal"></div></div>
+    <p class="chest-hint" id="chesthint">Tap to open</p>
     <div class="chest-prize" id="prize"><span class="num">0</span><small>coins</small></div>
     <button class="btn primary block" id="chestclaim" hidden>Take it</button>
   </div>`;
   document.body.appendChild(g);
   const art=g.querySelector('#chestart'), hint=g.querySelector('#chesthint'),
-        prize=g.querySelector('#prize'), num=prize.querySelector('.num'), claim=g.querySelector('#chestclaim');
+        prize=g.querySelector('#prize'), num=prize.querySelector('.num'),
+        claim=g.querySelector('#chestclaim'), eyebrow=g.querySelector('#chesteyebrow');
+  const finish=()=>{ num.textContent=amount; prize.classList.add('locked');
+    if(top){ eyebrow.textContent='Best roll!'; eyebrow.classList.add('best'); burst(colour); }
+    claim.hidden=false; };
+  if(!S.settings.motion){ hint.remove(); prize.classList.add('show'); finish(); }
   let opened=false;
-  const open=()=>{
+  art.onclick=()=>{
     if(opened) return; opened=true;
-    haptic('heavy'); hint.remove(); art.classList.add('opening');
+    hint.remove(); haptic('light');
+    /* 1. rumble — something is about to happen */
+    art.classList.add('rumble'); g.classList.add('charging');
     setTimeout(()=>{
-      art.classList.add('open'); g.classList.add('burst'); haptic('success'); burst(colour);
+      /* 2. spin, growing as it goes */
+      art.classList.remove('rumble'); art.classList.add('spin'); haptic('heavy');
+    }, 520);
+    setTimeout(()=>{
+      /* 3. crack it open */
+      art.classList.remove('spin'); art.classList.add('open');
+      g.classList.add('burst'); g.classList.add('flashing');
+      haptic('success'); burst(colour);
       prize.classList.add('show');
-      // slot-machine roll through the possible values, then settle on the real one
-      let t=0; const spin=setInterval(()=>{
-        num.textContent=rolls[Math.floor(Math.random()*rolls.length)];
-        if(++t>14){ clearInterval(spin); num.textContent=amount; prize.classList.add('locked');
-          haptic(amount===Math.max(...rolls)?'success':'light');
-          if(amount===Math.max(...rolls)){ g.querySelector('.chest-eyebrow').textContent='Best roll!'; burst(colour); }
-          claim.hidden=false; }
-      },70);
-    }, S.settings.motion?700:0);
+    }, 1680);
+    setTimeout(()=>{
+      /* 4. reveal the number slowly, easing to a stop */
+      const dur=1500, t0=performance.now();
+      const tick=now=>{
+        const p=Math.min(1,(now-t0)/dur), e=1-Math.pow(1-p,3);
+        num.textContent=Math.max(1,Math.round(amount*e));
+        if(p<1) requestAnimationFrame(tick);
+        else { haptic(top?'success':'light'); finish(); }
+      };
+      requestAnimationFrame(tick);
+    }, 1900);
   };
-  art.onclick=open;
   claim.onclick=()=>{ g.remove(); render(); toast(`+${amount} coins`); };
-  if(!S.settings.motion){ open(); }
 }
 function burst(colour){
   if(!S.settings.motion) return;
@@ -1808,7 +2076,7 @@ function scheduleBackup(){ clearTimeout(_bkT); _bkT=setTimeout(()=>Sync.backup()
 function friendsTick(){
   if(Sync.live()&&Sync.signedIn()) scheduleBackup();
   if(!friendList().length && !Sync.signedIn()) return;
-  Sync.pull().then(()=>{ if(tab==='friends') render(); }).catch(()=>{});
+  Sync.pull().then(()=>Sync.pullMessages()).then(()=>{ if(tab==='friends') render(); }).catch(()=>{});
   Sync.push().catch(()=>{});
 }
 function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); }

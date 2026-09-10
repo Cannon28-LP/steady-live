@@ -12,15 +12,52 @@
 <link rel="icon" type="image/svg+xml" href="./icon.svg"/>
 <link rel="apple-touch-icon" href="./icon.svg"/>
 <link rel="manifest" href="./manifest.json"/>
-<link rel="stylesheet" href="./app.css"/>
+
+<!-- Critical styles inline: the splash must paint before app.css or app.js arrive. -->
+<style>
+:root{--bg:#0a1614;--fg:#e7faf4;--fg2:#8fb3ab;--accent:#2dd4bf}
+html,body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+#boot{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:18px;background:var(--bg);transition:opacity .3s ease}
+#boot.gone{opacity:0;pointer-events:none}
+#boot .ring{width:64px;height:64px;border-radius:50%;border:3px solid color-mix(in srgb,var(--accent) 22%,transparent);
+  border-top-color:var(--accent);animation:bootspin 1s linear infinite}
+@keyframes bootspin{to{transform:rotate(360deg)}}
+#boot .word{font-size:1.35rem;font-weight:650;letter-spacing:-.01em}
+#boot .sub{font-size:.85rem;color:var(--fg2)}
+@media (prefers-reduced-motion:reduce){#boot .ring{animation:none}}
+</style>
+<!-- Match the saved theme before first paint, so there's no flash of the wrong colours. -->
+<script>
+(function(){try{
+  var s=JSON.parse(localStorage.getItem('steady.v2')||'{}').settings||{};
+  var T={teal:[175,22],pink:[340,22],grey:[220,6],black:[0,0],blue:[222,24],green:[145,20]};
+  var t=T[s.theme]||T.teal, h=t[0], sat=t[1];
+  var dark = s.mode==='light' ? false : (s.mode==='dark'||!s.mode) ? true
+           : !matchMedia('(prefers-color-scheme: light)').matches;
+  var r=document.documentElement.style;
+  r.setProperty('--bg', dark?'hsl('+h+' '+sat+'% '+(s.theme==='black'?0:7)+'%)':'hsl('+h+' '+sat+'% 96%)');
+  r.setProperty('--fg', dark?'hsl('+h+' '+sat+'% 96%)':'hsl('+h+' '+sat+'% 10%)');
+  r.setProperty('--fg2',dark?'hsl('+h+' '+sat+'% 62%)':'hsl('+h+' '+sat+'% 42%)');
+  if(s.accent) r.setProperty('--accent', s.accent);
+  var m=document.querySelector('meta[name=theme-color]');
+  if(m) m.content=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+}catch(e){}})();
+</script>
+
+<link rel="modulepreload" href="./app.js"/>
+<link rel="preload" href="./app.css" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.css"/></noscript>
 </head>
 <body>
+<div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
+  <div id="bootfail" hidden><p style="max-width:26ch;text-align:center;font-size:.9rem;color:var(--fg2);line-height:1.5">
+    Couldn't load the app files. If you opened <b>index.html</b> on its own, it won't run — it needs app.js and app.css beside it.
+    Open the app from its web address instead.</p>
+    <button id="bootretry" style="margin-top:14px;padding:11px 20px;border:0;border-radius:12px;background:var(--accent);color:#0b0f0e;font:inherit;font-weight:650">Try again</button></div></div>
 <div id="motif" aria-hidden="true"></div>
-<div id="app">
-  <div class="page boot-splash">
-    <p class="eyebrow">Steady</p>
-  </div>
-</div>
+<div id="app"></div>
 <div class="tabbar" id="tabbar" hidden>
   <nav>
     <div class="ind" id="tabind"></div>
@@ -35,12 +72,25 @@
 <div class="confirm-bar" id="confirmbar"><button class="btn primary" id="confirmbtn">Mark done</button></div>
 <div class="toast" id="toast" role="status"></div>
 
+<script>
+// If the module never runs (missing app.js, half-finished download, opened as a
+// lone file), say so rather than spinning forever.
+window.__steadyBootTimer = setTimeout(function(){
+  if (window.__steadyBooted) return;
+  var r=document.querySelector('#boot .ring'), s=document.getElementById('bootsub'), f=document.getElementById('bootfail');
+  if(r) r.hidden=true; if(s) s.hidden=true; if(f) f.hidden=false;
+  var b=document.getElementById('bootretry'); if(b) b.onclick=function(){ location.reload(); };
+}, 8000);
+</script>
 <script type="module">
 import { bootSteady } from './app.js';
-try { bootSteady(); }
+const clear = () => { const b=document.getElementById('boot');
+  if(b){ b.classList.add('gone'); setTimeout(()=>b.remove(),350); } };
+try { bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear(); }
 catch (e) {
+  window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear();
   const el = document.getElementById('app');
-  if (el) el.innerHTML = '<div class="page"><div class="card"><b>Couldn’t start</b><p class="small muted" style="margin-top:8px">'+String(e&&e.message||e)+'</p></div></div>';
+  if (el) el.innerHTML = '<div class="page"><div class="card"><b>Couldn\u2019t start</b><p class="small muted" style="margin-top:8px">'+String(e&&e.message||e)+'</p></div></div>';
 }
 </script>
 <script>
