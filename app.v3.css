@@ -511,6 +511,7 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .allowbar{height:5px;margin-top:6px}
 .allowbar.spare i{background:#f59e0b}
 .allowbar.done i{background:var(--fg3)}
+.gate .q .qend{color:var(--accent);font-size:2.5rem;line-height:0;vertical-align:-.2em;margin-left:2px}
 canvas#fx{position:fixed;inset:0;pointer-events:none;z-index:250}
 .sr{position:absolute;left:-9999px}
 

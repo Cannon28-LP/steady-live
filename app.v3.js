@@ -14,7 +14,7 @@ const SYNC = {
   url:    'https://rjytcvajeysfnfmtgakm.supabase.co',
   anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
 };
-const MAX_REWARDS = 10, BUY_STRENGTH = 70, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
+const MAX_REWARDS = 6, SPARES = 2, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
 const MAX_TASKS = 10, MIN_REWARD_PRICE = 10;
 const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
 const CREW_MAX = 8;              // past this a chat stops being a conversation
@@ -36,7 +36,6 @@ const round10 = n => Math.round(n/10)*10;
 const dayRate = () => Math.max(1, activeTasks().length) * (TASK_BASE*1.3 + CLEAR_PER_TASK); // a cleared day at healthy strength
 const tierCost = t => round10(dayRate()*(TIER_DAYS[t]||TIER_DAYS.week));
 const chestCoins = () => round10(dayRate());
-const freezeCost = () => round10(dayRate()*1.5);
 /* A clear day: each task pays base coins plus the clear bonus. Strength and overtime are extra, not assumed. */
 function clearDayPay(){
   const n=activeTasks().length;
@@ -92,7 +91,7 @@ function freqLabel(r){
 function perFor(freqId, perMonth){
   return freqId==='custom' ? clamp(Number(perMonth)||1, 0.25, MAX_PER_MONTH) : freqOf(freqId).per;
 }
-const BUDGET_SHARE = 0.8;                 // leave slack for freezes, challenges and chests
+const BUDGET_SHARE = 0.8;                 // leave slack for challenges and chests
 /* Real coins a month: measured if there's history, estimated from the task list if not. */
 function monthlyIncome(){
   const k=today(); let total=0,n=0;
@@ -140,11 +139,13 @@ function nextAvailable(r){
 }
 /* One spare beyond what you planned, then it stops. Life happens; twice is a pattern. */
 function allowanceState(r){
-  const used=boughtInWindow(r), limit=allowanceOf(r), hard=limit+1;
+  const used=boughtInWindow(r), limit=allowanceOf(r), hard=limit+SPARES;
   const f=rewardFreq(r);
   const period = f==='weekly'?'this week' : f==='fortnight'?'this fortnight' : 'this month';
-  return {used, limit, hard, left:Math.max(0,limit-used),
+  const sparesLeft=Math.max(0, hard-Math.max(used,limit));
+  return {used, limit, hard, left:Math.max(0,limit-used), sparesLeft,
     period, over:used>=limit && used<hard, maxed:used>=hard,
+    amber:used>=limit && used<hard-1, red:used===hard-1,
     next:nextAvailable(r), monthUsed:boughtThisMonth(r)};
 }
 /* Plain count for the month, whatever the window is — for the counter on each reward. */
@@ -283,7 +284,6 @@ const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 function fresh(){
   return {
     tasks:[], rewards:[], locker:[], customReasons:[],
-    quotes: [],
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
     clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null,
     crews:[], msgs:{}, muted:[],
@@ -330,7 +330,8 @@ function todosOn(k){ return S.todos.filter(t=>!t.done && t.day===k).sort((a,b)=>
 function todosAhead(){ return S.todos.filter(t=>!t.done && t.day && t.day>today()).sort((a,b)=>a.day<b.day?-1:a.day>b.day?1:0); }
 function todosDone(){ return S.todos.filter(t=>t.done && t.doneDay===today()); }
 function backlog(){ return S.todos.filter(t=>!t.done && !t.day).sort((a,b)=>b.createdAt-a.createdAt); }
-function addTodo(text,day){ S.todos.push({id:uid(),text,day:day||null,done:false,createdAt:Date.now()}); save(); }
+function addTodo(text,day,at){ S.todos.push({id:uid(),text,day:day||null,at:at||null,done:false,createdAt:Date.now()}); save(); }
+function setTodoTime(id,at){ const t=S.todos.find(x=>x.id===id); if(t){ t.at=at||null; save(); } }
 function setTodoDay(id,day){ const t=S.todos.find(x=>x.id===id); if(t){ t.day=day||null; save(); } }
 function whenLabel(k){ if(!k) return 'Someday'; const d=(parse(k)-parse(today()))/86400000;
   if(d<0) return 'Overdue'; if(d===0) return 'Today'; if(d===1) return 'Tomorrow';
@@ -377,6 +378,39 @@ async function connectionReport(){
 /* ---------- Milestone recaps ----------
    Snapshotted when earned, so revisiting one later shows what it said at the time. */
 const MILESTONES=[[7,'Your first week'],[30,'Your first month'],[100,'One hundred days'],[365,'Your first year']];
+/* A short recap every Monday for the week just gone, on top of the big milestones. */
+function lastWeekMonday(){ return addDays(weekOf(today()),-7); }
+function weekRecapDue(){
+  const mon=lastWeekMonday();
+  if(daysSinceStart()<8) return null;
+  if((S.recaps||[]).some(r=>r.week===mon)) return null;
+  for(let i=0;i<7;i++) if(dayStats(addDays(mon,i)).expected) return mon;
+  return null;
+}
+function buildWeekRecap(mon){
+  let e=0,d=0,coins=0,cleared=0,mins=0,shown=0; const reasons={},dows={};
+  for(let i=0;i<7;i++){ const k=addDays(mon,i); const st=dayStats(k); if(!st.expected) continue;
+    e+=st.expected; d+=st.done; coins+=st.points; if(st.perfect) cleared++; if(S.days[k]) shown++;
+    for(const t of Object.values(S.days[k]?.tasks||{})){
+      if(t.minutes) mins+=t.minutes;
+      if(t.status==='missed'){
+        if(t.reason) reasons[t.reason]=(reasons[t.reason]||0)+1;
+        const dn=parse(k).toLocaleDateString(undefined,{weekday:'long'}); dows[dn]=(dows[dn]||0)+1;
+      }
+    }
+  }
+  const sorted=Object.entries(reasons).sort((a,b)=>b[1]-a[1]);
+  const worst=Object.entries(dows).sort((a,b)=>b[1]-a[1])[0]||null;
+  const prevMon=addDays(mon,-7); let pe=0,pd=0;
+  for(let i=0;i<7;i++){ const st=dayStats(addDays(prevMon,i)); pe+=st.expected; pd+=st.done; }
+  return {week:mon, weekly:true, n:'w'+mon, name:'Last week', from:mon, at:addDays(mon,6),
+    rate:e?Math.round(100*d/e):0, prevRate:pe?Math.round(100*pd/pe):null,
+    done:d, expected:e, cleared, coins, minutes:mins, shown,
+    level:level().L, title:title().name, bestStreak:S.streak.best,
+    chests:Object.values(S.chests).filter(x=>x==='won').length,
+    reasonList:sorted.slice(0,4), worstDay:worst,
+    missTotal:sorted.reduce((a,x)=>a+x[1],0)};
+}
 function firstDay(){ const ks=Object.keys(S.days).filter(k=>S.days[k].finalized||k===today()).sort(); return ks[0]||today(); }
 function daysSinceStart(){ return Math.floor((parse(today())-parse(firstDay()))/86400000)+1; }
 function dueRecap(){ for(const [n,name] of MILESTONES){ if(daysSinceStart()>=n && !S.recaps.some(r=>r.n===n)) return {n,name}; } return null; }
@@ -401,10 +435,20 @@ function buildRecap(n,name){
     level:level().L, title:title().name, bestStreak:S.streak.best,
     minutes:mins, chests:Object.values(S.chests).filter(x=>x==='won').length,
     strongest:ts[0]||null, weakest:ts.length>1?ts[ts.length-1]:null,
-    topReason:top(reasons)||null, worstDay:top(dows)||null};
+    topReason:top(reasons)||null, worstDay:top(dows)||null,
+    reasonList:Object.entries(reasons).sort((a,b)=>b[1]-a[1]).slice(0,4),
+    missTotal:Object.values(reasons).reduce((a,b)=>a+b,0)};
 }
-function earnRecap(){ const due=dueRecap(); if(!due) return null;
-  const r=buildRecap(due.n,due.name); S.recaps.push(r); save(); return r; }
+function earnRecap(){
+  const due=dueRecap();
+  if(due){ const r=buildRecap(due.n,due.name); S.recaps.push(r); save(); return r; }
+  const mon=weekRecapDue();
+  if(mon){ const r=buildWeekRecap(mon); S.recaps.push(r); save(); return r; }
+  return null;
+}
+
+const prefersCalm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const motionOK = () => !prefersCalm();
 
 /* ---------- Reminders ----------
    Two kinds. While the app is open it schedules them itself, which needs nothing
@@ -467,6 +511,17 @@ function reminderTick(){
   const c=remindCfg(); if(!c.on||Notification.permission!=='granted') return;
   const now=new Date(); const hm=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
   c.fired=c.fired||{}; const k=today();
+  /* Plan items with a time on them */
+  if(c.todos!==false){
+    for(const t of S.todos){
+      if(t.done||!t.at||t.day!==k) continue;
+      const key='t'+t.id;
+      if(c.fired[key]===k || hm<t.at) continue;
+      c.fired[key]=k; save();
+      showLocal('On your list', t.text, 'steady-todo-'+t.id);
+      return;
+    }
+  }
   const due=(slot,at)=>at && hm>=at && c.fired[slot]!==k;
   if(due('morning',c.morning)){ c.fired.morning=k; save();
     showLocal('Steady', reminderBody(), 'steady-morning'); return; }
@@ -1030,14 +1085,14 @@ function applyTheme(){
   const st=S.settings, p=themePalette(st);
   const acc=p.accent;
   const r=document.documentElement.style;
-  const ink=st.ink||p.fg;
+  const ink=p.fg;
   r.setProperty('--bg',p.bg);
   r.setProperty('--surface',p.surface);
   r.setProperty('--surface2',p.surface2);
   r.setProperty('--line',p.line);
   r.setProperty('--fg',ink);
-  r.setProperty('--fg2', st.ink?`color-mix(in srgb, ${ink} 62%, ${p.bg})`:p.fg2);
-  r.setProperty('--fg3', st.ink?`color-mix(in srgb, ${ink} 34%, ${p.bg})`:p.fg3);
+  r.setProperty('--fg2',p.fg2);
+  r.setProperty('--fg3',p.fg3);
   r.setProperty('--accent',acc);
   r.setProperty('--accent-fg', luminance(acc)>0.5?'#0b0f0e':'#ffffff');
   r.setProperty('--accent-on-dark', isDarkMode(st)? acc : lighten(acc));
@@ -1049,7 +1104,7 @@ function applyTheme(){
   r.setProperty('--fs',`${16*st.textSize/100}px`);
   r.setProperty('--r','18px'); r.setProperty('--r-sm','12px');
   r.setProperty('--pad','16px'); r.setProperty('--gap','14px');
-  document.body.classList.toggle('reduce',!st.motion);
+  document.body.classList.toggle('reduce',prefersCalm());
   document.body.classList.toggle('light', !isDarkMode(st));
   applyMotif(st, acc);
   const meta=document.querySelector('meta[name=theme-color]');
@@ -1143,7 +1198,6 @@ function rollover(){
   // login streak — a streak freeze covers exactly one skipped day
   const notes=[];
   if(last && addDays(last,1)===t) S.streak.login+=1;
-  else if(last && addDays(last,2)===t && S.freezes>0){ S.freezes--; S.streak.login+=1; day(addDays(t,-1)).frozen=true; notes.push('Streak freeze used — streak kept'); }
   else S.streak.login=1;
   S.streak.best=Math.max(S.streak.best,S.streak.login);
   const d=day(t);
@@ -1208,7 +1262,7 @@ function completeSelected(mins){
   const streakWin = cleared ? payClearStreak() : null;
   setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick();
     if(streakWin) setTimeout(()=>streakScene(streakWin),900);
-    toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`, 'Undo', undoLast); if(cleared) celebrate(); }, S.settings.motion?220:0);
+    toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`, 'Undo', undoLast); if(cleared) celebrate(); }, motionOK()?220:0);
 }
 function undoLast(){
   const u=S.undo; if(!u) return; const d=day(u.date);
@@ -1232,7 +1286,7 @@ function fxCanvas(){
   return c;
 }
 function celebrate(){
-  if(!S.settings.motion) return;
+  if(!motionOK()) return;
   const c=fxCanvas(),x=c.getContext('2d'); c.width=innerWidth;c.height=innerHeight;
   const acc=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
   const P=Array.from({length:90},()=>({x:innerWidth/2,y:innerHeight*.35,vx:(Math.random()-.5)*14,vy:-Math.random()*14-4,r:Math.random()*5+3,c:Math.random()<.6?acc:'#fff',a:Math.random()*6,s:Math.random()*.2-.1}));
@@ -1240,7 +1294,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today'}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview'};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:''}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview'};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -1349,6 +1403,10 @@ function pList(){
   return `
   <div class="card" data-tour="listadd">
     <input type="text" id="newtodo" placeholder="Something to get done…" maxlength="80">
+    <div class="row" style="margin-top:8px;align-items:center;gap:8px">
+      <input type="time" id="newtodoat" value="${planState.at||''}" style="width:126px">
+      <span class="tiny muted">optional — a time nudges you</span>
+      ${planState.at?`<button class="btn sm ghost" id="clearat">Clear</button>`:''}</div>
     <div class="chips" style="margin-top:10px">
       ${[['today','Today'],['tomorrow','Tomorrow'],['someday','Someday']].map(([v,l])=>`<button class="chip ${w===v?'on':''}" data-when="${v}">${l}</button>`).join('')}
       <button class="chip ${w&&w.includes('-')?'on':'add'}" data-when="pick">${w&&w.includes('-')?whenLabel(w):'Pick a date'}</button>
@@ -1363,7 +1421,7 @@ function pList(){
 }
 function rowTodo(t){
   return `<li><div class="todo"><button class="tick" data-todo="${t.id}" aria-label="Done">${ICON.check}</button>
-    <span class="name">${esc(t.text)}</span>
+    <span class="name">${esc(t.text)}${t.at?`<span class="tag">${esc(t.at)}</span>`:''}</span>
     <button class="iconbtn ghosty" data-tmove="${t.id}" aria-label="Reschedule">${ICON.cal}</button>
     <button class="iconbtn ghosty" data-tdrop="${t.id}" aria-label="Remove">${ICON.trash}</button></div></li>`;
 }
@@ -1403,7 +1461,7 @@ function pOverview(){
     <div class="row between" style="align-items:flex-start"><div><div class="eyebrow">Consistency</div><div class="heroval">${str}<small>%</small> ${DELTA(str,prev)}</div>
       <p class="tiny muted">Average habit strength${prev!==null?` · ${str>=prev?'up':'down'} from ${prev}% a month ago`:hist<7?` · building up, ${7-hist} day${7-hist===1?'':'s'} until trends appear`:''}</p></div>
       <div class="ring sm"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${2*Math.PI*52}" stroke-dashoffset="${2*Math.PI*52*(1-str/100)}"/></svg></div></div>
-    <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap"><span class="pill">${ICON.flame} ${S.streak.login} day streak</span><span class="pill">${chests} chest${chests===1?'':'s'}</span>${S.freezes?`<span class="pill accent">freeze ready</span>`:''}</div>
+    <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap"><span class="pill">${ICON.flame} ${S.streak.login} day streak</span><span class="pill">${chests} chest${chests===1?'':'s'}</span></div>
   </div>
 
   <div class="card" data-tour="stats"><div class="seg">${['day','week','month','year'].map(r=>`<button class="${progState.range===r?'on':''}" data-range="${r}">${{day:'Day',week:'Week',month:'Month',year:'Year'}[r]}</button>`).join('')}</div>
@@ -1425,7 +1483,7 @@ function pOverview(){
     ${rb.items.map(([r,pc])=>`<div class="tod"><span class="small">${esc(r)}</span><div class="todbar"><i class="warn" style="width:${pc}%"></i></div><span class="tiny muted">${pc}%</span></div>`).join('')}</div>`:''}
 
   ${S.recaps.length?`<div class="card"><div class="section" style="margin:0"><h2>Recaps</h2></div>
-    ${S.recaps.slice().reverse().map(r=>`<button class="noterow" data-recap="${r.n}" style="padding:12px 0"><div class="grow"><b>${esc(r.name)}</b><p class="tiny muted">${fmt(r.at,{day:'numeric',month:'short',year:'numeric'})} · ${r.rate}% · ${r.cleared} days cleared</p></div><span class="chev">›</span></button>`).join('')}</div>`:
+    ${S.recaps.slice().reverse().map(r=>`<button class="noterow" data-recap="${r.week||r.n}" style="padding:12px 0"><div class="grow"><b>${esc(r.name)}${r.weekly?' <span class="tiny muted">week</span>':''}</b><p class="tiny muted">${fmt(r.at,{day:'numeric',month:'short',year:'numeric'})} · ${r.rate}% · ${r.cleared} cleared${r.missTotal?` · ${r.missTotal} missed`:''}</p></div><span class="chev">›</span></button>`).join('')}</div>`:
     `<div class="card"><div class="row between"><div><b class="small">Next recap</b><p class="tiny muted">${(()=>{const nx=MILESTONES.find(([n])=>daysSinceStart()<n); return nx?`${nx[0]-daysSinceStart()} day${nx[0]-daysSinceStart()===1?'':'s'} to ${nx[1].toLowerCase()}`:'All milestones reached';})()}</p></div>
       <span class="pill">day ${daysSinceStart()}</span></div></div>`}
   <details class="acc"><summary>Records</summary><div class="body"><ul class="list">
@@ -1680,16 +1738,13 @@ function vFriends(){
 
 /* ---------- Shop ---------- */
 function vShop(){
-  const T=title(), L=level(); const str=avgStrength(); const canRate=str>=BUY_STRENGTH; const active=S.rewards.filter(x=>x.active);
+  const T=title(), L=level(); const str=avgStrength(); const canRate=true; const active=S.rewards.filter(x=>x.active);
   return `
   <div class="head"><div><div class="eyebrow">Coins to spend</div><h1>Shop</h1></div></div>
   <div class="card" data-tour="balance"><div class="balance">${S.points.coins}<small>coins</small></div>
     <div class="row between" style="margin-top:14px"><span class="pill accent">Level ${L.L} · ${T.name}</span><span class="tiny muted">${L.into} / ${L.need} XP</span></div>
     <div class="titlebar"><i style="width:${clamp(100*L.into/L.need,0,100)}%"></i></div>
     <p class="tiny muted" style="margin-top:8px">${T.next?`${T.next.name} at level ${T.next.at}. `:'Top title. '}XP is never spent — only coins are.</p></div>
-  <div class="card" data-tour="gate" style="border-color:${canRate?'var(--accent)':'var(--line)'}"><div class="row between"><div><b>${canRate?'Buying unlocked':'Buying locked'}</b><p class="small muted">${canRate?`Average habit strength ${str}%. Stays open while it's ${BUY_STRENGTH}%+.`:`Average habit strength ${str}%. Reaches ${BUY_STRENGTH}% with a steady run — one miss won't reset it.`}</p></div><b style="font-size:1.5rem;color:${canRate?'var(--accent)':'var(--fg2)'}">${str}%</b></div></div>
-  ${(()=>{const fc=freezeCost();return `<div class="card reward ${S.points.coins>=fc&&!S.freezes?'':'locked'}" data-tour="freeze"><div class="row between"><b>Streak freeze</b><span class="small muted">${fc} coins</span></div><p class="small muted">Covers one missed day so your login streak survives. Hold one at a time.</p>
-    <button class="btn ${S.freezes?'':S.points.coins>=fc?'primary':''} block" data-freeze ${S.freezes||S.points.coins<fc?'disabled':''}>${S.freezes?'Holding one':S.points.coins>=fc?'Buy':`${fc-S.points.coins} more coins`}</button></div>`})()}
   <div class="section"><h2>Rewards <span class="muted">you set the price</span></h2>
     ${active.length?active.map(x=>{const cost=rewardPrice(x); const afford=S.points.coins>=cost; const ok=afford&&canRate; return `<div class="card reward ${ok?'':'locked'}"><div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">${earnEta(cost)}</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
       ${(()=>{const al=allowanceState(x); const can=ok&&!al.maxed; const mp=monthlyPlanned(x);
@@ -1701,12 +1756,12 @@ function vShop(){
             :`${al.used} of ${al.limit} ${al.period}`}</span></div>
         <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
         <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
-          al.maxed?`That is it ${al.period}` : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:`Strength below ${BUY_STRENGTH}%`}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+          al.maxed?`That is it ${al.period}` : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
   <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
     ${S.locker.length?`<div class="card"><ul class="list">${[...S.locker].reverse().map(x=>`<li class="locker-item ${x.usedAt?'used':''}"><div><div>${esc(x.name)}</div><div class="tiny muted">${x.usedAt?'Used '+fmt(x.usedAt):'Bought '+fmt(x.boughtAt)}</div></div>${x.usedAt?'':`<button class="btn sm" data-use="${x.id}">Mark used</button>`}</li>`).join('')}</ul></div>`:'<div class="card"><p class="muted small">Things you buy land here.</p></div>'}</div>`;
 }
 function buy(id){
-  const r=S.rewards.find(x=>x.id===id); if(!r) return; const cost=rewardPrice(r); if(S.points.coins<cost||avgStrength()<BUY_STRENGTH) return;
+  const r=S.rewards.find(x=>x.id===id); if(!r) return; const cost=rewardPrice(r); if(S.points.coins<cost) return;
   const al=allowanceState(r);
   if(al.maxed){ toast(`That is it ${al.period} — back ${fmt(al.next,{day:'numeric',month:'short'})}`); return; }
   const after=al.left-1;
@@ -1716,7 +1771,6 @@ function buy(id){
   modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. ${note}</p>`,'Buy',()=>{
     S.points.coins-=cost; S.locker.push({id:uid(),rewardId:id,name:r.name,boughtAt:today()}); save(); haptic('success'); render(); toast('Bought · in your locker'); });
 }
-function buyFreeze(){ const fc=freezeCost(); if(S.freezes||S.points.coins<fc) return; S.points.coins-=fc; S.freezes=1; save(); haptic('success'); render(); toast('Streak freeze ready'); }
 
 /* ---------- Settings ---------- */
 function vSettings(){
@@ -1749,69 +1803,72 @@ function vSettings(){
       <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
       <button class="iconbtn" data-editreward="${x.id}" aria-label="Edit">${ICON.edit}</button><button class="iconbtn" data-delreward="${x.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')
       ||'<p class="muted small">Tell it how often you want something and it works out the price from what you earn.</p>'}</div></details>
-  <details class="acc"><summary>Quotes <span class="muted">${S.quotes.length}</span></summary><div class="body">
-    <div class="row" style="margin-bottom:10px"><input type="text" id="newquote" placeholder="Add your own…" maxlength="200"><button class="btn primary" id="addquote">Add</button></div>
-    ${S.quotes.filter(q=>q.custom).map(q=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(q.text)}</span><button class="iconbtn" data-delquote="${q.id}">${ICON.trash}</button></div>`).join('')}
-    <p class="tiny muted" style="margin-top:10px">${S.quotes.filter(q=>q.custom).length?`${S.quotes.filter(q=>q.custom).length} of yours.`:'Yours only — nothing is added for you.'}</p></div></details>
   <details class="acc" id="acc-look" data-tour="look"><summary>Customise <span class="muted">${(THEMES[st.theme]||THEMES.teal).label} · ${st.mode}</span></summary><div class="body">
     <div class="opt" style="flex-direction:column;align-items:stretch;gap:10px"><label>Theme</label>
       <div class="themes">${Object.entries(THEMES).map(([n,t])=>{ const p=t[isDarkMode(st)?'dark':'light']; return `<button class="themechip ${st.theme===n?'on':''}" data-set="theme" data-val="${n}" aria-label="${t.label}"><span class="preview" style="background:${p.bg};border-color:${p.line}"><i style="background:${p.accent}"></i></span><span class="tiny">${t.label}</span></button>`; }).join('')}</div></div>
     <div class="opt"><label>Mode</label>${segS('mode',[['dark','Dark'],['light','Light'],['system','Auto']])}</div>
-    <div class="opt" style="flex-direction:column;align-items:stretch;gap:10px"><label>Font colour</label>
-      <div class="swatches">${INKS.filter(c=>isDarkMode(st)?luminance(c.hex)>0.45:luminance(c.hex)<0.28).map(c=>`<button class="sw ${st.ink===c.hex?'on':''}" data-set="ink" data-val="${c.hex}" style="background:${c.hex}" aria-label="${c.id}" title="${c.id}"></button>`).join('')}
-        <input type="color" id="customink" value="${st.ink||themePalette(st).fg}" aria-label="Custom font colour">
-        <button class="btn sm ghost" data-set="ink" data-val="">Theme default</button></div>
-      <p class="font-preview">Aa — this is your text colour.</p></div>
     <div class="opt" style="flex-direction:column;align-items:stretch;gap:10px"><label>Design</label>
       <div class="designs">${MOTIFS.map(m=>`<button class="designchip ${st.motif===m.id?'on':''}" data-set="motif" data-val="${m.id}" aria-label="${m.label}"><span class="glyph">${MOTIF_GLYPH[m.id]}</span><span class="tiny">${esc(m.label)}</span></button>`).join('')}</div></div>
     <div class="opt"><label>Font</label>${segS('font',[['system','System'],['rounded','Rounded'],['serif','Serif'],['mono','Mono']])}</div>
     <div class="opt"><label>Text size <span class="hint">${st.textSize}%</span></label><div class="row"><button class="btn sm" data-size="-10">A−</button><button class="btn sm" data-size="10">A+</button></div></div>
-    <div class="opt"><label>Motion</label>${tg('motion',st.motion)}</div>
-    <div class="opt"><label>Haptics <span class="hint">where supported</span></label>${tg('haptics',st.haptics)}</div>
+    <div class="opt"><label>Haptics <span class="hint">buzz on confirms</span></label>${tg('haptics',st.haptics)}</div>
     <div class="opt"><label>Glow</label>${tg('glow',st.glow)}</div>
     <div class="opt"><label>Reset</label><button class="btn sm" id="resetlook">Defaults</button></div></div></details>
   <details class="acc"><summary>Affirmation <span class="muted">${S.whys.length||'none'}</span></summary><div class="body">
     <div class="row" style="margin-bottom:10px"><input type="text" id="newwhy" placeholder="" maxlength="140"><button class="btn primary" id="addwhy">Add</button></div>
     ${S.whys.map(w=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(w.text)}</span><button class="iconbtn" data-delwhy="${w.id}">${ICON.trash}</button></div>`).join('')||'<p class="muted small">This is what you see when the app opens. Nothing is written for you.</p>'}</div></details>
-  <details class="acc" id="acc-remind" data-tour="remind" ${remOpen?'open':''}><summary>Reminders <span class="muted">${(()=>{const st=notifyState();const c=remindCfg();
-    return st==='granted'?(c.on?'on':'off'):st==='ios-needs-install'?'needs installing':st==='denied'?'blocked':'off';})()}</span></summary><div class="body">
+  <details class="acc" id="acc-remind" data-tour="remind" ${remOpen?'open':''}><summary>Reminders <span class="muted">${remindCfg().on&&notifyState()==='granted'?'on':'off'}</span></summary><div class="body">
+    <div class="opt"><label>Reminders <span class="hint">a nudge in the morning, and in the evening if anything's open</span></label>
+      <button class="toggle ${remindCfg().on?'on':''}" data-remind-on role="switch" aria-checked="${remindCfg().on}"></button></div>
     ${(()=>{ const st=notifyState(), c=remindCfg();
-      if(st==='unsupported') return '<p class="muted small">This browser can\'t do notifications.</p>';
-      if(st==='ios-needs-install') return `<div class="card callout"><b>Add Steady to your home screen first</b>
-        <p class="small muted" style="margin-top:6px">On iPhone, notifications only work once the app is on your home screen — Safari can't send them from a tab. Tap <b>Share</b> (the square with the arrow), scroll down, tap <b>Add to Home Screen</b>, then open Steady from the icon and come back here.</p></div>`;
-      if(st==='denied') return `<div class="card callout"><b>Notifications are blocked</b>
-        <p class="small muted" style="margin-top:6px">You'll need to allow them in your browser's site settings for this page, then come back.</p></div>`;
-      if(st==='default') return `<div class="stack"><p class="small muted">A nudge in the morning, and one in the evening if anything's still open. Nothing else — no marketing, ever.</p>
-        <button class="btn primary block" id="asknotify">Turn on reminders</button></div>`;
-      return `<div class="opt"><label>Reminders</label><button class="toggle ${c.on?'on':''}" data-remind-on role="switch" aria-checked="${c.on}"></button></div>
-        <div class="opt"><label>Morning nudge</label><input type="time" id="remmorning" value="${c.morning}" style="width:130px"></div>
+      if(!c.on) return '<p class="tiny muted" style="margin-top:8px">Switched off. Nothing will be sent.</p>';
+      if(st==='unsupported') return '<p class="small muted" style="margin-top:8px">This browser can\'t do notifications.</p>';
+      if(st==='ios-needs-install') return `<div class="card callout" style="margin-top:10px"><b>Add Steady to your home screen first</b>
+        <p class="small muted" style="margin-top:6px">iPhone only allows notifications once the app is on your home screen. Safari → <b>Share</b> → <b>Add to Home Screen</b>, then open it from the icon.</p></div>`;
+      if(st==='denied') return `<div class="card callout" style="margin-top:10px"><b>Your browser is blocking them</b>
+        <p class="small muted" style="margin-top:6px">The switch above is on, but permission was denied so nothing can get through. Nobody can undo that from inside a web page — you have to clear it in the browser:</p>
+        <ol class="steps-list" style="margin-top:8px">
+          <li><b>Brave / Chrome:</b> tap the <b>padlock</b> or <b>⚙</b> next to the web address → <b>Permissions</b> → <b>Notifications</b> → set to Ask or Allow.</li>
+          <li>Or: Settings → Site settings → Notifications → find this site → <b>Allow</b>.</li>
+          <li><b>iPhone:</b> Settings → Notifications → Steady → Allow.</li>
+        </ol>
+        <button class="btn sm block" style="margin-top:10px" id="recheck">I've done that — check again</button></div>`;
+      if(st==='default') return `<div class="stack" style="margin-top:10px"><p class="small muted">One last step: your browser needs to allow them.</p>
+        <button class="btn primary block" id="asknotify">Allow notifications</button></div>`;
+      return `<div class="opt"><label>Morning nudge</label><input type="time" id="remmorning" value="${c.morning}" style="width:130px"></div>
         <div class="opt"><label>Evening, if unfinished</label><button class="toggle ${c.eveningOn?'on':''}" data-remind-eve role="switch" aria-checked="${c.eveningOn}"></button></div>
         ${c.eveningOn?`<div class="opt"><label>Evening time</label><input type="time" id="remevening" value="${c.evening}" style="width:130px"></div>`:''}
+        <div class="opt"><label>List reminders <span class="hint">for Plan items with a time</span></label><button class="toggle ${c.todos!==false?'on':''}" data-remind-todos role="switch" aria-checked="${c.todos!==false}"></button></div>
         <div class="opt"><label>Test it</label><button class="btn sm" id="remtest">Send one now</button></div>
         <p class="tiny muted" style="margin-top:10px">${PUSH.vapidPublic?'Reminders arrive whether the app is open or not.':'These fire while the app is open. For reminders when it is closed, the server side needs setting up — see push.sql.'}</p>`;
     })()}
   </div></details>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
-    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, times its habit strength (up to ×1.5). Coins are spent in the shop. XP is never spent — it drives your level and title.</p>
-    <p><b style="color:var(--fg)">Habit strength.</b> Each task has a 0–100% strength that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Give a task a target in minutes and you'll be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did. So 15 of 30 minutes on a 10-coin task pays 8, not 5. Going over pays +1 coin per ${OT_PER} minutes on top (max +${OT_TASK_CAP} per task, +${OT_DAY_CAP} a day), coins only, never XP. A short session is still <i>done</i> — it never touches your streak, your day clear or your habit strength. Skip the prompt and you get full pay.</p>
-    <p><b style="color:var(--fg)">Full-clear streak.</b> Tick every task 7 days running and you get +${CLEAR_WEEK_BONUS} coins. It doubles each further week — ${[1,2,3,4,5].map(b=>clearWeekBonus(b)).join(', ')} — then holds at ${CLEAR_WEEK_CAP} for as long as the run lasts. Miss a full clear and it starts from ${CLEAR_WEEK_BONUS} again.</p>
-    <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days in a row and the app offers to halve the target and suggests a few things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It won't ask again about that task for ${ADVICE_COOLDOWN} days.</p>
-    <p><b style="color:var(--fg)">Day cleared.</b> Finish every task and you get +${CLEAR_PER_TASK} per task on top. Nothing ever subtracts points.</p>
-    <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days (Mon–Sun) and a free day's coins (+${chestCoins()}) land on Monday.</p>
-    <p><b style="color:var(--fg)">Streak.</b> Open the app daily. +5 from day two, +10 from day seven, +15 from day thirty. A streak freeze (${freezeCost()} coins) covers one missed day.</p>
-    <p><b style="color:var(--fg)">How often actually means how often.</b> The frequency you pick is a real limit, not just a pricing guess — otherwise a cheap reward is buyable every day. You get what you planned <i>plus one spare</i>, then it waits. So weekly means one a week and a second if you really want it; "8× a month" means eight, a ninth if you must, then nothing until the 1st. Every reward carries a counter for the month, which turns amber once you are past your plan.</p>
-    <p><b style="color:var(--fg)">Shop.</b> You say how often you'd like a reward — weekly, fortnightly, monthly, or a custom number of times a month — and the price is worked out from what you actually earn (measured over your last four weeks, not a theoretical perfect run). Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; over 90% it goes amber, over 100% red. <b>Balance these for me</b> rescales every price to fit while keeping your chosen frequencies, and shows you the before and after first — nothing changes until you tap Apply. Adding a reward makes the others cheaper, because a fixed income split more ways costs less each time: you can have more different rewards, or rarer and more meaningful ones, not both.</p>
-    <p><b style="color:var(--fg)">Old note.</b> You set each reward's price in coins. Week and fortnight chips are 7 and 14 clear days from the tasks you have set (each task pays ${TASK_BASE} plus ${CLEAR_PER_TASK} for clearing). As you type a price, the days shown are that price divided by a clear day. Lowering a price asks you to confirm. You can only spend when average habit strength is ${BUY_STRENGTH}%+. Missing never costs you anything.</p>
-    <p><b style="color:var(--fg)">Task cap.</b> Up to ${MAX_TASKS} tasks.</p>
-    <p><b style="color:var(--fg)">Today's list.</b> The list under your tasks is outside the whole economy — no coins, no strength, no miss gate. Unfinished items just carry over. The backlog is a pool to pull from when you have cleared your day and are at a loose end.</p>
-    <p><b style="color:var(--fg)">Chats.</b> Group chats of up to ${CREW_MAX}. You can't type — you pick from a set list of phrases and emotes, like the quick chat in a game. Nothing to moderate, nothing to leak, and no way to be unpleasant in it. There's a rate limit so nobody can spam. Challenges are set up inside a chat, and everyone in it joins by default.</p>
-    <p><b style="color:var(--fg)">Group challenges.</b> Up to ${CHAL_PARTY_MAX} people. Each extra head adds ${Math.round(CREW_BONUS_PER_HEAD*100)}% to the pot, capped at double. Bigger groups make the streak-type challenges genuinely harder — one person's bad Tuesday can reset it — so that bonus is payment for real risk.</p>
-    <p><b style="color:var(--fg)">Friends.</b> Pair up by swapping codes. Shared streaks, cheers and nudges work with everyone. Cheer them when they've cleared (+${CHEER_COINS} coins to them, once a day) or nudge when they haven't. There's no leaderboard, deliberately.</p>
-    <p><b style="color:var(--fg)">Challenges and chests.</b> You start these. Up to ${CHAL_PEOPLE_MAX} people can be on live challenges at once. You choose the tier when you invite someone, and the tier sets how hard it is. You can have one legendary, one rare and two commons running at the same time — they don't block each other. A friend can only be on one challenge with you at a time. Finish it and you open <i>one</i> chest (grouping on rare or common shares it): <span style="color:${TIERS_C.common.colour}">Common</span> pays ${TIERS_C.common.rolls.join('/')}, <span style="color:${TIERS_C.rare.colour}">Rare</span> ${TIERS_C.rare.rolls.join('/')}, <span style="color:${TIERS_C.legendary.colour}">Legendary</span> ${TIERS_C.legendary.rolls.join('/')} — which one you get is luck. Combined totals scale with party size so grouping isn't a shortcut. Drop a challenge to free the slot; the timer starts again if you retry. Challenges can't be failed; a bad patch just takes longer.</p>
+    <p><b style="color:var(--fg)">The idea.</b> Nothing here ever takes points off you. Missing a day costs you what you would have earned, and that is all. The app's job is to notice patterns you would not, and to make keeping your word worth something.</p>
+
+    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, multiplied by that task's habit strength (up to ×1.5). Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
+    <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
+    <p><b style="color:var(--fg)">Day cleared.</b> Tick everything and you get +${CLEAR_PER_TASK} per task on top.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength.</p>
+    <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
+    <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
+    <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
+
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn over the last four weeks. Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
+    <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber on the first spare and red on the last. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
+
+    <p><b style="color:var(--fg)">Misses.</b> Anything untouched at local midnight becomes a miss on next open, and you are asked why. Those answers are the most useful thing in the app: they feed <i>Why you miss</i> in Progress, the breakdown on each task, the day detail in a task's history, and every recap.</p>
+    <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
+
+    <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
+    <p><b style="color:var(--fg)">Plan.</b> A list and notes, both outside the economy — nothing there can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
+    <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
+
+    <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only, so there is nothing to moderate and no way to be unpleasant. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
+    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons and your affirmation never leave this device.</p>
     <p class="tiny">Build ${BUILD}</p>
-    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. If you add a friend, only aggregates sync: cleared/done counts, streak, consistency and level. Task names, day notes, miss reasons and your affirmation never leave this device.</p>
-    <div class="row" style="margin-top:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div></div></details>`;
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
+  </div></details>`;
 }
 /* ---------- Event binding ---------- */
 function bind(){
@@ -1827,7 +1884,10 @@ function bind(){
     if(v==='pick'){ promptDate('When?', planState.when&&planState.when.includes('-')?planState.when:addDays(today(),2), d=>{ planState.when=d; render(); }); return; }
     planState.when=v; haptic(); render(); });
   const whenDay=()=>{ const w=planState.when; return w==='today'?today():w==='tomorrow'?addDays(today(),1):w==='someday'?null:w; };
-  const nl=q('#newtodo'); if(nl){ const add=()=>{const v=nl.value.trim(); if(!v) return; addTodo(v,whenDay()); haptic(); render(); document.getElementById('newtodo')?.focus();};
+  const nta=q('#newtodoat'); if(nta) nta.onchange=()=>{ planState.at=nta.value; render(); };
+  const cat=q('#clearat'); if(cat) cat.onclick=()=>{ planState.at=''; render(); };
+  const nl=q('#newtodo'); if(nl){ const add=()=>{const v=nl.value.trim(); if(!v) return;
+      addTodo(v,whenDay(),document.getElementById('newtodoat')?.value||null); haptic(); render(); document.getElementById('newtodo')?.focus();};
     q('#addtodo').onclick=add; nl.onkeydown=e=>{if(e.key==='Enter')add();}; }
   qa('[data-todo]').forEach(b=>b.onclick=()=>{ const el=b.closest('.todo'); const id=b.dataset.todo; const t=S.todos.find(x=>x.id===id);
     haptic(); if(!t.done&&S.settings.motion){ el.classList.add('ticking'); setTimeout(()=>{toggleTodo(id);render();},200); } else { toggleTodo(id); render(); } });
@@ -1878,7 +1938,8 @@ function bind(){
   qa('[data-cheer]').forEach(b=>b.onclick=async()=>{ const f=S.friends[b.dataset.cheer]; const kind=b.dataset.kind;
     b.disabled=true; await Sync.cheer(f,kind); haptic('success'); render();
     toast(S.syncError?'Could not send':(kind==='cheer'?`Cheer sent to ${f.name}`:`Nudge sent to ${f.name}`)); });
-  qa('[data-recap]').forEach(b=>b.onclick=()=>{ const r=S.recaps.find(x=>String(x.n)===b.dataset.recap); if(r) recapView(r,false); });
+  qa('[data-recap]').forEach(b=>b.onclick=()=>{ const key=b.dataset.recap;
+    const r=S.recaps.find(x=>String(x.week||x.n)===key); if(r) recapView(r,false); });
   qa('[data-sub]').forEach(b=>b.onclick=()=>{progState.sub=b.dataset.sub;haptic();render();window.scrollTo({top:0});});
   qa('[data-day]').forEach(b=>b.onclick=()=>{progState.sel=b.dataset.day;render();});
   qa('[data-tday]').forEach(b=>b.onclick=()=>{ const [id,dk]=b.dataset.tday.split('|');
@@ -1893,7 +1954,6 @@ function bind(){
   const dn=q('#daynote'); if(dn) dn.oninput=()=>{ day(progState.sel).note=dn.value; save(); };
   // Shop
   qa('[data-buy]').forEach(b=>b.onclick=()=>buy(b.dataset.buy));
-  const fz=q('[data-freeze]'); if(fz) fz.onclick=buyFreeze;
   qa('[data-use]').forEach(b=>b.onclick=()=>{const x=S.locker.find(l=>l.id===b.dataset.use); x.usedAt=today(); save(); haptic(); render(); toast('Enjoy it.');});
   // Settings — tasks
   const nt=q('#newtask'); const addT=()=>{ const v=nt.value.trim(); if(!v) return;
@@ -1936,8 +1996,6 @@ function bind(){
   qa('[data-editreward]').forEach(b=>b.onclick=()=>{ const r=S.rewards.find(x=>x.id===b.dataset.editreward); if(r) editReward(r); });
   qa('[data-delreward]').forEach(b=>b.onclick=()=>{const x=S.rewards.find(r=>r.id===b.dataset.delreward);x.active=false;save();render();document.getElementById('acc-rewards').open=true;});
   // quotes
-  const nq=q('#newquote'); if(nq){ q('#addquote').onclick=()=>{const v=nq.value.trim();if(!v)return;S.quotes.push({id:uid(),text:v,author:'',custom:true});save();render();$app.querySelectorAll('.acc')[2].open=true;}; }
-  qa('[data-delquote]').forEach(b=>b.onclick=()=>{S.quotes=S.quotes.filter(x=>x.id!==b.dataset.delquote);save();render();$app.querySelectorAll('.acc')[2].open=true;});
   // look
   const keepLook=()=>{ const acc=document.getElementById('acc-look'); if(acc) acc.open=true; };
   qa('[data-set]').forEach(b=>b.onclick=()=>{
@@ -1964,7 +2022,12 @@ function bind(){
   const an=q('#asknotify'); if(an) an.onclick=async()=>{ an.textContent='…';
     const r=await askNotify(); render(); keepRem();
     toast(r==='granted'?'Reminders on':r==='denied'?'Blocked in your browser settings':'Not enabled'); };
-  const ro=q('[data-remind-on]'); if(ro) ro.onclick=()=>{ const c=remindCfg(); c.on=!c.on; save(); haptic(); render(); keepRem(); };
+  const ro=q('[data-remind-on]'); if(ro) ro.onclick=async()=>{ const c=remindCfg(); c.on=!c.on; save(); haptic();
+    if(c.on && notifyState()==='default'){ await askNotify(); }
+    render(); keepRem(); };
+  const rc=q('#recheck'); if(rc) rc.onclick=()=>{ render(); keepRem();
+    toast(notifyState()==='granted'?'Working now':'Still blocked in the browser'); };
+  const rtd=q('[data-remind-todos]'); if(rtd) rtd.onclick=()=>{ const c=remindCfg(); c.todos=c.todos===false; save(); haptic(); render(); keepRem(); };
   const re=q('[data-remind-eve]'); if(re) re.onclick=()=>{ const c=remindCfg(); c.eveningOn=!c.eveningOn; save(); haptic(); render(); keepRem(); };
   const rm=q('#remmorning'); if(rm) rm.onchange=()=>{ remindCfg().morning=rm.value; save(); subscribePush().catch(()=>{}); toast('Morning nudge set'); };
   const rv=q('#remevening'); if(rv) rv.onchange=()=>{ remindCfg().evening=rv.value; save(); subscribePush().catch(()=>{}); toast('Evening nudge set'); };
@@ -2055,10 +2118,12 @@ function moveSheet(t){
   const opts=[['Today',today()],['Tomorrow',addDays(today(),1)],[whenLabel(addDays(today(),2)),addDays(today(),2)],['Next week',addDays(today(),7)],['Someday',null]];
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Move “${esc(t.text)}”</h2><p class="muted small" style="margin-bottom:14px">Currently ${whenLabel(t.day).toLowerCase()}.</p>
     <div class="chips">${opts.map((x,i)=>`<button class="chip" data-mv="${i}">${esc(x[0])}</button>`).join('')}<button class="chip add" data-mvpick>Pick a date</button></div>
+    <div class="row" style="margin-top:12px;align-items:center;gap:8px"><input type="time" id="mvat" value="${t.at||''}" style="width:126px"><span class="tiny muted">time (optional)</span><button class="btn sm" id="mvatsave">Set</button></div>
     <div class="foot"><button class="btn" data-x>Cancel</button></div></div>`);
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{ setTodoDay(t.id,opts[b.dataset.mv][1]); close(o); haptic(); render(); });
   o.querySelector('[data-mvpick]').onclick=()=>{ close(o); promptDate('When?',t.day&&t.day>today()?t.day:addDays(today(),2),d=>{ setTodoDay(t.id,d); haptic(); render(); }); };
+  o.querySelector('#mvatsave').onclick=()=>{ setTodoTime(t.id,o.querySelector('#mvat').value||null); haptic(); close(o); render(); toast(t.at?`Reminder at ${t.at}`:'Time cleared'); };
 }
 function noteEditor(id){
   const n=S.notes.find(x=>x.id===id); if(!n) return;
@@ -2129,7 +2194,7 @@ function quoteGate(next){
   const a=affirmationToday();
   if(!a||S.flags.quoteDate===today()){ next(); return; }
   const g=document.createElement('div'); g.className='gate';
-  g.innerHTML=`<p class="q">${esc(a.text)}</p><div class="actions"><button class="btn primary block" id="startday">Start the day</button></div>`;
+  g.innerHTML=`<p class="q">${esc(a.text)}<span class="qend">&rdquo;</span></p><div class="actions"><button class="btn primary block" id="startday">Start the day</button></div>`;
   document.body.appendChild(g);
   g.querySelector('#startday').onclick=()=>{ S.flags.quoteDate=today(); save(); haptic(); g.style.transition='opacity .3s'; g.style.opacity=0; setTimeout(()=>{g.remove();next();},300); };
 }
@@ -2164,7 +2229,7 @@ const TOURS={
   today:[['ring','Coins earned today. Each task pays 10, boosted by its habit strength.'],['tasks','Tap to pick, confirm at the bottom. The thin bar is strength — it grows when you show up and only dents when you don’t.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
   plan:[['listadd','Add anything, dated whenever you like — today, a date, or someday.']],
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
-  shop:[['balance','Coins to spend. XP fills the level bar and is never spent.'],['gate','Spending unlocks when average habit strength is 70%+.'],['freeze','Cheap insurance: one missed day, streak intact.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
+  shop:[['balance','Coins to spend. XP fills the level bar and is never spent.'],['gate','Spending unlocks when average habit strength is 70%+.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
   settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, font colour, designs, type.']],
   friends:[['crews','Chats. Fixed phrases and emotes only — no typing, nothing to moderate. Challenges get started inside a chat.'],['code','Swap codes to pair up — adding one pairs you both ways. Only totals sync, never task names or notes.'],['friend','Invite someone to a challenge and pick the tier — that sets how hard it is and how big the chest. One legendary, one rare and two commons can run at once.']],
 };
@@ -2212,8 +2277,8 @@ function budgetCard(){
     <p class="tiny muted" style="margin-top:3px">About ${b.income} coins a month${b.real?'':' (estimated until you have a week of history)'}. Add a reward and this shows whether it fits.</p></div>`;
   const msg = b.level==='over'
     ? `That does not fit. Something will have to give — fewer rewards, or rarer ones.`
-    : b.level==='tight' ? `That is just about everything you earn. No slack for streak freezes or a chest.`
-    : `That fits, with room for freezes and challenges.`;
+    : b.level==='tight' ? `That is just about everything you earn. No slack for a chest.`
+    : `That fits, with room for challenges.`;
   return `<div class="card budget ${b.level}" style="padding:12px">
     <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'#f59e0b':'var(--accent)'}">${b.pct}%</span></div>
     <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
@@ -2361,7 +2426,7 @@ function streakScene(win){
     <button class="btn primary block" id="swclaim" style="margin-top:26px">Nice</button>
   </div>`;
   document.body.appendChild(g);
-  if(S.settings.motion) burst(getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#2dd4bf');
+  if(motionOK()) burst(getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#2dd4bf');
   haptic('success');
   g.querySelector('#swclaim').onclick=()=>{ g.remove(); render(); };
 }
@@ -2431,7 +2496,7 @@ function chestScene(win){
   const finish=()=>{ num.textContent=amount; prize.classList.add('locked');
     if(top){ eyebrow.textContent='Best roll!'; eyebrow.classList.add('best'); burst(colour); }
     claim.hidden=false; };
-  if(!S.settings.motion){ hint.remove(); prize.classList.add('show'); finish(); }
+  if(!motionOK()){ hint.remove(); prize.classList.add('show'); finish(); }
   let opened=false;
   art.onclick=()=>{
     if(opened) return; opened=true;
@@ -2464,7 +2529,7 @@ function chestScene(win){
   claim.onclick=()=>{ g.remove(); render(); toast(`+${amount} coins`); };
 }
 function burst(colour){
-  if(!S.settings.motion) return;
+  if(!motionOK()) return;
   const c=fxCanvas(),x=c.getContext('2d'); c.width=innerWidth;c.height=innerHeight;
   const P=Array.from({length:130},()=>({x:innerWidth/2,y:innerHeight*.42,
     vx:(Math.random()-.5)*17,vy:-Math.random()*17-3,r:Math.random()*6+3,
@@ -2484,9 +2549,9 @@ function recapView(r,earned){
   g.innerHTML=`<div class="recap-bar"><button class="btn ghost sm" data-close>${earned?'Close':'‹ Back'}</button><span class="tiny muted">${fmt(r.from,{day:'numeric',month:'short'})} – ${fmt(r.at,{day:'numeric',month:'short'})}</span></div>
   <div class="recap-scroll">
     <div class="rhero"><div class="eyebrow">${earned?'You made it':'Recap'}</div><h1>${esc(r.name)}</h1>
-      <p class="muted">${r.shown} day${r.shown===1?'':'s'} of showing up.</p></div>
+      <p class="muted">${r.weekly?`${fmt(r.from,{day:'numeric',month:'short'})} – ${fmt(r.at,{day:'numeric',month:'short'})} · `:''}${r.shown} day${r.shown===1?'':'s'} of showing up.</p></div>
 
-    ${card(`${r.rate}%`,'of everything you set yourself','Across '+r.expected+' chances.')}
+    ${card(`${r.rate}%`,'of everything you set yourself',r.prevRate!=null?`${r.rate>=r.prevRate?'Up':'Down'} from ${r.prevRate}% the week before.`:'Across '+r.expected+' chances.')}
     ${card(r.cleared,`day${r.cleared===1?'':'s'} cleared completely`,'Every task done.')}
     ${card(r.coins.toLocaleString(),'coins earned',`Level ${r.level} · ${esc(r.title)}`)}
     ${card(r.bestStreak,'day best streak','Longest run of opening the app.')}
@@ -2496,8 +2561,14 @@ function recapView(r,earned){
     ${r.strongest?`<div class="rcard soft"><span class="eyebrow">Most solid</span><b class="mid">${esc(r.strongest.name)}</b><p class="small muted">${r.strongest.s}% strength. This is the one that stuck.</p></div>`:''}
     ${r.weakest&&r.weakest.s<r.strongest?.s?`<div class="rcard soft"><span class="eyebrow">Hardest going</span><b class="mid">${esc(r.weakest.name)}</b><p class="small muted">${r.weakest.s}% strength. Worth asking whether it is the right habit, or just the wrong time of day.</p></div>`:''}
 
-    ${r.topReason||r.worstDay?`<div class="rcard soft"><span class="eyebrow">When you slipped</span>
-      ${r.topReason?`<b class="mid">${esc(r.topReason[0])}</b><p class="small muted">Your most common reason — ${r.topReason[1]} time${r.topReason[1]===1?'':'s'}.</p>`:''}
+    ${(r.reasonList&&r.reasonList.length)?`<div class="rcard soft"><span class="eyebrow">Why you missed</span>
+      <div style="margin-top:10px">${r.reasonList.map(([why,n])=>`<div class="tod"><span class="small">${esc(why)}</span>
+        <div class="todbar"><i class="warn" style="width:${clamp(Math.round(100*n/Math.max(1,r.missTotal)),6,100)}%"></i></div>
+        <span class="tiny muted">${n}</span></div>`).join('')}</div>
+      ${r.worstDay?`<p class="small muted" style="margin-top:10px">${esc(r.worstDay[0])}s were hardest.</p>`:''}
+      <p class="tiny muted" style="margin-top:6px">Straight from what you told it when it asked. Nothing was taken off you for any of it.</p></div>`:
+      (r.topReason||r.worstDay)?`<div class="rcard soft"><span class="eyebrow">When you slipped</span>
+      ${r.topReason?`<b class="mid">${esc(r.topReason[0])}</b><p class="small muted">${r.topReason[1]} time${r.topReason[1]===1?'':'s'}.</p>`:''}
       ${r.worstDay?`<p class="small muted" style="margin-top:8px">${esc(r.worstDay[0])}s were hardest.</p>`:''}</div>`:''}
 
     <div class="rcard soft last"><p>${r.rate>=80?'That is a good rate. The habit is the point, not the score — but that is a good rate.':r.rate>=50?'Half the battle is turning up at all, and you did that '+r.shown+' times.':'It has been a rough run. Nothing was taken off you for it, and the days are still there to be had.'}</p>
