@@ -263,8 +263,9 @@ function applyMotif(st, acc){
   el.style.backgroundImage=img||'none';
   el.classList.toggle('on', !!img);
 }
-function isDarkMode(st=S.settings){
-  return st.mode==='dark' || (st.mode==='system' && matchMedia('(prefers-color-scheme: dark)').matches);
+/* Follows the phone's own light/dark setting — one less switch to find. */
+function isDarkMode(){
+  return !matchMedia('(prefers-color-scheme: light)').matches;
 }
 function themePalette(st=S.settings){
   const t=THEMES[st.theme]||THEMES.teal;
@@ -288,7 +289,7 @@ function fresh(){
     clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null,
     crews:[], msgs:{}, muted:[],
     settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true,
-      remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,fired:{}}},
+      remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}}},
     flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
     pendingMisses:[], undo:null,
   };
@@ -339,12 +340,105 @@ function whenLabel(k){ if(!k) return 'Someday'; const d=(parse(k)-parse(today())
   return fmt(k,{day:'numeric',month:'short'}); }
 
 /* ---------- Notes ---------- */
-function noteTitle(n){ return (n.body||'').split('\n')[0].trim() || 'New note'; }
-function notePreview(n){ const r=(n.body||'').split('\n').slice(1).join(' ').trim(); return r||'No additional text'; }
-function addNote(){ const n={id:uid(),body:'',updatedAt:Date.now()}; S.notes.unshift(n); save(); return n; }
-function saveNote(id,body){ const n=S.notes.find(x=>x.id===id); if(n){ n.body=body; n.updatedAt=Date.now(); save(); } }
+/* ---------- Notes ----------
+   A note is a list of blocks: text (with light markdown) or a small chart you
+   fill in yourself. No images — everything here stays plain text and numbers. */
+function noteBlocks(n){
+  if(!n.blocks){ n.blocks = n.body ? [{id:uid(),type:'text',text:n.body}] : [{id:uid(),type:'text',text:''}]; delete n.body; }
+  if(!n.blocks.length) n.blocks.push({id:uid(),type:'text',text:''});
+  return n.blocks;
+}
+function noteText(n){ return noteBlocks(n).filter(b=>b.type==='text').map(b=>b.text).join('\n'); }
+function noteTitle(n){
+  const first=noteText(n).split('\n').map(stripMd).find(l=>l && !/^---+$/.test(l));
+  if(first) return first;
+  const ch=noteBlocks(n).find(b=>b.type==='chart');
+  return ch?.title || 'New note';
+}
+const stripMd = l => l.replace(/^#{1,3}\s*/,'').replace(/^[-*]\s+/,'').replace(/^\d+[.)]\s+/,'')
+  .replace(/^\[[ xX]\]\s*/,'').replace(/^>\s?/,'').replace(/\*\*/g,'').replace(/`/g,'').trim();
+function notePreview(n){
+  const lines=noteText(n).split('\n').map(stripMd).filter(l=>l && !/^---+$/.test(l));
+  const charts=noteBlocks(n).filter(b=>b.type==='chart');
+  const rest=lines.slice(1).join(' · ');
+  if(rest) return rest;
+  if(charts.length) return charts.map(c=>c.title||'chart').join(' · ');
+  return 'Empty note';
+}
+function addNote(){ const n={id:uid(),blocks:[{id:uid(),type:'text',text:''}],updatedAt:Date.now(),createdAt:Date.now()}; S.notes.unshift(n); save(); return n; }
+function touchNote(n){ n.updatedAt=Date.now(); save(); }
 function dropNote(id){ S.notes=S.notes.filter(n=>n.id!==id); save(); }
+function noteEmpty(n){ return !noteText(n).trim() && !noteBlocks(n).some(b=>b.type==='chart'&&(b.points||[]).length); }
 function notesSorted(){ return [...S.notes].sort((a,b)=>b.updatedAt-a.updatedAt); }
+
+/* Light markdown: headings, bullets, numbers, tick boxes, quotes, rules, bold/italic. */
+function mdInline(t){
+  return esc(t)
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/(^|[^*])\*([^*]+)\*/g,'$1<i>$2</i>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>');
+}
+function mdRender(text){
+  const lines=(text||'').split('\n');
+  let out='', list=null;
+  const closeList=()=>{ if(list){ out+=`</${list}>`; list=null; } };
+  lines.forEach((raw,i)=>{
+    const l=raw.trim();
+    if(!l){ closeList(); return; }
+    let m;
+    if(/^---+$/.test(l)){ closeList(); out+='<hr>'; return; }
+    if((m=l.match(/^(#{1,3})\s+(.*)$/))){ closeList(); const lv=m[1].length; out+=`<h${lv+2} class="mdh">${mdInline(m[2])}</h${lv+2}>`; return; }
+    if((m=l.match(/^\[([ xX])\]\s*(.*)$/))){ closeList();
+      const on=m[1].toLowerCase()==='x';
+      out+=`<div class="mdcheck ${on?'on':''}" data-mdline="${i}"><span class="box">${on?'✓':''}</span><span>${mdInline(m[2])}</span></div>`; return; }
+    if((m=l.match(/^[-*]\s+(.*)$/))){ if(list!=='ul'){ closeList(); out+='<ul class="mdul">'; list='ul'; } out+=`<li>${mdInline(m[1])}</li>`; return; }
+    if((m=l.match(/^\d+[.)]\s+(.*)$/))){ if(list!=='ol'){ closeList(); out+='<ol class="mdol">'; list='ol'; } out+=`<li>${mdInline(m[1])}</li>`; return; }
+    if((m=l.match(/^>\s?(.*)$/))){ closeList(); out+=`<blockquote class="mdq">${mdInline(m[1])}</blockquote>`; return; }
+    closeList(); out+=`<p class="mdp">${mdInline(l)}</p>`;
+  });
+  closeList();
+  return out || '<p class="mdp muted">Tap to write…</p>';
+}
+function toggleMdLine(block,idx){
+  const lines=block.text.split('\n');
+  const l=lines[idx]; if(l===undefined) return;
+  lines[idx] = /^\s*\[x\]/i.test(l) ? l.replace(/\[[xX]\]/,'[ ]') : l.replace(/\[\s?\]/,'[x]');
+  block.text=lines.join('\n');
+}
+
+/* ---------- Chart blocks ---------- */
+function chartBlock(){ return {id:uid(),type:'chart',title:'',unit:'',style:'line',points:[]}; }
+function chartPoints(b){ return [...(b.points||[])].sort((x,y)=>x.d<y.d?-1:x.d>y.d?1:0); }
+function chartSVG(b){
+  const pts=chartPoints(b);
+  if(pts.length<1) return '<p class="tiny muted">No readings yet.</p>';
+  const W=300,H=110,PADX=8,PADY=10;
+  const vals=pts.map(p=>Number(p.v)||0);
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  if(lo===hi){ lo=lo-1; hi=hi+1; }
+  const x=i=>pts.length===1?W/2:PADX+(W-PADX*2)*i/(pts.length-1);
+  const y=v=>H-PADY-(H-PADY*2)*((v-lo)/(hi-lo));
+  if(b.style==='bar'){
+    const bw=Math.max(4,Math.min(26,(W-PADX*2)/pts.length-4));
+    const bx=i=>pts.length===1 ? W/2-bw/2
+      : PADX + (W-PADX*2-bw)*i/(pts.length-1);        // inset so the first and last bars fit
+    return `<svg viewBox="0 0 ${W} ${H}" class="nchart" preserveAspectRatio="none">
+      ${pts.map((p,i)=>{const yy=y(Number(p.v)||0);return `<rect x="${bx(i).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw}" height="${(H-PADY-yy).toFixed(1)}" rx="2"/>`;}).join('')}</svg>`;
+  }
+  const d=pts.map((p,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(Number(p.v)||0).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" class="nchart" preserveAspectRatio="none">
+    <path d="${d}" fill="none" class="line"/>
+    ${pts.map((p,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(Number(p.v)||0).toFixed(1)}" r="2.6"/>`).join('')}</svg>`;
+}
+function chartSummary(b){
+  const pts=chartPoints(b);
+  if(!pts.length) return '';
+  const last=Number(pts[pts.length-1].v)||0;
+  const first=Number(pts[0].v)||0;
+  const diff=Math.round((last-first)*100)/100;
+  const u=b.unit?` ${esc(b.unit)}`:'';
+  return `<span class="chartnow">${last}${u}</span>${pts.length>1?` <span class="tiny ${diff>=0?'up':'down'}">${diff>=0?'▲':'▼'}${Math.abs(diff)} since ${fmt(pts[0].d,{day:'numeric',month:'short'})}</span>`:''}`;
+}
 function toggleTodo(id){ const t=S.todos.find(x=>x.id===id); if(!t) return;
   t.done=!t.done; t.doneDay=t.done?today():null; if(t.done&&!t.day) t.day=today(); save(); }
 function pullTodo(id){ const t=S.todos.find(x=>x.id===id); if(t){ t.day=today(); save(); } }
@@ -462,7 +556,10 @@ function notifyState(){
   if(isIOS() && !isStandalone()) return 'ios-needs-install';   // Safari only allows this once it's on the home screen
   return Notification.permission;                              // 'default' | 'granted' | 'denied'
 }
-function remindCfg(){ const s=S.settings; s.remind=s.remind||{on:false,morning:'08:00',evening:'20:00',eveningOn:true,fired:{}}; return s.remind; }
+function remindCfg(){ const s=S.settings;
+  s.remind=s.remind||{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}};
+  if(s.remind.aff===undefined){ s.remind.aff='12:00'; s.remind.affOn=false; }
+  return s.remind; }
 async function askNotify(){
   if(!('Notification' in window)) return 'unsupported';
   let p=Notification.permission;
@@ -525,6 +622,12 @@ function reminderTick(){
   const due=(slot,at)=>at && hm>=at && c.fired[slot]!==k;
   if(due('morning',c.morning)){ c.fired.morning=k; save();
     showLocal('Steady', reminderBody(), 'steady-morning'); return; }
+  /* Just your own words, nothing else. */
+  if(c.affOn && due('aff',c.aff)){
+    const a=randomAffirmation();
+    c.fired.aff=k; save();
+    if(a){ showLocal('Remember', a.text, 'steady-aff'); return; }
+  }
   if(c.eveningOn && due('evening',c.evening)){
     const st=dayStats(k); if(st.expected && st.done<st.expected){ c.fired.evening=k; save();
       showLocal('Still time', reminderBody(), 'steady-evening'); }
@@ -834,6 +937,8 @@ function readableSyncError(e){
   const m=String(e?.message||e||'');
   if(/^network$|dynamically imported module|Failed to fetch|NetworkError|ERR_/i.test(m)) return "Can't reach the server. You're offline or the connection is blocked.";
   if(/Invalid login credentials/i.test(m)) return 'Wrong email or password.';
+  if(/redirect|not allowed/i.test(m)) return "This address isn't in Supabase's allowed redirect list yet.";
+  if(/For security purposes|rate/i.test(m)) return 'Too many tries — wait a minute and go again.';
   if(/User already registered|already been registered/i.test(m)) return 'That email already has an account — sign in instead.';
   if(/Password should be|at least 6/i.test(m)) return 'Password needs to be at least 6 characters.';
   if(/Email not confirmed/i.test(m)) return 'Confirm the email first, or switch off email confirmation in Supabase.';
@@ -907,6 +1012,34 @@ const Sync = {
     catch(e){ throw new Error(readableSyncError(e)); }
     S.me={id,email:email.trim(),name,code}; S.auth='in'; S.syncError=null; save();
     await this.backup();
+  },
+  /* Sends a reset link. Supabase needs this exact address in
+     Authentication → URL Configuration → Redirect URLs. */
+  async resetPassword(email){
+    if(!this.live()) throw new Error('No server configured.');
+    const to=location.origin+location.pathname;
+    try{ await api('/auth/v1/recover',{method:'POST',body:{email:email.trim(),redirect_to:to},noAuth:true}); }
+    catch(e){ throw new Error(readableSyncError(e)); }
+  },
+  /* Arrives back from the email link with a token in the URL. */
+  async claimRecovery(){
+    if(!this.live()) return false;
+    const h=new URLSearchParams((location.hash||'').replace(/^#/,''));
+    if(h.get('type')!=='recovery' || !h.get('access_token')) return false;
+    setSession({access_token:h.get('access_token'),refresh_token:h.get('refresh_token'),
+      expires_in:Number(h.get('expires_in'))||3600});
+    history.replaceState(null,'',location.pathname);
+    return true;
+  },
+  async setPassword(pw){
+    if(!this.live()) return;
+    try{ const d=await api('/auth/v1/user',{method:'PUT',body:{password:pw}});
+      const id=d?.id||S.session?.user_id;
+      let prof=null; try{ prof=(await api(`/rest/v1/profiles?id=eq.${id}&select=code,display_name`))?.[0]; }catch(e){}
+      S.me={id,email:d?.email||S.me?.email||'',name:prof?.display_name||S.me?.name||'Me',code:prof?.code||me().code};
+      S.auth='in'; S.syncError=null; save();
+      return await this.restore();
+    }catch(e){ throw new Error(readableSyncError(e)); }
   },
   async signIn(email,password){
     if(!this.live()){ S.auth='in'; save(); return; }
@@ -1182,6 +1315,16 @@ function weakLink(){
   return {name:t.name,strength:s,day:worst&&worst[1]>=2?worst[0]:null};
 }
 function weekCleared(mon){ let c=0,any=false; for(let i=0;i<7;i++){const s=dayStats(addDays(mon,i)); if(s.expected)any=true; if(s.perfect)c++;} return {cleared:c,any}; }
+/* One affirmation, picked fresh each time a tab is opened. With only one saved
+   you always get that one; with several you get a different one each time. */
+let tabAff=null;
+function randomAffirmation(){ const a=S.whys||[]; if(!a.length) return null; return a[Math.floor(Math.random()*a.length)]; }
+function rollTabAff(){ tabAff=randomAffirmation(); return tabAff; }
+function affirmationLine(){
+  const a=tabAff||rollTabAff();
+  if(!a) return '';
+  return `<p class="afline">${esc(a.text)}</p>`;
+}
 function affirmationToday(){
   const a=S.whys||[];
   if(!a.length) return null;
@@ -1305,7 +1448,7 @@ const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   coin:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9.5A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5.5 1.5" stroke-linecap="round"/></svg>',
   flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
 
-function setTab(t){ endTour(true); tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+function setTab(t){ endTour(true); rollTabAff(); tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
 function render(){
   if(!$app || !document.body.contains($app)) $app=document.getElementById('app');
   if(!$app) return;
@@ -1390,6 +1533,7 @@ function backupNudge(){
 function vPlan(){
   const sub=planState.sub;
   return `<div class="head"><div><div class="eyebrow">Outside the points — nothing here can be failed</div><h1>Plan</h1></div></div>
+  ${affirmationLine()}
   <div class="seg" style="margin-bottom:14px">${[['list','List'],['notes','Notes']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-psub="${v}">${l}</button>`).join('')}</div>
   ${sub==='list'?pList():pNotes()}`;
 }
@@ -1431,9 +1575,12 @@ function pNotes(){
   return `
   <button class="btn primary block" id="newnote" style="margin-bottom:14px">New note</button>
   ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>`<button class="noterow" data-note="${n.id}">
-      <div class="grow"><b>${esc(noteTitle(n))}</b><p class="tiny muted">${fmt(dkey(new Date(n.updatedAt)),{day:'numeric',month:'short'})} · ${esc(notePreview(n).slice(0,48))}</p></div><span class="chev">›</span></button>`).join('')}</div>`:
-    `<div class="card empty"><b>No notes</b>Somewhere to put whatever's in your head.</div>`}`;
+      <div class="grow"><b>${esc(noteTitle(n))}</b>
+      <p class="tiny muted">${fmt(dkey(new Date(n.updatedAt)),{weekday:'short',day:'numeric',month:'short'})} · ${esc(notePreview(n).slice(0,44))}</p></div>
+      <span class="chev">›</span></button>`).join('')}</div>`:
+    `<div class="card empty"><b>No notes</b>Somewhere to write things properly — headings, lists, tick boxes, and little charts you fill in yourself.</div>`}`;
 }
+
 
 /* ---------- Progress ---------- */
 const DELTA=(now,prev)=>{ if(prev===null||prev===undefined) return ''; const d=now-prev; if(!d) return `<span class="delta flat">—</span>`;
@@ -1443,6 +1590,7 @@ function vProgress(){
   const L=level();
   const sub=progState.sub||'overview';
   const head=`<div class="head"><div><div class="eyebrow">${S.points.xp} XP · level ${L.L}</div><h1>Progress</h1></div></div>
+    ${affirmationLine()}
     <div class="seg" style="margin-bottom:14px">${[['overview','Overview'],['calendar','Calendar'],['tasks','Tasks']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-sub="${v}">${l}</button>`).join('')}</div>`;
   return head + ({overview:pOverview,calendar:pCalendar,tasks:pTasks})[sub]();
 }
@@ -1664,7 +1812,7 @@ function vFriends(){
   const live=Sync.live(), inn=Sync.signedIn();
   const banner=S.syncError?`<div class="card syncerr"><div class="row between"><div><b>Not syncing right now</b><p class="small muted">${esc(S.syncError)}</p></div><div class="stack" style="gap:6px"><button class="btn sm" id="retrysync">Retry</button><button class="btn sm ghost" id="conncheck2">Diagnose</button></div></div>
     <p class="tiny muted" style="margin-top:8px">Everything else works as normal — your tasks and history are on this device.</p></div>`:'';
-  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div></div>${banner}`;
+  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div></div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `
     <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
@@ -1673,6 +1821,7 @@ function vFriends(){
         <input type="email" id="auemail" placeholder="Email" autocomplete="email">
         <input type="password" id="aupass" placeholder="Password" autocomplete="${authState.mode==='up'?'new-password':'current-password'}">
         <button class="btn primary block" id="authgo">${authState.mode==='up'?'Create account':'Sign in'}</button>
+        ${authState.mode==='in'?`<button class="btn ghost block" id="forgotpw">Forgotten your password?</button>`:''}
       </div>
       <p class="tiny muted" style="margin-top:12px">${authState.mode==='up'?'An account backs up everything — tasks, history, coins — so a new phone restores it all. Only aggregates are ever shared with friends.':'Signing in on a new phone restores your tasks, history and coins.'}</p>
     </div>
@@ -1707,9 +1856,9 @@ function vFriends(){
     const on=friendChallenge(f.id); const onQ=on?liveQuest(on):null;
     const others=onQ?onQ.members.filter(x=>x.id!==f.id):[];
     return `<div class="section"><h2>${esc(f.name)} <span class="muted">${f.title||''}</span></h2>
-    <div class="card"><div class="row between"><div class="row" style="gap:10px"><span class="avatar">${esc((f.name||'?')[0]).toUpperCase()}</span>
+    <button class="card friendcard" data-friend="${f.id}"><div class="row between" style="width:100%"><div class="row" style="gap:10px"><span class="avatar">${esc((f.name||'?')[0]).toUpperCase()}</span>
       <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0} day streak · level ${f.level??1}</p></div></div>
-      <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></div>
+      <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></button>
 
     <div class="card pairstreak"><div class="row between"><div><div class="eyebrow">Shared streak</div><div class="heroval">${ps}<small>days</small></div>
       <p class="tiny muted">${ps?'Days you both cleared in a row.':'Starts the first day you both clear.'}</p></div>
@@ -1732,8 +1881,8 @@ function vFriends(){
     </div>`; }).join('')}
 
   ${!fs.length?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak. One legendary at a time with one friend; rare and common can take two.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`:''}
-  ${live&&inn?`<div class="card"><div class="row between"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Last saved ${new Date(S.vaultAt).toLocaleString()}`:'Not backed up yet'}</p></div>
-    <div class="row" style="gap:6px"><button class="btn sm" id="backupnow">Back up</button><button class="btn sm ghost" id="signout">Sign out</button></div></div></div>`:''}`;
+  ${live&&inn?`<div class="card"><div class="row between"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Saves itself · last ${new Date(S.vaultAt).toLocaleString()}`:'Saves itself a few seconds after anything changes'}</p></div>
+    <button class="btn sm ghost" id="signout">Sign out</button></div></div>`:''}`;
 }
 
 /* ---------- Shop ---------- */
@@ -1741,6 +1890,7 @@ function vShop(){
   const T=title(), L=level(); const str=avgStrength(); const canRate=true; const active=S.rewards.filter(x=>x.active);
   return `
   <div class="head"><div><div class="eyebrow">Coins to spend</div><h1>Shop</h1></div></div>
+  ${affirmationLine()}
   <div class="card" data-tour="balance"><div class="balance">${S.points.coins}<small>coins</small></div>
     <div class="row between" style="margin-top:14px"><span class="pill accent">Level ${L.L} · ${T.name}</span><span class="tiny muted">${L.into} / ${L.need} XP</span></div>
     <div class="titlebar"><i style="width:${clamp(100*L.into/L.need,0,100)}%"></i></div>
@@ -1778,6 +1928,7 @@ function vSettings(){
   const segS=(k,opts)=>`<div class="seg">${opts.map(([v,l])=>`<button class="${st[k]===v?'on':''}" data-set="${k}" data-val="${v}">${l}</button>`).join('')}</div>`;
   return `
   <div class="head"><div><div class="eyebrow">Steady</div><h1>Settings</h1></div></div>
+  ${affirmationLine()}
   <details class="acc" id="acc-tasks" data-tour="tasks"><summary>Tasks <span class="muted">${activeTasks().length} / ${MAX_TASKS}</span></summary><div class="body">
     ${(()=>{const live=S.tasks.filter(t=>!t.archived); const n=live.length; const full=n>=MAX_TASKS; return `
     <div class="stack" style="margin-bottom:10px"><div class="row"><input type="text" id="newtask" placeholder="${full?'Task cap reached':'e.g. Walk the dog'}" maxlength="60"${full?' disabled':''}><input type="number" id="newtarget" placeholder="min" min="1" max="600" style="width:74px;padding:12px 8px;text-align:center"${full?' disabled':''}></div>
@@ -1803,10 +1954,9 @@ function vSettings(){
       <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
       <button class="iconbtn" data-editreward="${x.id}" aria-label="Edit">${ICON.edit}</button><button class="iconbtn" data-delreward="${x.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')
       ||'<p class="muted small">Tell it how often you want something and it works out the price from what you earn.</p>'}</div></details>
-  <details class="acc" id="acc-look" data-tour="look"><summary>Customise <span class="muted">${(THEMES[st.theme]||THEMES.teal).label} · ${st.mode}</span></summary><div class="body">
+  <details class="acc" id="acc-look" data-tour="look"><summary>Customise <span class="muted">${(THEMES[st.theme]||THEMES.teal).label} · ${isDarkMode()?'dark':'light'}</span></summary><div class="body">
     <div class="opt" style="flex-direction:column;align-items:stretch;gap:10px"><label>Theme</label>
       <div class="themes">${Object.entries(THEMES).map(([n,t])=>{ const p=t[isDarkMode(st)?'dark':'light']; return `<button class="themechip ${st.theme===n?'on':''}" data-set="theme" data-val="${n}" aria-label="${t.label}"><span class="preview" style="background:${p.bg};border-color:${p.line}"><i style="background:${p.accent}"></i></span><span class="tiny">${t.label}</span></button>`; }).join('')}</div></div>
-    <div class="opt"><label>Mode</label>${segS('mode',[['dark','Dark'],['light','Light'],['system','Auto']])}</div>
     <div class="opt" style="flex-direction:column;align-items:stretch;gap:10px"><label>Design</label>
       <div class="designs">${MOTIFS.map(m=>`<button class="designchip ${st.motif===m.id?'on':''}" data-set="motif" data-val="${m.id}" aria-label="${m.label}"><span class="glyph">${MOTIF_GLYPH[m.id]}</span><span class="tiny">${esc(m.label)}</span></button>`).join('')}</div></div>
     <div class="opt"><label>Font</label>${segS('font',[['system','System'],['rounded','Rounded'],['serif','Serif'],['mono','Mono']])}</div>
@@ -1838,8 +1988,9 @@ function vSettings(){
       return `<div class="opt"><label>Morning nudge</label><input type="time" id="remmorning" value="${c.morning}" style="width:130px"></div>
         <div class="opt"><label>Evening, if unfinished</label><button class="toggle ${c.eveningOn?'on':''}" data-remind-eve role="switch" aria-checked="${c.eveningOn}"></button></div>
         ${c.eveningOn?`<div class="opt"><label>Evening time</label><input type="time" id="remevening" value="${c.evening}" style="width:130px"></div>`:''}
+        <div class="opt"><label>Affirmation <span class="hint">sends one of your own lines</span></label><button class="toggle ${c.affOn?'on':''}" data-remind-aff role="switch" aria-checked="${c.affOn}"></button></div>
+        ${c.affOn?`<div class="opt"><label>Affirmation time</label><input type="time" id="remaff" value="${c.aff}" style="width:130px"></div>`:''}
         <div class="opt"><label>List reminders <span class="hint">for Plan items with a time</span></label><button class="toggle ${c.todos!==false?'on':''}" data-remind-todos role="switch" aria-checked="${c.todos!==false}"></button></div>
-        <div class="opt"><label>Test it</label><button class="btn sm" id="remtest">Send one now</button></div>
         <p class="tiny muted" style="margin-top:10px">${PUSH.vapidPublic?'Reminders arrive whether the app is open or not.':'These fire while the app is open. For reminders when it is closed, the server side needs setting up — see push.sql.'}</p>`;
     })()}
   </div></details>
@@ -1862,9 +2013,13 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list and notes, both outside the economy — nothing there can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
-    <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
+    <p><b style="color:var(--fg)">Notes.</b> Each note is made of blocks. A text block takes headings (<b>#</b>), bullets (<b>-</b>), numbered lists, tick boxes (<b>[ ]</b> — tap to tick), quotes (<b>&gt;</b>), rules (<b>---</b>) and <b>**bold**</b>; there's a toolbar so you don't have to remember any of it. Tap written text to edit it, Done to lay it out. A chart block is a little tracker you fill in yourself — name it, give it a unit, add readings with a date, and switch between line and bar. Good for things that aren't daily habits: van mileage, revision hours, weight. Notes carry the date they were last touched, and delete from the bin in the top corner.</p>
+    <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
 
     <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only, so there is nothing to moderate and no way to be unpleasant. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
+    <p><b style="color:var(--fg)">Accounts.</b> The account exists only to back things up and to pair with people — everything works without one. Backing up happens by itself a few seconds after anything changes. Forgotten your password? Use the link on the sign-in screen and it emails you a reset. Lost the email as well? Your tasks, history and coins are still on this phone; sign up again with another email and this device carries on. You would lose the old backup and any pairing, nothing else.</p>
+    <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
+    <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
     <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons and your affirmation never leave this device.</p>
     <p class="tiny">Build ${BUILD}</p>
     <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
@@ -1916,8 +2071,8 @@ function bind(){
       }
     }catch(e){ ag.disabled=false; ag.textContent=authState.mode==='up'?'Create account':'Sign in'; toast(e.message||'Could not sign in'); }
   };
+  const fp=q('#forgotpw'); if(fp) fp.onclick=()=>forgotSheet();
   const so=q('#signout'); if(so) so.onclick=()=>modal('<h2>Sign out?</h2><p class="muted">Your tasks and history stay on this device. Sign back in any time.</p>','Sign out',async()=>{ await Sync.signOut(); render(); toast('Signed out'); });
-  const bn=q('#backupnow'); if(bn) bn.onclick=async()=>{ bn.textContent='…'; await Sync.backup(); render(); toast(S.syncError?'Backup failed':'Backed up'); };
   const rn=q('#renameme'); if(rn) rn.onclick=()=>prompt$('Your name',me().name||'',async v=>{ await Sync.rename(v); render(); });
   const ci=q('#clearinbox'); if(ci) ci.onclick=()=>{ S.inbox=[]; save(); render(); };
   const cc=q('#copycode'); if(cc) cc.onclick=()=>{ navigator.clipboard?.writeText(me().code); toast('Code copied'); };
@@ -1928,6 +2083,7 @@ function bind(){
   qa('[data-unfriend]').forEach(b=>b.onclick=()=>{ const f=S.friends[b.dataset.unfriend];
     modal(`<h2>Remove ${esc(f.name)}?</h2><p class="muted">Your shared streak goes with it. If they're on a challenge, they leave it.</p>`,'Remove',async()=>{ await Sync.removeFriend(f.id); render(); toast('Removed'); },true); });
   const sc=q('#startchal'); if(sc) sc.onclick=()=>startChallengeModal();
+  qa('[data-friend]').forEach(b=>b.onclick=()=>{ const f=S.friends[b.dataset.friend]; if(f) friendSheet(f); });
   qa('[data-crew]').forEach(b=>b.onclick=()=>chatView(b.dataset.crew));
   const nc=q('#newcrew'); if(nc) nc.onclick=()=>crewSheet(null);
   qa('[data-chest]').forEach(b=>b.onclick=()=>{ const win=claimChest(b.dataset.chest); if(win) chestScene(win); else toast('Not ready yet'); });
@@ -2027,12 +2183,12 @@ function bind(){
     render(); keepRem(); };
   const rc=q('#recheck'); if(rc) rc.onclick=()=>{ render(); keepRem();
     toast(notifyState()==='granted'?'Working now':'Still blocked in the browser'); };
+  const raf=q('[data-remind-aff]'); if(raf) raf.onclick=()=>{ const c=remindCfg(); c.affOn=!c.affOn; save(); haptic(); render(); keepRem(); };
+  const rav=q('#remaff'); if(rav) rav.onchange=()=>{ remindCfg().aff=rav.value; save(); subscribePush().catch(()=>{}); toast('Affirmation time set'); };
   const rtd=q('[data-remind-todos]'); if(rtd) rtd.onclick=()=>{ const c=remindCfg(); c.todos=c.todos===false; save(); haptic(); render(); keepRem(); };
   const re=q('[data-remind-eve]'); if(re) re.onclick=()=>{ const c=remindCfg(); c.eveningOn=!c.eveningOn; save(); haptic(); render(); keepRem(); };
   const rm=q('#remmorning'); if(rm) rm.onchange=()=>{ remindCfg().morning=rm.value; save(); subscribePush().catch(()=>{}); toast('Morning nudge set'); };
   const rv=q('#remevening'); if(rv) rv.onchange=()=>{ remindCfg().evening=rv.value; save(); subscribePush().catch(()=>{}); toast('Evening nudge set'); };
-  const rt=q('#remtest'); if(rt) rt.onclick=async()=>{ const ok=await showLocal('Steady', reminderBody(), 'steady-test');
-    toast(ok?'Sent':'Could not send — check permission'); };
   const ii=q('[data-iosinstall]'); if(ii) ii.onclick=()=>iosInstallSheet();
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
   const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
@@ -2127,16 +2283,126 @@ function moveSheet(t){
 }
 function noteEditor(id){
   const n=S.notes.find(x=>x.id===id); if(!n) return;
+  /* A new or empty note opens straight into the keyboard — nothing to hunt for. */
+  let editing = noteEmpty(n) ? noteBlocks(n)[0].id : null;
   const g=document.createElement('div'); g.className='gate noteedit';
-  g.innerHTML=`<div class="noteedit-bar"><button class="btn ghost sm" data-back>‹ Notes</button><span class="tiny muted" id="nsaved"></span><button class="iconbtn" data-del aria-label="Delete">${ICON.trash}</button></div>
-    <textarea id="nbody" placeholder="Start typing…">${esc(n.body)}</textarea>`;
   document.body.appendChild(g);
-  const ta=g.querySelector('#nbody'); const st=g.querySelector('#nsaved');
-  setTimeout(()=>ta.focus(),120);
-  let t0; ta.oninput=()=>{ clearTimeout(t0); t0=setTimeout(()=>{ saveNote(id,ta.value); st.textContent='Saved'; setTimeout(()=>st.textContent='',1200); },400); };
-  const leave=()=>{ saveNote(id,ta.value); if(!ta.value.trim()) dropNote(id); g.remove(); render(); };
-  g.querySelector('[data-back]').onclick=leave;
-  g.querySelector('[data-del]').onclick=()=>modal('<h2>Delete this note?</h2><p class="muted">It cannot be recovered.</p>','Delete',()=>{ dropNote(id); g.remove(); render(); },true);
+
+  const draw=()=>{
+    const blocks=noteBlocks(n);
+    g.innerHTML=`
+    <div class="noteedit-bar">
+      <button class="btn ghost sm" data-back>‹ Notes</button>
+      <span class="tiny muted">${fmt(dkey(new Date(n.updatedAt)),{weekday:'short',day:'numeric',month:'short'})}</span>
+      <button class="iconbtn" data-del aria-label="Delete note">${ICON.trash}</button>
+    </div>
+    <div class="noteedit-body">
+      ${blocks.map((bl,i)=>bl.type==='chart'?chartBlockHtml(bl,i,blocks.length):textBlockHtml(bl,i,blocks.length,editing===bl.id)).join('')}
+      <div class="addblocks">
+        <button class="btn sm" data-addtext>+ Text</button>
+        <button class="btn sm" data-addchart>+ Chart</button>
+      </div>
+    </div>`;
+    bindEditor();
+  };
+
+  const textBlockHtml=(bl,i,total,isEditing)=>`
+    <div class="nblock" data-block="${bl.id}">
+      ${isEditing?`
+        <div class="mdbar">
+          ${[['# ','H'],['**','B'],['- ','•'],['1. ','1.'],['[ ] ','☐'],['> ','❝'],['---','—']].map(([ins,lab])=>
+            `<button class="mdbtn" data-ins="${esc(ins)}">${lab}</button>`).join('')}
+          <button class="btn sm primary" data-donetext style="margin-left:auto">Done</button>
+        </div>
+        <textarea class="nta" data-ta="${bl.id}" placeholder="Write anything. # for a heading, - for a bullet, [ ] for a tick box.">${esc(bl.text)}</textarea>`
+      :`<div class="mdview" data-view="${bl.id}">${mdRender(bl.text)}</div>`}
+      ${total>1?`<button class="iconbtn ghosty blockdel" data-rmblock="${bl.id}" aria-label="Remove block">${ICON.trash}</button>`:''}
+    </div>`;
+
+  const chartBlockHtml=(bl,i,total)=>`
+    <div class="nblock chartblock" data-block="${bl.id}">
+      <input type="text" class="charttitle" data-ctitle="${bl.id}" value="${esc(bl.title||'')}" placeholder="What are you tracking?" maxlength="40">
+      <div class="row" style="gap:10px;margin-top:8px;align-items:center">
+        <input type="text" class="chartunit" data-cunit="${bl.id}" value="${esc(bl.unit||'')}" placeholder="unit (kg, hrs…)" maxlength="10">
+        <div class="seg tiny-seg">${[['line','Line'],['bar','Bar']].map(([v,l])=>`<button class="${(bl.style||'line')===v?'on':''}" data-cstyle="${bl.id}|${v}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="chartwrap">${chartSVG(bl)}</div>
+      <div class="row between" style="margin-top:4px"><span class="small">${chartSummary(bl)}</span>
+        <button class="btn sm" data-cadd="${bl.id}">+ Reading</button></div>
+      ${(bl.points||[]).length?`<details class="fold"><summary><span>Readings (${bl.points.length})</span></summary>
+        <ul class="list">${chartPoints(bl).map(pt=>`<li><span class="small">${fmt(pt.d,{day:'numeric',month:'short'})}</span>
+          <span class="row" style="gap:8px"><b class="small">${pt.v}${bl.unit?' '+esc(bl.unit):''}</b>
+          <button class="iconbtn ghosty" data-cdel="${bl.id}|${pt.id}" aria-label="Remove reading">${ICON.trash}</button></span></li>`).join('')}</ul></details>`:''}
+      ${total>1?`<button class="iconbtn ghosty blockdel" data-rmblock="${bl.id}" aria-label="Remove block">${ICON.trash}</button>`:''}
+    </div>`;
+
+  const bindEditor=()=>{
+    const q=sel=>g.querySelector(sel), qa=sel=>[...g.querySelectorAll(sel)];
+    q('[data-back]').onclick=leave;
+    q('[data-del]').onclick=()=>modal('<h2>Delete this note?</h2><p class="muted">It cannot be recovered.</p>','Delete',()=>{ dropNote(id); g.remove(); render(); },true);
+
+    qa('[data-view]').forEach(v=>v.onclick=e=>{
+      if(e.target.closest('.mdcheck')){
+        const line=Number(e.target.closest('.mdcheck').dataset.mdline);
+        const bl=noteBlocks(n).find(x=>x.id===v.dataset.view);
+        toggleMdLine(bl,line); touchNote(n); haptic(); draw(); return;
+      }
+      editing=v.dataset.view; draw();
+      const ta=g.querySelector(`[data-ta="${editing}"]`); if(ta){ ta.focus(); ta.selectionStart=ta.value.length; }
+    });
+
+    const ta=q('[data-ta]');
+    if(ta){
+      const bl=noteBlocks(n).find(x=>x.id===ta.dataset.ta);
+      let t0; ta.oninput=()=>{ bl.text=ta.value; clearTimeout(t0); t0=setTimeout(()=>touchNote(n),400); };
+      qa('[data-ins]').forEach(btn=>btn.onclick=()=>{
+        const ins=btn.dataset.ins;
+        const start=ta.selectionStart, val=ta.value;
+        if(ins==='**'){ const end=ta.selectionEnd; const mid=val.slice(start,end)||'bold';
+          ta.value=val.slice(0,start)+'**'+mid+'**'+val.slice(end);
+          ta.selectionStart=start+2; ta.selectionEnd=start+2+mid.length; }
+        else { const ls=val.lastIndexOf('\n',Math.max(0,start-1))+1;
+          ta.value=val.slice(0,ls)+ins+val.slice(ls);
+          ta.selectionStart=ta.selectionEnd=start+ins.length; }
+        bl.text=ta.value; touchNote(n); ta.focus(); haptic();
+      });
+      q('[data-donetext]').onclick=()=>{ bl.text=ta.value; touchNote(n); editing=null; draw(); };
+    }
+
+    qa('[data-ctitle]').forEach(el=>el.oninput=()=>{ const bl=noteBlocks(n).find(x=>x.id===el.dataset.ctitle); bl.title=el.value; touchNote(n); });
+    qa('[data-cunit]').forEach(el=>el.oninput=()=>{ const bl=noteBlocks(n).find(x=>x.id===el.dataset.cunit); bl.unit=el.value; touchNote(n); });
+    qa('[data-cstyle]').forEach(el=>el.onclick=()=>{ const [bid,st]=el.dataset.cstyle.split('|');
+      const bl=noteBlocks(n).find(x=>x.id===bid); bl.style=st; touchNote(n); haptic(); draw(); });
+    qa('[data-cadd]').forEach(el=>el.onclick=()=>{ const bl=noteBlocks(n).find(x=>x.id===el.dataset.cadd); readingSheet(bl,()=>{ touchNote(n); draw(); }); });
+    qa('[data-cdel]').forEach(el=>el.onclick=()=>{ const [bid,pid]=el.dataset.cdel.split('|');
+      const bl=noteBlocks(n).find(x=>x.id===bid); bl.points=(bl.points||[]).filter(x=>x.id!==pid); touchNote(n); haptic(); draw(); });
+
+    qa('[data-rmblock]').forEach(el=>el.onclick=()=>{
+      n.blocks=noteBlocks(n).filter(x=>x.id!==el.dataset.rmblock); touchNote(n); haptic(); draw(); });
+    q('[data-addtext]').onclick=()=>{ const nb={id:uid(),type:'text',text:''}; noteBlocks(n).push(nb); editing=nb.id; touchNote(n); draw();
+      const t=g.querySelector(`[data-ta="${nb.id}"]`); if(t) t.focus(); };
+    q('[data-addchart]').onclick=()=>{ noteBlocks(n).push(chartBlock()); touchNote(n); haptic(); draw(); };
+  };
+
+  const leave=()=>{ if(noteEmpty(n)) dropNote(id); else touchNote(n); g.remove(); render(); };
+  draw();
+  const first=g.querySelector('[data-ta]'); if(first) setTimeout(()=>first.focus(),120);
+}
+
+function readingSheet(bl,after){
+  const o=overlay(`<div class="modal"><h2>Add a reading</h2>
+    <div class="stack" style="margin-top:12px">
+      <input type="date" id="rdate" value="${today()}" max="${today()}">
+      <input type="number" id="rval" step="any" placeholder="Value${bl.unit?' in '+esc(bl.unit):''}">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Add</button></div></div>`,'center');
+  const val=o.querySelector('#rval'); setTimeout(()=>val.focus(),100);
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  const ok=()=>{ const v=Number(val.value); if(!val.value.trim()||isNaN(v)){ toast('Needs a number'); return; }
+    const d=o.querySelector('#rdate').value||today();
+    bl.points=(bl.points||[]).filter(x=>x.d!==d).concat([{id:uid(),d,v:Math.round(v*100)/100}]);
+    close(o); haptic(); after&&after(); };
+  o.querySelector('[data-ok]').onclick=ok; val.onkeydown=e=>{ if(e.key==='Enter') ok(); };
 }
 
 /* ---------- Time sheet (timed tasks) ---------- */
@@ -2305,6 +2571,78 @@ function rebalanceSheet(){
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelector('[data-ok]').onclick=()=>{ applyRebalance(plan); haptic('success'); close(o); render();
     const a=document.getElementById('acc-rewards'); if(a) a.open=true; toast('Rebalanced'); };
+}
+
+function friendStats(f){
+  const p=pairOf(f); const ch=p.chests||[];
+  const byTier={common:0,rare:0,legendary:0};
+  ch.forEach(c=>{ if(byTier[c.tier]!==undefined) byTier[c.tier]++; });
+  const cheersOut=Object.values(S.pairs).length?0:0;
+  return {chests:ch.length, coins:ch.reduce((a,c)=>a+(c.amount||0),0), byTier,
+    done:(p.done||[]).length, recent:[...ch].reverse().slice(0,8), streak:pairStreak(f)};
+}
+function friendSheet(f){
+  const st=friendStats(f);
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <div class="row" style="gap:12px;align-items:center"><span class="avatar big">${esc((f.name||'?')[0]).toUpperCase()}</span>
+      <div><h2 style="margin:0">${esc(f.name)}</h2><p class="tiny muted">${esc(f.title||'')} · level ${f.level??1} · code ${esc(f.code||'')}</p></div></div>
+    <div class="stats" style="margin-top:14px">
+      <div class="stat"><b>${st.chests}</b><span>chests together</span></div>
+      <div class="stat"><b>${st.coins}</b><span>coins from them</span></div>
+      <div class="stat"><b>${st.streak}</b><span>shared streak</span></div>
+      <div class="stat"><b>${f.consistency??0}%</b><span>their consistency</span></div>
+    </div>
+    ${st.chests?`<div class="card" style="margin-top:12px;padding:12px"><b class="small">Chests by tier</b>
+      <div style="margin-top:8px">${Object.entries(st.byTier).map(([t,n])=>`<div class="tod"><span class="small" style="color:${TIERS_C[t].colour}">${TIERS_C[t].label}</span>
+        <div class="todbar"><i style="width:${clamp(Math.round(100*n/Math.max(1,st.chests)),0,100)}%;background:${TIERS_C[t].colour}"></i></div>
+        <span class="tiny muted">${n}</span></div>`).join('')}</div></div>`:
+      `<div class="card empty" style="margin-top:12px"><b>No chests yet</b>Start a challenge in a chat and the first one is on its way.</div>`}
+    ${st.recent.length?`<details class="fold"><summary><span>Every chest</span><span class="tiny">${st.chests}</span></summary>
+      <ul class="list">${st.recent.map(c=>`<li><span><i class="dotc" style="background:${TIERS_C[c.tier].colour}"></i>${esc(c.name||'Challenge')}</span>
+        <span class="row" style="gap:10px"><span class="tiny muted">${fmt(c.at,{day:'numeric',month:'short'})}</span><b class="small" style="color:${TIERS_C[c.tier].colour}">+${c.amount}</b></span></li>`).join('')}</ul></details>`:''}
+    <p class="tiny muted" style="margin-top:12px">${st.done} challenge${st.done===1?'':'s'} finished together.</p>
+    <div class="foot"><button class="btn" data-x>Close</button></div></div>`);
+  o.querySelector('[data-x]').onclick=()=>close(o);
+}
+
+function forgotSheet(){
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Forgotten your password</h2>
+    <p class="muted small" style="margin-bottom:12px">Put in the email you signed up with and we'll send a reset link. Open it on this phone and you'll come straight back here to set a new one.</p>
+    <input type="email" id="fpmail" placeholder="Email" autocomplete="email" value="${esc(S.me?.email||'')}">
+    <div class="card" style="margin-top:12px;padding:12px"><b class="small">If you've lost the email too</b>
+      <p class="tiny muted" style="margin-top:4px">Your tasks, history and coins are still on this phone — the account is only the backup. Sign up again with a different email and this device's data carries on as it is. You'd lose the old backup and any pairing, nothing else.</p></div>
+    <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Send link</button></div></div>`);
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  o.querySelector('[data-ok]').onclick=async()=>{
+    const em=o.querySelector('#fpmail').value.trim();
+    if(!em){ toast('Needs your email'); return; }
+    const btn=o.querySelector('[data-ok]'); btn.disabled=true; btn.textContent='…';
+    try{ await Sync.resetPassword(em); close(o); toast('Link sent — check your email'); }
+    catch(e){ btn.disabled=false; btn.textContent='Send link'; toast(e.message||'Could not send it'); }
+  };
+}
+function newPasswordGate(){
+  const g=document.createElement('div'); g.className='gate';
+  g.innerHTML=`<h1 style="font-size:1.9rem;margin-bottom:10px">Set a new password</h1>
+    <p class="muted">You came back from the reset link. Pick something you'll remember — at least 6 characters.</p>
+    <div class="stack" style="margin-top:18px">
+      <input type="password" id="np1" placeholder="New password" autocomplete="new-password">
+      <input type="password" id="np2" placeholder="Again, to be sure" autocomplete="new-password">
+      <button class="btn primary block" id="npgo">Save it</button></div>`;
+  document.body.appendChild(g);
+  g.querySelector('#npgo').onclick=async()=>{
+    const a=g.querySelector('#np1').value, b=g.querySelector('#np2').value;
+    if(a.length<6){ toast('At least 6 characters'); return; }
+    if(a!==b){ toast('Those do not match'); return; }
+    const btn=g.querySelector('#npgo'); btn.disabled=true; btn.textContent='…';
+    try{ const blob=await Sync.setPassword(a);
+      g.remove();
+      if(blob && (S.tasks.length||Object.keys(S.days).length)){
+        render();
+        modal('<h2>Restore your backup?</h2><p class="muted">This device already has data on it. Restoring replaces it with what is saved to your account.</p>','Restore',()=>{ Sync.applyVault(blob); render(); toast('Restored'); });
+      } else { if(blob) Sync.applyVault(blob); render(); toast('Password changed'); }
+    }catch(e){ btn.disabled=false; btn.textContent='Save it'; toast(e.message||'Could not change it'); }
+  };
 }
 
 /* ---------- Chat thread ---------- */
