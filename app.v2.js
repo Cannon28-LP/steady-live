@@ -8,6 +8,8 @@ const BUILD = '2026-09-09-live';   // shown in Settings → Help, so you can tel
    Leave blank and the Friends tab runs in demo mode with a local fake friend.
    Only aggregates ever leave the device: cleared/done/expected counts, streak,
    consistency and level. Task names, notes, miss reasons and your "why" never sync. */
+/* Paste your VAPID public key here to turn on server-sent reminders (see push.sql). */
+const PUSH = { vapidPublic: '' };
 const SYNC = {
   url:    'https://rjytcvajeysfnfmtgakm.supabase.co',
   anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
@@ -21,6 +23,13 @@ const CREW_BONUS_PER_HEAD = 0.10, CREW_BONUS_CAP = 2.0;
 const CHAL_PARTY = {legendary:CHAL_PARTY_MAX, rare:CHAL_PARTY_MAX, common:CHAL_PARTY_MAX};
 /* Rewards are priced in coins you set. Week/fortnight chips suggest your real earn rate. */
 const OT_PER = 5, OT_TASK_CAP = 10, OT_DAY_CAP = 20; // 1 coin per 5 min over target, capped per task and per day
+/* Turning up earns most of the value; the rest scales with the time you actually did.
+   A short session is still DONE — streak, day clear and habit strength never see it. */
+const TIME_FLOOR = 0.6;
+/* Full-clear streak: a bonus every 7 consecutive cleared days, doubling but capped. */
+const CLEAR_WEEK_BONUS = 20, CLEAR_WEEK_CAP = 320;
+/* After this many misses in a row on one task, offer some advice. */
+const STUCK_MISSES = 5, ADVICE_COOLDOWN = 14;
 const TIER_DAYS = {week:7, fortnight:14};
 const TIER_LABEL = {week:'Week', fortnight:'Fortnight'};
 const round10 = n => Math.round(n/10)*10;
@@ -60,6 +69,58 @@ function rewardPrice(r){
   if(n>0) return Math.max(MIN_REWARD_PRICE, n);
   return Math.max(MIN_REWARD_PRICE, tierCost((r && r.tier) || 'week'));
 }
+/* ---------- Reward budgeting ----------
+   You say how often you want a thing; the app works out the price from what you
+   actually earn. Then the Shop shows whether your wishes fit inside a month. */
+const FREQS = [
+  {id:'weekly',    label:'Weekly',        per:4.33},
+  {id:'fortnight', label:'Fortnightly',   per:2.17},
+  {id:'monthly',   label:'Monthly',       per:1},
+  {id:'rare',      label:'Now and then',  per:0.5},
+];
+const freqOf = id => FREQS.find(f=>f.id===id) || FREQS[2];
+const BUDGET_SHARE = 0.8;                 // leave slack for freezes, challenges and chests
+/* Real coins a month: measured if there's history, estimated from the task list if not. */
+function monthlyIncome(){
+  const k=today(); let total=0,n=0;
+  for(let i=1;i<=28;i++){ const d=addDays(k,-i); const st=dayStats(d); if(st.expected){ total+=st.points; n++; } }
+  if(n>=5) return {coins:Math.max(1,Math.round(total/n*30.4)), real:true};
+  return {coins:Math.max(1,round10(clearDayPay()*30.4*0.75)), real:false};
+}
+function rewardFreq(r){ return r.freq || 'monthly'; }
+function monthlyCostOf(r){ return rewardPrice(r)*freqOf(rewardFreq(r)).per; }
+/* What each reward should cost if the active set is to fit the budget. */
+function suggestFromFreq(freqId, others){
+  const inc=monthlyIncome().coins*BUDGET_SHARE;
+  const list=(others||S.rewards.filter(x=>x.active));
+  const shares=list.length+1;                     // this one plus the rest
+  const share=inc/shares;
+  return Math.max(MIN_REWARD_PRICE, round10(share/freqOf(freqId).per));
+}
+function budgetState(){
+  const inc=monthlyIncome();
+  const active=S.rewards.filter(x=>x.active);
+  const spend=active.reduce((a,r)=>a+monthlyCostOf(r),0);
+  const pct=inc.coins?Math.round(100*spend/inc.coins):0;
+  const redemptions=active.reduce((a,r)=>a+freqOf(rewardFreq(r)).per,0);
+  return {income:inc.coins, real:inc.real, spend:Math.round(spend), pct,
+    redemptions:Math.round(redemptions*10)/10, active,
+    level: pct>100?'over' : pct>90?'tight' : 'ok'};
+}
+/* Prices that would make the current wishes fit, keeping every frequency as chosen. */
+function rebalancePlan(){
+  const b=budgetState(); if(!b.active.length) return [];
+  const inc=b.income*BUDGET_SHARE;
+  const share=inc/b.active.length;
+  return b.active.map(r=>{
+    const from=rewardPrice(r);
+    const to=Math.max(MIN_REWARD_PRICE, round10(share/freqOf(rewardFreq(r)).per));
+    const progress=Math.min(1,(S.points.coins||0)/from);
+    return {r,from,to,freq:rewardFreq(r),raises:to>from,halfway:progress>=0.5};
+  }).filter(x=>x.to!==x.from);
+}
+function applyRebalance(plan){ plan.forEach(x=>{ x.r.price=x.to; }); save(); }
+
 function suggestedPrices(){
   const rate=clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
   return {
@@ -167,9 +228,10 @@ function fresh(){
     tasks:[], rewards:[], locker:[], customReasons:[],
     quotes: [],
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
-    recaps:[], me:null, auth:'out', friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null,
+    clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null,
     crews:[], msgs:{}, muted:[],
-    settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true},
+    settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true,
+      remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,fired:{}}},
     flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
     pendingMisses:[], undo:null,
   };
@@ -286,6 +348,77 @@ function buildRecap(n,name){
 }
 function earnRecap(){ const due=dueRecap(); if(!due) return null;
   const r=buildRecap(due.n,due.name); S.recaps.push(r); save(); return r; }
+
+/* ---------- Reminders ----------
+   Two kinds. While the app is open it schedules them itself, which needs nothing
+   but permission. For reminders that arrive when the app is closed, a server has
+   to push them — see push.sql and the edge function in the README. */
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent||'');
+const pushCapable = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function notifyState(){
+  if(!('Notification' in window)) return 'unsupported';
+  if(isIOS() && !isStandalone()) return 'ios-needs-install';   // Safari only allows this once it's on the home screen
+  return Notification.permission;                              // 'default' | 'granted' | 'denied'
+}
+function remindCfg(){ const s=S.settings; s.remind=s.remind||{on:false,morning:'08:00',evening:'20:00',eveningOn:true,fired:{}}; return s.remind; }
+async function askNotify(){
+  if(!('Notification' in window)) return 'unsupported';
+  let p=Notification.permission;
+  if(p==='default') p=await Notification.requestPermission();
+  if(p==='granted'){ remindCfg().on=true; save(); subscribePush().catch(()=>{}); }
+  return p;
+}
+function urlB64ToUint8(b64){
+  const pad='='.repeat((4-b64.length%4)%4);
+  const raw=atob((b64+pad).replace(/-/g,'+').replace(/_/g,'/'));
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+async function subscribePush(){
+  if(!pushCapable()||!PUSH.vapidPublic) return null;
+  const reg=await navigator.serviceWorker.ready;
+  let sub=await reg.pushManager.getSubscription();
+  if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(PUSH.vapidPublic)});
+  const j=sub.toJSON(); const c=remindCfg();
+  if(Sync.live()&&Sync.signedIn()){
+    try{ await api('/rest/v1/push_subs?on_conflict=endpoint',{method:'POST',
+      body:{user_id:S.me.id,endpoint:j.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,
+            tz_offset:-new Date().getTimezoneOffset(),morning:c.morning,evening:c.eveningOn?c.evening:null},
+      headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  }
+  return sub;
+}
+async function showLocal(title,body,tag){
+  try{
+    if(Notification.permission!=='granted') return false;
+    const reg=await navigator.serviceWorker.ready;
+    await reg.showNotification(title,{body,tag,icon:'./icon.svg',badge:'./icon.svg',
+      data:{url:location.pathname},vibrate:S.settings.haptics?[60,40,60]:undefined});
+    return true;
+  }catch(e){ return false; }
+}
+function reminderBody(){
+  const k=today(), st=dayStats(k), left=st.expected-st.done;
+  if(!st.expected) return 'No tasks set yet — add a couple to get going.';
+  if(left<=0) return 'Everything is ticked. Nice one.';
+  const nx=nextClearReward();
+  return `${left} task${left===1?'':'s'} left today${nx.streak?` · ${nx.days} more full ${nx.days===1?'day':'days'} for +${nx.amount}`:''}`;
+}
+/* Fires while the app is open. Once per slot per day. */
+function reminderTick(){
+  const c=remindCfg(); if(!c.on||Notification.permission!=='granted') return;
+  const now=new Date(); const hm=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  c.fired=c.fired||{}; const k=today();
+  const due=(slot,at)=>at && hm>=at && c.fired[slot]!==k;
+  if(due('morning',c.morning)){ c.fired.morning=k; save();
+    showLocal('Steady', reminderBody(), 'steady-morning'); return; }
+  if(c.eveningOn && due('evening',c.evening)){
+    const st=dayStats(k); if(st.expected && st.done<st.expected){ c.fired.evening=k; save();
+      showLocal('Still time', reminderBody(), 'steady-evening'); }
+    else { c.fired.evening=k; save(); }
+  }
+}
 
 /* ---------- Quick chat ----------
    Fixed phrases only, Rocket-League style. Nobody can type anything, so there is
@@ -892,6 +1025,12 @@ function avgStrength(k=today()){ const ts=activeTasks(k); if(!ts.length) return 
 function taskValue(t){ return Math.round(TASK_BASE*(1+0.5*strengthOf(t,addDays(today(),-1))/100)); }
 /* Overtime pays coins only — never XP — so long sessions can't buy levels or titles. Consistency does that. */
 function overtimeFor(t,mins){ if(!t.target||!mins) return 0; return clamp(Math.floor((mins-t.target)/OT_PER),0,OT_TASK_CAP); }
+/* Scale a task's pay by how much of its target was done. No target or no time logged = full pay. */
+function timeScale(t,mins){
+  if(!t.target||!mins||mins>=t.target) return 1;
+  return TIME_FLOOR + (1-TIME_FLOOR)*(mins/t.target);
+}
+function paidValue(t,mins){ return Math.max(1, Math.round(taskValue(t)*timeScale(t,mins))); }
 function overtimeToday(k=today()){ return Object.values(S.days[k]?.tasks||{}).reduce((a,x)=>a+(x.bonus||0),0); }
 function level(){ let L=1,xp=S.points.xp; while(xp>=xpToNext(L)){xp-=xpToNext(L);L++;} return {L,into:xp,need:xpToNext(L)}; }
 function title(){ const L=level().L; let t=TITLES[0]; for(const x of TITLES) if(L>=x[1]) t=x; const next=TITLES[TITLES.indexOf(t)+1]; return {name:t[0],level:L,next:next?{name:next[0],at:next[1]}:null}; }
@@ -968,6 +1107,24 @@ function finalize(k){
   d.finalized=true;
 }
 
+function clearedStreak(){ let n=0,k=today(); while(S.days[k]?.cleared){ n++; k=addDays(k,-1); } return n; }
+function clearWeekBonus(block){ return Math.min(CLEAR_WEEK_CAP, CLEAR_WEEK_BONUS*Math.pow(2,block-1)); }
+function nextClearReward(){
+  const n=clearedStreak(), block=Math.floor(n/7)+1;
+  return {days:7-(n%7), amount:clearWeekBonus(block), streak:n};
+}
+/* Pays once per completed 7-day block; resets when the run breaks. */
+function payClearStreak(){
+  const n=clearedStreak(), block=Math.floor(n/7);
+  if(block < (S.clearPaidBlock||0)) S.clearPaidBlock=block;   // run broke — climb again
+  if(block>=1 && (S.clearPaidBlock||0)<block){
+    const amount=clearWeekBonus(block);
+    S.clearPaidBlock=block; S.points.coins+=amount; S.points.xp+=amount; save();
+    return {amount,block,days:block*7,capped:amount>=CLEAR_WEEK_CAP};
+  }
+  save(); return null;
+}
+
 /* ---------- Completing ---------- */
 const sel=new Set();
 function completeSelected(mins){
@@ -976,10 +1133,11 @@ function completeSelected(mins){
   let coins=0, xp=0; const changed=[]; let otRoom=OT_DAY_CAP-overtimeToday(k);
   for(const id of ids){
     if(d.tasks[id]?.status==='done') continue;
-    const t=tasks.find(x=>x.id===id); const v=taskValue(t);
+    const t=tasks.find(x=>x.id===id);
     const m=mins?.[id]||null;
+    const v=paidValue(t,m);                              // short session pays less, still counts as done
     const bonus=clamp(overtimeFor(t,m),0,Math.max(0,otRoom)); otRoom-=bonus;
-    d.tasks[id]={status:'done',doneAt:Date.now(),value:v,bonus,minutes:m};
+    d.tasks[id]={status:'done',doneAt:Date.now(),value:v,bonus,minutes:m,full:!t.target||!m||m>=t.target};
     coins+=v+bonus; xp+=v; changed.push(id);
   }
   const allDone=tasks.filter(t=>d.tasks[t.id]?.status==='done').length;
@@ -990,7 +1148,10 @@ function completeSelected(mins){
   sel.clear(); save();
   haptic(cleared?'success':'light');
   changed.forEach(id=>document.querySelector(`[data-task="${id}"]`)?.classList.add('leaving'));
-  setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick(); toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`, 'Undo', undoLast); if(cleared) celebrate(); }, S.settings.motion?220:0);
+  const streakWin = cleared ? payClearStreak() : null;
+  setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick();
+    if(streakWin) setTimeout(()=>streakScene(streakWin),900);
+    toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`, 'Undo', undoLast); if(cleared) celebrate(); }, S.settings.motion?220:0);
 }
 function undoLast(){
   const u=S.undo; if(!u) return; const d=day(u.date);
@@ -1021,6 +1182,7 @@ function celebrate(){
   let f=0; (function step(){ x.clearRect(0,0,c.width,c.height); P.forEach(p=>{p.vy+=.45;p.x+=p.vx;p.y+=p.vy;p.a+=p.s;x.save();x.translate(p.x,p.y);x.rotate(p.a);x.globalAlpha=Math.max(0,1-f/70);x.fillStyle=p.c;x.fillRect(-p.r/2,-p.r/2,p.r,p.r*1.6);x.restore();}); if(++f<80) requestAnimationFrame(step); else x.clearRect(0,0,c.width,c.height); })();
 }
 /* ---------- Router ---------- */
+let remOpen=false, rewOpen=false, newRewardFreq='monthly';
 let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today'}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview'};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
@@ -1065,6 +1227,10 @@ function vToday(){
       ${d.bonus?`<p class="small" style="margin-top:6px;color:var(--accent)">+${d.bonus} streak bonus today</p>`:`<p class="tiny muted" style="margin-top:6px">Tomorrow's streak bonus: +${lb}</p>`}
     </div>
   </div>
+  ${(()=>{const nx=nextClearReward(); if(!activeTasks().length) return '';
+    return `<div class="card clearstreak"><div class="row between"><div><b class="small">${nx.streak?`${nx.streak} day full-clear streak`:'Full-clear streak'}</b>
+      <p class="tiny muted">${nx.streak?`${nx.days} more full ${nx.days===1?'day':'days'} for +${nx.amount} coins`:`Tick everything 7 days running for +${nx.amount} coins`}</p></div>
+      <span class="pill ${nx.streak>=7?'accent':''}">${ICON.flame} ${nx.streak}</span></div></div>`;})()}
   <div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=CHEST_DAYS?`Earned · +${chestCoins()} lands Monday`:`Clear ${CHEST_DAYS} of 7 for +${chestCoins()} · ${wc} so far`}</p></div>
     <div class="dots big">${wk.map(x=>`<i class="${x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}"></i>`).join('')}</div></div></div>
   ${a?`<p class="whisper">${esc(a.text)}</p>`:''}
@@ -1075,6 +1241,7 @@ function vToday(){
     <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below.</p>`}
     ${done.length?`<details class="fold"><summary><span>Done today (${done.length})</span><span class="tiny">back tomorrow</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>`<li><div class="task done"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(d.tasks[t.id]?.value||0)+(d.tasks[t.id]?.bonus||0)}${d.tasks[t.id]?.minutes?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${d.tasks[t.id].minutes}m</span>`:''}</span></div></li>`).join('')}</ul></details>`:''}
   </div>
+  ${iosInstallNudge()}
   ${backupNudge()}
   ${planLine()}`;
 }
@@ -1084,6 +1251,16 @@ function planLine(){
   if(!lt&&!ah&&!backlog().length) return '';
   return `<button class="card planline" data-go="plan"><div><b>${lt?`${lt} on your list today`:ah?`Nothing today · ${ah} coming up`:'Your list is clear'}</b>
     <p class="tiny muted">${backlog().length?`${backlog().length} in someday`:'Tap to plan ahead'}</p></div><span class="chev">›</span></button>`;
+}
+
+/* iPhone users need the home-screen install before notifications are possible at all. */
+function iosInstallNudge(){
+  if(!isIOS()||isStandalone()) return '';
+  if(S.flags.iosNudge) return '';
+  return `<button class="card callout planline" data-iosinstall style="margin-top:14px"><div>
+    <b>Add Steady to your home screen</b>
+    <p class="tiny muted" style="margin-top:2px">Opens full screen without the browser bar, and it's the only way iPhone will let it send you reminders. Share → Add to Home Screen.</p></div>
+    <span class="chev">›</span></button>`;
 }
 
 /* Shown on every open until they sign in — then it disappears for good.
@@ -1482,12 +1659,21 @@ function vSettings(){
     <p class="tiny muted" style="margin:-4px 0 10px">${n} / ${MAX_TASKS} tasks${full?'':'. Minutes optional — every '+OT_PER+' minutes past a target pays +1 coin.'}</p>
     ${n?live.slice().sort((a,b)=>a.order-b.order).map(t=>`<div class="editrow"><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}</span><button class="iconbtn" data-rename="${t.id}" aria-label="Rename">${ICON.edit}</button><button class="iconbtn" data-deltask="${t.id}" aria-label="Remove">${ICON.trash}</button></div>`).join(''):'<p class="muted small">Add the things you want to keep doing daily.</p>'}`;})()}
     <p class="tiny muted" style="margin-top:10px">Finish every task to clear the day. Removing one takes it off the list; past days stay in Progress.</p></div></details>
-  <details class="acc" id="acc-rewards"><summary>Rewards <span class="muted">${S.rewards.filter(x=>x.active).length} / ${MAX_REWARDS}</span></summary><div class="body">
-    <div class="stack" style="margin-bottom:10px"><input type="text" id="newreward" placeholder="e.g. Takeaway night" maxlength="60" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
-      <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" step="10" value="${suggestedPrices().week}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}><button class="btn primary" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
-      <div class="chips" id="pricepresets">${(()=>{const sp=suggestedPrices(); return `<button type="button" class="chip on" data-preset="${sp.week}">A week · ${sp.week}</button><button type="button" class="chip" data-preset="${sp.fortnight}">A fortnight · ${sp.fortnight}</button>`;})()}</div>
-      <p class="tiny muted" id="priceeta">${earnEta(suggestedPrices().week)}</p></div>
-    ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}<span class="tiny muted" style="font-weight:400;margin-left:8px">${rewardPrice(x)} coins · ${earnEta(rewardPrice(x))}</span></span><button class="iconbtn" data-editreward="${x.id}" aria-label="Edit price">${ICON.edit}</button><button class="iconbtn" data-delreward="${x.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')||'<p class="muted small">You set the coin price. Week and fortnight are 7 and 14 clear days from the tasks you have set.</p>'}</div></details>
+  <details class="acc" id="acc-rewards" ${rewOpen?'open':''}><summary>Rewards <span class="muted">${S.rewards.filter(x=>x.active).length} / ${MAX_REWARDS}</span></summary><div class="body">
+    ${budgetCard()}
+    <div class="stack" style="margin:12px 0 10px">
+      <input type="text" id="newreward" placeholder="e.g. Takeaway night" maxlength="60" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
+      <div><span class="plabel">How often would you like this?</span>
+        <div class="chips" id="freqpicks">${FREQS.map(f=>`<button type="button" class="chip ${newRewardFreq===f.id?'on':''}" data-freq="${f.id}">${f.label}</button>`).join('')}</div></div>
+      <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" step="10" value="${suggestFromFreq(newRewardFreq)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
+        <button class="btn primary grow" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
+      <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq))}</p>
+      <p class="tiny muted">Suggested from what you actually earn. Type over it if you disagree — the budget above keeps you honest.</p>
+    </div>
+    ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}
+      <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${freqOf(rewardFreq(x)).label.toLowerCase()} · ${Math.round(monthlyCostOf(x))}/month</span></span>
+      <button class="iconbtn" data-editreward="${x.id}" aria-label="Edit">${ICON.edit}</button><button class="iconbtn" data-delreward="${x.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')
+      ||'<p class="muted small">Tell it how often you want something and it works out the price from what you earn.</p>'}</div></details>
   <details class="acc"><summary>Quotes <span class="muted">${S.quotes.length}</span></summary><div class="body">
     <div class="row" style="margin-bottom:10px"><input type="text" id="newquote" placeholder="Add your own…" maxlength="200"><button class="btn primary" id="addquote">Add</button></div>
     ${S.quotes.filter(q=>q.custom).map(q=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(q.text)}</span><button class="iconbtn" data-delquote="${q.id}">${ICON.trash}</button></div>`).join('')}
@@ -1512,14 +1698,35 @@ function vSettings(){
   <details class="acc"><summary>Affirmation <span class="muted">${S.whys.length||'none'}</span></summary><div class="body">
     <div class="row" style="margin-bottom:10px"><input type="text" id="newwhy" placeholder="" maxlength="140"><button class="btn primary" id="addwhy">Add</button></div>
     ${S.whys.map(w=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(w.text)}</span><button class="iconbtn" data-delwhy="${w.id}">${ICON.trash}</button></div>`).join('')||'<p class="muted small">This is what you see when the app opens. Nothing is written for you.</p>'}</div></details>
+  <details class="acc" id="acc-remind" data-tour="remind" ${remOpen?'open':''}><summary>Reminders <span class="muted">${(()=>{const st=notifyState();const c=remindCfg();
+    return st==='granted'?(c.on?'on':'off'):st==='ios-needs-install'?'needs installing':st==='denied'?'blocked':'off';})()}</span></summary><div class="body">
+    ${(()=>{ const st=notifyState(), c=remindCfg();
+      if(st==='unsupported') return '<p class="muted small">This browser can\'t do notifications.</p>';
+      if(st==='ios-needs-install') return `<div class="card callout"><b>Add Steady to your home screen first</b>
+        <p class="small muted" style="margin-top:6px">On iPhone, notifications only work once the app is on your home screen — Safari can't send them from a tab. Tap <b>Share</b> (the square with the arrow), scroll down, tap <b>Add to Home Screen</b>, then open Steady from the icon and come back here.</p></div>`;
+      if(st==='denied') return `<div class="card callout"><b>Notifications are blocked</b>
+        <p class="small muted" style="margin-top:6px">You'll need to allow them in your browser's site settings for this page, then come back.</p></div>`;
+      if(st==='default') return `<div class="stack"><p class="small muted">A nudge in the morning, and one in the evening if anything's still open. Nothing else — no marketing, ever.</p>
+        <button class="btn primary block" id="asknotify">Turn on reminders</button></div>`;
+      return `<div class="opt"><label>Reminders</label><button class="toggle ${c.on?'on':''}" data-remind-on role="switch" aria-checked="${c.on}"></button></div>
+        <div class="opt"><label>Morning nudge</label><input type="time" id="remmorning" value="${c.morning}" style="width:130px"></div>
+        <div class="opt"><label>Evening, if unfinished</label><button class="toggle ${c.eveningOn?'on':''}" data-remind-eve role="switch" aria-checked="${c.eveningOn}"></button></div>
+        ${c.eveningOn?`<div class="opt"><label>Evening time</label><input type="time" id="remevening" value="${c.evening}" style="width:130px"></div>`:''}
+        <div class="opt"><label>Test it</label><button class="btn sm" id="remtest">Send one now</button></div>
+        <p class="tiny muted" style="margin-top:10px">${PUSH.vapidPublic?'Reminders arrive whether the app is open or not.':'These fire while the app is open. For reminders when it is closed, the server side needs setting up — see push.sql.'}</p>`;
+    })()}
+  </div></details>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, times its habit strength (up to ×1.5). Coins are spent in the shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task has a 0–100% strength that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Give a task a target in minutes and you'll be asked how long it took when you tick it. Every ${OT_PER} minutes past the target pays +1 coin (max +${OT_TASK_CAP} per task, +${OT_DAY_CAP} a day). Going over pays coins only, never XP — long sessions can't buy levels. Under the target still counts as done.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Give a task a target in minutes and you'll be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did. So 15 of 30 minutes on a 10-coin task pays 8, not 5. Going over pays +1 coin per ${OT_PER} minutes on top (max +${OT_TASK_CAP} per task, +${OT_DAY_CAP} a day), coins only, never XP. A short session is still <i>done</i> — it never touches your streak, your day clear or your habit strength. Skip the prompt and you get full pay.</p>
+    <p><b style="color:var(--fg)">Full-clear streak.</b> Tick every task 7 days running and you get +${CLEAR_WEEK_BONUS} coins. It doubles each further week — ${[1,2,3,4,5].map(b=>clearWeekBonus(b)).join(', ')} — then holds at ${CLEAR_WEEK_CAP} for as long as the run lasts. Miss a full clear and it starts from ${CLEAR_WEEK_BONUS} again.</p>
+    <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days in a row and the app offers to halve the target and suggests a few things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It won't ask again about that task for ${ADVICE_COOLDOWN} days.</p>
     <p><b style="color:var(--fg)">Day cleared.</b> Finish every task and you get +${CLEAR_PER_TASK} per task on top. Nothing ever subtracts points.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days (Mon–Sun) and a free day's coins (+${chestCoins()}) land on Monday.</p>
     <p><b style="color:var(--fg)">Streak.</b> Open the app daily. +5 from day two, +10 from day seven, +15 from day thirty. A streak freeze (${freezeCost()} coins) covers one missed day.</p>
-    <p><b style="color:var(--fg)">Shop.</b> You set each reward's price in coins. Week and fortnight chips are 7 and 14 clear days from the tasks you have set (each task pays ${TASK_BASE} plus ${CLEAR_PER_TASK} for clearing). As you type a price, the days shown are that price divided by a clear day. Lowering a price asks you to confirm. You can only spend when average habit strength is ${BUY_STRENGTH}%+. Missing never costs you anything.</p>
+    <p><b style="color:var(--fg)">Shop.</b> You say how often you'd like a reward — weekly, fortnightly, monthly, now and then — and the price is worked out from what you actually earn (measured over your last four weeks, not a theoretical perfect run). Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; over 90% it goes amber, over 100% red. <b>Balance these for me</b> rescales every price to fit while keeping your chosen frequencies, and shows you the before and after first — nothing changes until you tap Apply. Adding a reward makes the others cheaper, because a fixed income split more ways costs less each time: you can have more different rewards, or rarer and more meaningful ones, not both.</p>
+    <p><b style="color:var(--fg)">Old note.</b> You set each reward's price in coins. Week and fortnight chips are 7 and 14 clear days from the tasks you have set (each task pays ${TASK_BASE} plus ${CLEAR_PER_TASK} for clearing). As you type a price, the days shown are that price divided by a clear day. Lowering a price asks you to confirm. You can only spend when average habit strength is ${BUY_STRENGTH}%+. Missing never costs you anything.</p>
     <p><b style="color:var(--fg)">Task cap.</b> Up to ${MAX_TASKS} tasks.</p>
     <p><b style="color:var(--fg)">Today's list.</b> The list under your tasks is outside the whole economy — no coins, no strength, no miss gate. Unfinished items just carry over. The backlog is a pool to pull from when you have cleared your day and are at a loose end.</p>
     <p><b style="color:var(--fg)">Chats.</b> Group chats of up to ${CREW_MAX}. You can't type — you pick from a set list of phrases and emotes, like the quick chat in a game. Nothing to moderate, nothing to leak, and no way to be unpleasant in it. There's a rate limit so nobody can spam. Challenges are set up inside a chat, and everyone in it joins by default.</p>
@@ -1631,12 +1838,19 @@ function bind(){
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
     if(n<MIN_REWARD_PRICE){ eta.textContent='Minimum '+MIN_REWARD_PRICE+' coins so nothing is free.'; return; }
     eta.textContent=earnEta(n); };
-  if(np) np.oninput=()=>{ qa('[data-preset]').forEach(x=>x.classList.toggle('on', Number(x.dataset.preset)===Math.round(Number(np.value)||0))); refreshEta(); };
-  qa('[data-preset]').forEach(b=>b.onclick=()=>{ if(!np) return; np.value=b.dataset.preset; qa('[data-preset]').forEach(x=>x.classList.toggle('on',x===b)); haptic(); refreshEta(); });
+  const ra2=q('#acc-rewards'); if(ra2) ra2.addEventListener('toggle',()=>{ rewOpen=ra2.open; });
+  if(np) np.oninput=refreshEta;
+  qa('[data-freq]').forEach(b=>b.onclick=()=>{ newRewardFreq=b.dataset.freq;
+    const keep=(nr?.value||''); haptic(); rewOpen=true; render();
+    const n2=document.getElementById('newreward'); if(n2) n2.value=keep; });
+  const rb=q('[data-rebalance]'); if(rb) rb.onclick=()=>rebalanceSheet();
   const addR=()=>{ const v=(nr?.value||'').trim(); if(!v||S.rewards.filter(x=>x.active).length>=MAX_REWARDS) return;
-    let price=Math.round(Number(np?.value)||0); if(!price){ toast('Set a coin price first'); return; }
+    let price=Math.round(Number(np?.value)||0); if(!price) price=suggestFromFreq(newRewardFreq);
     if(price<MIN_REWARD_PRICE){ toast('Minimum '+MIN_REWARD_PRICE+' coins'); return; }
-    S.rewards.push({id:uid(),name:v,active:true,tier:'custom',price}); save(); haptic(); render(); document.getElementById('acc-rewards').open=true; };
+    S.rewards.push({id:uid(),name:v,active:true,tier:'custom',price,freq:newRewardFreq}); save(); haptic(); rewOpen=true; render();
+    const b=budgetState();
+    if(b.level==='over') toast('Over budget — tap Balance these for me','Balance',()=>rebalanceSheet());
+    else toast('Reward added'); };
   if(nr){ q('#addreward').onclick=addR; nr.onkeydown=e=>{if(e.key==='Enter')addR();}; if(np) np.onkeydown=e=>{if(e.key==='Enter')addR();}; }
   qa('[data-editreward]').forEach(b=>b.onclick=()=>{ const r=S.rewards.find(x=>x.id===b.dataset.editreward); if(r) editReward(r); });
   qa('[data-delreward]').forEach(b=>b.onclick=()=>{const x=S.rewards.find(r=>r.id===b.dataset.delreward);x.active=false;save();render();document.getElementById('acc-rewards').open=true;});
@@ -1664,6 +1878,18 @@ function bind(){
       navigator.clipboard?.writeText(L.map(([k,v])=>k+': '+v).join('\n')); toast('Copied'); }); };
   const ck=q('#conncheck'); if(ck) ck.onclick=()=>runCheck(ck);
   const ck2=q('#conncheck2'); if(ck2) ck2.onclick=()=>runCheck(ck2);
+  const keepRem=()=>{ const a=document.getElementById('acc-remind'); if(a) a.open=true; };
+  const ra=q('#acc-remind'); if(ra) ra.addEventListener('toggle',()=>{ remOpen=ra.open; });
+  const an=q('#asknotify'); if(an) an.onclick=async()=>{ an.textContent='…';
+    const r=await askNotify(); render(); keepRem();
+    toast(r==='granted'?'Reminders on':r==='denied'?'Blocked in your browser settings':'Not enabled'); };
+  const ro=q('[data-remind-on]'); if(ro) ro.onclick=()=>{ const c=remindCfg(); c.on=!c.on; save(); haptic(); render(); keepRem(); };
+  const re=q('[data-remind-eve]'); if(re) re.onclick=()=>{ const c=remindCfg(); c.eveningOn=!c.eveningOn; save(); haptic(); render(); keepRem(); };
+  const rm=q('#remmorning'); if(rm) rm.onchange=()=>{ remindCfg().morning=rm.value; save(); subscribePush().catch(()=>{}); toast('Morning nudge set'); };
+  const rv=q('#remevening'); if(rv) rv.onchange=()=>{ remindCfg().evening=rv.value; save(); subscribePush().catch(()=>{}); toast('Evening nudge set'); };
+  const rt=q('#remtest'); if(rt) rt.onclick=async()=>{ const ok=await showLocal('Steady', reminderBody(), 'steady-test');
+    toast(ok?'Sent':'Could not send — check permission'); };
+  const ii=q('[data-iosinstall]'); if(ii) ii.onclick=()=>iosInstallSheet();
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
   const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
   const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, points and rewards. This cannot be undone.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
@@ -1702,11 +1928,18 @@ function editReward(r){
   const cur=rewardPrice(r);
   const sp=suggestedPrices();
   const o=overlay(`<div class="modal"><h2>Price for “${esc(r.name)}”</h2>
+    <div style="margin-top:12px"><span class="plabel">How often</span>
+      <div class="chips" id="efreq">${FREQS.map(f=>`<button type="button" class="chip ${rewardFreq(r)===f.id?'on':''}" data-ef="${f.id}">${f.label}</button>`).join('')}</div></div>
     <input type="number" id="ep" value="${cur}" min="${MIN_REWARD_PRICE}" step="10" style="margin-top:12px">
     <div class="chips" style="margin-top:10px"><button type="button" class="chip" data-epreset="${sp.week}">A week · ${sp.week}</button><button type="button" class="chip" data-epreset="${sp.fortnight}">A fortnight · ${sp.fortnight}</button></div>
     <p class="tiny muted" id="eeta" style="margin-top:10px">${earnEta(cur)}</p>
     <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
   const i=o.querySelector('#ep'); const eta=o.querySelector('#eeta');
+  let ef=rewardFreq(r);
+  o.querySelectorAll('[data-ef]').forEach(b=>b.onclick=()=>{ ef=b.dataset.ef;
+    o.querySelectorAll('[data-ef]').forEach(x=>x.classList.toggle('on',x===b));
+    const others=S.rewards.filter(x=>x.active&&x.id!==r.id);
+    o.querySelector('#ep').value=suggestFromFreq(ef,others); upd(); haptic(); });
   const upd=()=>{ const n=Math.round(Number(i.value)||0); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):earnEta(n); };
   i.oninput=upd;
   o.querySelectorAll('[data-epreset]').forEach(b=>b.onclick=()=>{ i.value=b.dataset.epreset; o.querySelectorAll('[data-epreset]').forEach(x=>x.classList.toggle('on',x===b)); upd(); });
@@ -1716,10 +1949,10 @@ function editReward(r){
     if(n<cur){
       close(o);
       const instant=S.points.coins>=n && S.points.coins<cur;
-      modal(`<h2>Lower the price?</h2><p class="muted">${esc(r.name)} from ${cur} to ${n} coins.${instant?' You will be able to buy it immediately.':''}</p>`,'Lower it',()=>{ r.price=n; r.tier='custom'; save(); render(); document.getElementById('acc-rewards').open=true; });
+      modal(`<h2>Lower the price?</h2><p class="muted">${esc(r.name)} from ${cur} to ${n} coins.${instant?' You will be able to buy it immediately.':''}</p>`,'Lower it',()=>{ r.price=n; r.tier='custom'; r.freq=ef; save(); rewOpen=true; render(); });
       return;
     }
-    r.price=n; r.tier='custom'; save(); close(o); render(); document.getElementById('acc-rewards').open=true;
+    r.price=n; r.tier='custom'; r.freq=ef; save(); close(o); rewOpen=true; render();
   };
 }
 
@@ -1759,10 +1992,13 @@ function timeSheet(timed){
   const opts=t=>[t.target,t.target+5,t.target+10,t.target+15,t.target+30];
   const card=t=>`<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
     <div class="timerow">${opts(t).map((m,i)=>`<button class="chip ${i===0?'on':''}" data-m="${m}">${m}m${i===0?'':''}</button>`).join('')}<button class="chip add" data-other>Other</button></div></div>`;
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>How long did ${timed.length===1?'it':'each'} take?</h2><p class="muted small" style="margin-bottom:14px">Under the target still counts as done. Over pays +1 coin per ${OT_PER} minutes.</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot"><button class="btn" data-skip>Skip</button><button class="btn primary" data-ok>Mark done</button></div></div>`);
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>How long did ${timed.length===1?'it':'each'} take?</h2><p class="muted small" style="margin-bottom:14px">Still counts as done either way — a short session just pays less of the coins. Over the target pays +1 per ${OT_PER} minutes on top.</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot"><button class="btn" data-skip>Skip</button><button class="btn primary" data-ok>Mark done</button></div></div>`);
   const refresh=()=>{ let left=room();
     timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
-      c.innerHTML=b?`<span class="otval">+${b}</span> coins`:mins[t.id]<t.target?`under target`:`target ${t.target}m`; });
+      const pay=paidValue(t,mins[t.id]);
+      c.innerHTML=b?`<span class="otval">+${pay+b}</span> coins`
+        :mins[t.id]<t.target?`<span class="otval">+${pay}</span> coins <span class="tiny muted">of ${taskValue(t)}</span>`
+        :`<span class="otval">+${pay}</span> coins`; });
     o.querySelector('[data-ok]').textContent=sel.size>1?`Mark ${sel.size} done`:'Mark done';
     const cap=o.querySelector('[data-cap]'); if(cap) cap.hidden=left>0; };
   timed.forEach(t=>{ const el=o.querySelector(`[data-time="${t.id}"]`);
@@ -1864,6 +2100,57 @@ function tour(page){
       card.querySelector('[data-next]').onclick=()=>{haptic(); if(++i<steps.length) draw(); else end();}; card.querySelector('[data-skip]').onclick=end; },260); };
   const end=()=>{ endTour(true); };
   draw();
+}
+
+function iosInstallSheet(){
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Put Steady on your home screen</h2>
+    <p class="muted small" style="margin-bottom:14px">It opens full screen with no browser bar, works offline, and it's the only way iPhone allows reminders.</p>
+    <ol class="steps-list">
+      <li>Tap the <b>Share</b> button — the square with an arrow coming out of it, at the bottom of Safari.</li>
+      <li>Scroll down the list and tap <b>Add to Home Screen</b>.</li>
+      <li>Tap <b>Add</b>, top right.</li>
+      <li>Open Steady from the new icon, not from Safari.</li>
+    </ol>
+    <p class="tiny muted" style="margin-top:12px">It has to be Safari — Chrome and Brave on iPhone can't do this bit.</p>
+    <div class="foot"><button class="btn" data-later>Not now</button><button class="btn primary" data-done>Done that</button></div></div>`);
+  o.querySelector('[data-later]').onclick=()=>close(o);
+  o.querySelector('[data-done]').onclick=()=>{ S.flags.iosNudge=today(); save(); close(o); render(); };
+}
+
+function budgetCard(){
+  const b=budgetState();
+  if(!b.active.length) return `<div class="card" style="padding:12px"><b class="small">Your monthly budget</b>
+    <p class="tiny muted" style="margin-top:3px">About ${b.income} coins a month${b.real?'':' (estimated until you have a week of history)'}. Add a reward and this shows whether it fits.</p></div>`;
+  const msg = b.level==='over'
+    ? `That does not fit. Something will have to give — fewer rewards, or rarer ones.`
+    : b.level==='tight' ? `That is just about everything you earn. No slack for streak freezes or a chest.`
+    : `That fits, with room for freezes and challenges.`;
+  return `<div class="card budget ${b.level}" style="padding:12px">
+    <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'#f59e0b':'var(--accent)'}">${b.pct}%</span></div>
+    <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
+    <p class="tiny muted" style="margin-top:6px">You earn about ${b.income}${b.real?'':' (estimated)'} · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
+    ${rebalancePlan().length?`<button class="btn sm block" style="margin-top:10px" data-rebalance>Balance these for me</button>`:''}
+  </div>`;
+}
+function rebalanceSheet(){
+  const plan=rebalancePlan();
+  if(!plan.length){ toast('Already balanced'); return; }
+  const b=budgetState();
+  const after=plan.reduce((a,x)=>a+x.to*freqOf(x.freq).per,0)
+    + b.active.filter(r=>!plan.some(x=>x.r.id===r.id)).reduce((a,r)=>a+monthlyCostOf(r),0);
+  const warn=plan.filter(x=>x.raises&&x.halfway);
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Rebalance your rewards?</h2>
+    <p class="muted small" style="margin-bottom:12px">Frequencies stay exactly as you set them. Only the prices move.</p>
+    <ul class="list">${plan.map(x=>`<li><div><div>${esc(x.r.name)}</div><div class="tiny muted">${freqOf(x.freq).label.toLowerCase()}</div></div>
+      <div style="text-align:right"><span class="tiny muted" style="text-decoration:line-through">${x.from}</span>
+      <b style="margin-left:8px;color:${x.raises?'var(--danger)':'var(--accent)'}">${x.to}</b></div></li>`).join('')}</ul>
+    <p class="tiny muted" style="margin-top:10px">Afterwards: ${Math.round(after)} a month of your ~${b.income}.</p>
+    ${warn.length?`<div class="card callout" style="margin-top:10px;padding:12px"><b class="small">Heads up</b>
+      <p class="tiny muted" style="margin-top:3px">${warn.map(x=>`You are ${S.points.coins} of ${x.from} into <b>${esc(x.r.name)}</b> — this moves the post to ${x.to}.`).join(' ')}</p></div>`:''}
+    <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Apply</button></div></div>`);
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  o.querySelector('[data-ok]').onclick=()=>{ applyRebalance(plan); haptic('success'); close(o); render();
+    const a=document.getElementById('acc-rewards'); if(a) a.open=true; toast('Rebalanced'); };
 }
 
 /* ---------- Chat thread ---------- */
@@ -1968,6 +2255,69 @@ function chatInfo(c,onLeave){
   o.querySelector('[data-leave]').onclick=()=>modal('<h2>Delete this chat?</h2><p class="muted">The messages go. Any challenge running in it is dropped.</p>','Delete',()=>{
     (S.challenges||[]).filter(x=>x.crewId===c.id).forEach(x=>dropChallenge(x.id));
     S.crews=crewList().filter(x=>x.id!==c.id); delete S.msgs[c.id]; save(); close(o); onLeave&&onLeave(); },true);
+}
+
+/* ---------- Full-clear streak reward ---------- */
+function streakScene(win){
+  const g=document.createElement('div'); g.className='gate streakwin';
+  g.innerHTML=`<div class="chest-wrap">
+    <div class="glow"></div>
+    <div class="chest-eyebrow">${win.days} days, every task</div>
+    <h1 class="chest-title">Full clear streak</h1>
+    <div class="streakflame">${ICON.flame}</div>
+    <div class="chest-prize show"><span class="num">+${win.amount}</span><small>coins</small></div>
+    <p class="tiny muted" style="margin-top:14px;max-width:30ch;margin-inline:auto">
+      ${win.capped?'That is the biggest weekly bonus — it stays here for as long as you keep the run going.':
+        `Keep every task ticked for another 7 days and the next one is +${clearWeekBonus(win.block+1)}.`}</p>
+    <button class="btn primary block" id="swclaim" style="margin-top:26px">Nice</button>
+  </div>`;
+  document.body.appendChild(g);
+  if(S.settings.motion) burst(getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#2dd4bf');
+  haptic('success');
+  g.querySelector('#swclaim').onclick=()=>{ g.remove(); render(); };
+}
+
+/* ---------- Stuck-task advice ----------
+   Fires after a run of misses. Suggestions are the ones with actual evidence behind
+   them: shrink it, anchor it to something you already do, pin down when and where,
+   pair it with something you enjoy, cut the friction. */
+function consecutiveMisses(t){
+  let n=0,k=addDays(today(),-1);
+  while(k>=t.createdAt){ const st=statusOf(k,t.id); if(st==='missed'){n++;k=addDays(k,-1);} else break; }
+  return n;
+}
+function stuckTask(){
+  for(const t of activeTasks()){
+    if(consecutiveMisses(t)<STUCK_MISSES) continue;
+    const last=(S.advice||{})[t.id];
+    if(last && (parse(today())-parse(last))/86400000 < ADVICE_COOLDOWN) continue;
+    return t;
+  }
+  return null;
+}
+function adviceSheet(t){
+  const misses=consecutiveMisses(t);
+  const half=t.target?Math.max(1,Math.round(t.target/2)):null;
+  const tips=[
+    ['Make it smaller','A version so small it is almost silly is the one that survives a bad week. Two minutes counts. You can always do more once you have started.'],
+    ['Pin down when and where','Deciding the exact moment beforehand — "after I put the kettle on", "before I sit down" — works far better than intending to do it at some point today.'],
+    ['Hook it to something you already do','Anchor it to a habit that never slips. Straight after brushing your teeth, straight after locking the van. The old habit does the remembering.'],
+    ['Move it earlier','Whatever the plan, the day usually eats the evening. Things done early get done.'],
+    ['Pair it with something you like','Only listen to that podcast while you walk. The thing you want carries the thing you should.'],
+    ['Cut the friction','Kit by the door, book on the pillow, phone in another room. Make starting need no decisions.'],
+  ];
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <h2>${esc(t.name)} keeps slipping</h2>
+    <p class="muted small" style="margin-bottom:6px">Missed ${misses} days in a row. Nothing has been taken off you — but ${misses} is usually the task asking to be changed, not you needing to try harder.</p>
+    ${t.target?`<div class="card" style="margin:12px 0"><b class="small">Shrink the target?</b>
+      <p class="tiny muted" style="margin:4px 0 10px">${t.target} minutes → ${half} minutes. A target you actually hit beats one you keep missing.</p>
+      <button class="btn primary sm block" data-half>Make it ${half} minutes</button></div>`:''}
+    <div class="stack">${tips.map(([h,b])=>`<div class="card" style="padding:12px"><b class="small">${h}</b><p class="tiny muted" style="margin-top:3px">${b}</p></div>`).join('')}</div>
+    <div class="foot"><button class="btn" data-x>Leave it as it is</button></div></div>`);
+  const done=()=>{ S.advice=S.advice||{}; S.advice[t.id]=today(); save(); close(o); render(); };
+  o.querySelector('[data-x]').onclick=done;
+  const h=o.querySelector('[data-half]');
+  if(h) h.onclick=()=>{ t.target=half; save(); haptic(); done(); toast(`Target now ${half} minutes`); };
 }
 
 /* ---------- Chest opening ---------- */
@@ -2080,7 +2430,8 @@ function friendsTick(){
   Sync.push().catch(()=>{});
 }
 function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); }
-  if(missGate()) return;                 // reasons first, recap after
+  if(missGate()) return;                 // reasons first, then advice, then recap
+  const st=stuckTask(); if(st){ adviceSheet(st); return; }
   if(maybeRecap()) return;
   tour(tab); }
 let _booted=false;
@@ -2118,7 +2469,8 @@ export function bootSteady(){
       if(mq.addEventListener) mq.addEventListener('change',on);
       else if(mq.addListener) mq.addListener(on);
     }catch(e){}
-    setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } },30000);
+    setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } try{ reminderTick(); }catch(e){} },30000);
+    setTimeout(()=>{ try{ reminderTick(); }catch(e){} },4000);
     document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } });
     Sync.session().catch(()=>{}).then(()=>{ if(tab==='friends') render(); });
   }
