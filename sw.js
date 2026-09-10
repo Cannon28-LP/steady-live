@@ -2,8 +2,8 @@
 // Stale-while-revalidate: the app opens instantly from cache, and a new build
 // downloads in the background and is used on the next open. Best of both —
 // no launch delay, and no cache version to bump by hand.
-const CACHE = 'steady-v4';
-const ASSETS = ['./', './index.html', './app.v3.js?b=2', './app.v3.css?b=2', './manifest.json', './icon.svg'];
+const CACHE = 'steady-v5';
+const ASSETS = ['./', './index.html', './app.v3.js?b=3', './app.v3.css?b=3', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

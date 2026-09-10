@@ -109,6 +109,51 @@ function suggestFromFreq(freqId, others, perMonth){
   const share=inc/(list.length+1);                // this one plus the rest
   return Math.max(MIN_REWARD_PRICE, round10(share/perFor(freqId, perMonth)));
 }
+/* ---------- Allowances ----------
+   The frequency you chose is a real limit, not just a pricing assumption.
+   Weekly means once a week. "8x a month" means eight, then it waits. */
+function allowanceOf(r){
+  const f=rewardFreq(r);
+  if(f==='custom') return Math.max(1, Math.round(perMonthOf(r)));
+  return 1;                                    // weekly / fortnightly / monthly = one per window
+}
+function windowStart(r){
+  const f=rewardFreq(r), k=today();
+  if(f==='weekly') return weekOf(k);
+  if(f==='fortnight') return addDays(k,-13);   // rolling: one per 14 days
+  return k.slice(0,8)+'01';                    // calendar month
+}
+function boughtInWindow(r){
+  const from=windowStart(r);
+  return (S.locker||[]).filter(l=>l.rewardId===r.id && l.boughtAt>=from).length;
+}
+function nextAvailable(r){
+  const f=rewardFreq(r), k=today();
+  if(f==='weekly') return addDays(weekOf(k),7);
+  if(f==='fortnight'){
+    const last=(S.locker||[]).filter(l=>l.rewardId===r.id).map(l=>l.boughtAt).sort().pop();
+    return last?addDays(last,14):k;
+  }
+  const d=parse(k); let y=d.getFullYear(), m=d.getMonth()+2;
+  if(m>12){ m=1; y++; }
+  return `${y}-${pad(m)}-01`;
+}
+/* One spare beyond what you planned, then it stops. Life happens; twice is a pattern. */
+function allowanceState(r){
+  const used=boughtInWindow(r), limit=allowanceOf(r), hard=limit+1;
+  const f=rewardFreq(r);
+  const period = f==='weekly'?'this week' : f==='fortnight'?'this fortnight' : 'this month';
+  return {used, limit, hard, left:Math.max(0,limit-used),
+    period, over:used>=limit && used<hard, maxed:used>=hard,
+    next:nextAvailable(r), monthUsed:boughtThisMonth(r)};
+}
+/* Plain count for the month, whatever the window is — for the counter on each reward. */
+function boughtThisMonth(r){
+  const from=today().slice(0,8)+'01';
+  return (S.locker||[]).filter(l=>l.rewardId===r.id && l.boughtAt>=from).length;
+}
+function monthlyPlanned(r){ return Math.max(1, Math.round(perMonthOf(r))); }
+
 function budgetState(){
   const inc=monthlyIncome();
   const active=S.rewards.filter(x=>x.active);
@@ -1647,13 +1692,28 @@ function vShop(){
     <button class="btn ${S.freezes?'':S.points.coins>=fc?'primary':''} block" data-freeze ${S.freezes||S.points.coins<fc?'disabled':''}>${S.freezes?'Holding one':S.points.coins>=fc?'Buy':`${fc-S.points.coins} more coins`}</button></div>`})()}
   <div class="section"><h2>Rewards <span class="muted">you set the price</span></h2>
     ${active.length?active.map(x=>{const cost=rewardPrice(x); const afford=S.points.coins>=cost; const ok=afford&&canRate; return `<div class="card reward ${ok?'':'locked'}"><div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">${earnEta(cost)}</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
-      <button class="btn ${ok?'primary':''} block" data-buy="${x.id}" ${ok?'':'disabled'}>${ok?'Buy':!afford?`${cost-S.points.coins} more coins`:`Strength below ${BUY_STRENGTH}%`}</button></div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+      ${(()=>{const al=allowanceState(x); const can=ok&&!al.maxed; const mp=monthlyPlanned(x);
+        return `<div class="row between" style="margin:8px 0 2px">
+          <span class="tiny ${al.monthUsed>mp?'':'muted'}" style="${al.monthUsed>mp?'color:#f59e0b':''}">${al.monthUsed} of ${mp} this month</span>
+          <span class="tiny muted">${al.maxed?`back ${fmt(al.next,{day:'numeric',month:'short'})}`
+            :al.over?'one spare left'
+            :rewardFreq(x)==='custom'?''
+            :`${al.used} of ${al.limit} ${al.period}`}</span></div>
+        <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
+        <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
+          al.maxed?`That is it ${al.period}` : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:`Strength below ${BUY_STRENGTH}%`}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
   <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
     ${S.locker.length?`<div class="card"><ul class="list">${[...S.locker].reverse().map(x=>`<li class="locker-item ${x.usedAt?'used':''}"><div><div>${esc(x.name)}</div><div class="tiny muted">${x.usedAt?'Used '+fmt(x.usedAt):'Bought '+fmt(x.boughtAt)}</div></div>${x.usedAt?'':`<button class="btn sm" data-use="${x.id}">Mark used</button>`}</li>`).join('')}</ul></div>`:'<div class="card"><p class="muted small">Things you buy land here.</p></div>'}</div>`;
 }
 function buy(id){
   const r=S.rewards.find(x=>x.id===id); if(!r) return; const cost=rewardPrice(r); if(S.points.coins<cost||avgStrength()<BUY_STRENGTH) return;
-  modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. Your level and XP don't change.</p>`,'Buy',()=>{
+  const al=allowanceState(r);
+  if(al.maxed){ toast(`That is it ${al.period} — back ${fmt(al.next,{day:'numeric',month:'short'})}`); return; }
+  const after=al.left-1;
+  const note = al.over
+    ? `This is one past what you planned. It is allowed once — after this it waits until ${fmt(al.next,{day:'numeric',month:'short'})}.`
+    : after>0 ? `${after} more ${al.period} after this.` : `That is your last planned one ${al.period}. You would have one spare after it.`;
+  modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. ${note}</p>`,'Buy',()=>{
     S.points.coins-=cost; S.locker.push({id:uid(),rewardId:id,name:r.name,boughtAt:today()}); save(); haptic('success'); render(); toast('Bought · in your locker'); });
 }
 function buyFreeze(){ const fc=freezeCost(); if(S.freezes||S.points.coins<fc) return; S.points.coins-=fc; S.freezes=1; save(); haptic('success'); render(); toast('Streak freeze ready'); }
@@ -1740,6 +1800,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Day cleared.</b> Finish every task and you get +${CLEAR_PER_TASK} per task on top. Nothing ever subtracts points.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days (Mon–Sun) and a free day's coins (+${chestCoins()}) land on Monday.</p>
     <p><b style="color:var(--fg)">Streak.</b> Open the app daily. +5 from day two, +10 from day seven, +15 from day thirty. A streak freeze (${freezeCost()} coins) covers one missed day.</p>
+    <p><b style="color:var(--fg)">How often actually means how often.</b> The frequency you pick is a real limit, not just a pricing guess — otherwise a cheap reward is buyable every day. You get what you planned <i>plus one spare</i>, then it waits. So weekly means one a week and a second if you really want it; "8× a month" means eight, a ninth if you must, then nothing until the 1st. Every reward carries a counter for the month, which turns amber once you are past your plan.</p>
     <p><b style="color:var(--fg)">Shop.</b> You say how often you'd like a reward — weekly, fortnightly, monthly, or a custom number of times a month — and the price is worked out from what you actually earn (measured over your last four weeks, not a theoretical perfect run). Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; over 90% it goes amber, over 100% red. <b>Balance these for me</b> rescales every price to fit while keeping your chosen frequencies, and shows you the before and after first — nothing changes until you tap Apply. Adding a reward makes the others cheaper, because a fixed income split more ways costs less each time: you can have more different rewards, or rarer and more meaningful ones, not both.</p>
     <p><b style="color:var(--fg)">Old note.</b> You set each reward's price in coins. Week and fortnight chips are 7 and 14 clear days from the tasks you have set (each task pays ${TASK_BASE} plus ${CLEAR_PER_TASK} for clearing). As you type a price, the days shown are that price divided by a clear day. Lowering a price asks you to confirm. You can only spend when average habit strength is ${BUY_STRENGTH}%+. Missing never costs you anything.</p>
     <p><b style="color:var(--fg)">Task cap.</b> Up to ${MAX_TASKS} tasks.</p>

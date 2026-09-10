@@ -508,6 +508,9 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .budgetbar{margin-top:8px}
 .card.budget.tight .budgetbar i{background:#f59e0b}
 .card.budget.over .budgetbar i{background:var(--danger)}
+.allowbar{height:5px;margin-top:6px}
+.allowbar.spare i{background:#f59e0b}
+.allowbar.done i{background:var(--fg3)}
 canvas#fx{position:fixed;inset:0;pointer-events:none;z-index:250}
 .sr{position:absolute;left:-9999px}
 
