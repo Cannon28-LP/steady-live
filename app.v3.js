@@ -339,106 +339,50 @@ function whenLabel(k){ if(!k) return 'Someday'; const d=(parse(k)-parse(today())
   if(d<7) return parse(k).toLocaleDateString(undefined,{weekday:'long'});
   return fmt(k,{day:'numeric',month:'short'}); }
 
-/* ---------- Notes ---------- */
 /* ---------- Notes ----------
-   A note is a list of blocks: text (with light markdown) or a small chart you
-   fill in yourself. No images — everything here stays plain text and numbers. */
-function noteBlocks(n){
-  if(!n.blocks){ n.blocks = n.body ? [{id:uid(),type:'text',text:n.body}] : [{id:uid(),type:'text',text:''}]; delete n.body; }
-  if(!n.blocks.length) n.blocks.push({id:uid(),type:'text',text:''});
-  return n.blocks;
+   Deliberately plain: a title, a date, and a box to write in. Nothing to learn. */
+function migrateNote(n){
+  if(n.body===undefined){
+    const parts=[];
+    (n.blocks||[]).forEach(bl=>{
+      if(bl.type==='text' && bl.text) parts.push(bl.text);
+      else if(bl.type==='chart'){                       // keep old chart data as plain text
+        const head=[bl.title||'Chart', bl.unit?`(${bl.unit})`:''].filter(Boolean).join(' ');
+        const rows=(bl.points||[]).sort((x,y)=>x.d<y.d?-1:1)
+          .map(pt=>`${fmt(pt.d,{day:'numeric',month:'short'})}: ${pt.v}${bl.unit?' '+bl.unit:''}`);
+        if(rows.length||bl.title) parts.push([head,...rows].join('\n'));
+      }
+    });
+    n.body=parts.join('\n\n');
+    delete n.blocks;
+  }
+  if(n.title===undefined) n.title='';
+  if(!n.createdAt) n.createdAt=n.updatedAt||Date.now();
+  return n;
 }
-function noteText(n){ return noteBlocks(n).filter(b=>b.type==='text').map(b=>b.text).join('\n'); }
 function noteTitle(n){
-  const first=noteText(n).split('\n').map(stripMd).find(l=>l && !/^---+$/.test(l));
-  if(first) return first;
-  const ch=noteBlocks(n).find(b=>b.type==='chart');
-  return ch?.title || 'New note';
+  migrateNote(n);
+  if(n.title.trim()) return n.title.trim();
+  const first=(n.body||'').split('\n').map(l=>l.trim()).find(Boolean);
+  return first || 'Untitled';
 }
-const stripMd = l => l.replace(/^#{1,3}\s*/,'').replace(/^[-*]\s+/,'').replace(/^\d+[.)]\s+/,'')
-  .replace(/^\[[ xX]\]\s*/,'').replace(/^>\s?/,'').replace(/\*\*/g,'').replace(/`/g,'').trim();
 function notePreview(n){
-  const lines=noteText(n).split('\n').map(stripMd).filter(l=>l && !/^---+$/.test(l));
-  const charts=noteBlocks(n).filter(b=>b.type==='chart');
-  const rest=lines.slice(1).join(' · ');
-  if(rest) return rest;
-  if(charts.length) return charts.map(c=>c.title||'chart').join(' · ');
-  return 'Empty note';
+  migrateNote(n);
+  const lines=(n.body||'').split('\n').map(l=>l.trim()).filter(Boolean);
+  const from = n.title.trim() ? lines : lines.slice(1);
+  return from.join(' · ') || 'Empty';
 }
-function addNote(){ const n={id:uid(),blocks:[{id:uid(),type:'text',text:''}],updatedAt:Date.now(),createdAt:Date.now()}; S.notes.unshift(n); save(); return n; }
+function addNote(){
+  const now=Date.now();
+  const n={id:uid(),title:'',body:'',createdAt:now,updatedAt:now};
+  S.notes.unshift(n); save(); return n;
+}
 function touchNote(n){ n.updatedAt=Date.now(); save(); }
 function dropNote(id){ S.notes=S.notes.filter(n=>n.id!==id); save(); }
-function noteEmpty(n){ return !noteText(n).trim() && !noteBlocks(n).some(b=>b.type==='chart'&&(b.points||[]).length); }
-function notesSorted(){ return [...S.notes].sort((a,b)=>b.updatedAt-a.updatedAt); }
+function noteEmpty(n){ migrateNote(n); return !n.title.trim() && !n.body.trim(); }
+/* Most recently opened or edited first. */
+function notesSorted(){ S.notes.forEach(migrateNote); return [...S.notes].sort((a,b)=>b.updatedAt-a.updatedAt); }
 
-/* Light markdown: headings, bullets, numbers, tick boxes, quotes, rules, bold/italic. */
-function mdInline(t){
-  return esc(t)
-    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
-    .replace(/(^|[^*])\*([^*]+)\*/g,'$1<i>$2</i>')
-    .replace(/`([^`]+)`/g,'<code>$1</code>');
-}
-function mdRender(text){
-  const lines=(text||'').split('\n');
-  let out='', list=null;
-  const closeList=()=>{ if(list){ out+=`</${list}>`; list=null; } };
-  lines.forEach((raw,i)=>{
-    const l=raw.trim();
-    if(!l){ closeList(); return; }
-    let m;
-    if(/^---+$/.test(l)){ closeList(); out+='<hr>'; return; }
-    if((m=l.match(/^(#{1,3})\s+(.*)$/))){ closeList(); const lv=m[1].length; out+=`<h${lv+2} class="mdh">${mdInline(m[2])}</h${lv+2}>`; return; }
-    if((m=l.match(/^\[([ xX])\]\s*(.*)$/))){ closeList();
-      const on=m[1].toLowerCase()==='x';
-      out+=`<div class="mdcheck ${on?'on':''}" data-mdline="${i}"><span class="box">${on?'✓':''}</span><span>${mdInline(m[2])}</span></div>`; return; }
-    if((m=l.match(/^[-*]\s+(.*)$/))){ if(list!=='ul'){ closeList(); out+='<ul class="mdul">'; list='ul'; } out+=`<li>${mdInline(m[1])}</li>`; return; }
-    if((m=l.match(/^\d+[.)]\s+(.*)$/))){ if(list!=='ol'){ closeList(); out+='<ol class="mdol">'; list='ol'; } out+=`<li>${mdInline(m[1])}</li>`; return; }
-    if((m=l.match(/^>\s?(.*)$/))){ closeList(); out+=`<blockquote class="mdq">${mdInline(m[1])}</blockquote>`; return; }
-    closeList(); out+=`<p class="mdp">${mdInline(l)}</p>`;
-  });
-  closeList();
-  return out || '<p class="mdp muted">Tap to write…</p>';
-}
-function toggleMdLine(block,idx){
-  const lines=block.text.split('\n');
-  const l=lines[idx]; if(l===undefined) return;
-  lines[idx] = /^\s*\[x\]/i.test(l) ? l.replace(/\[[xX]\]/,'[ ]') : l.replace(/\[\s?\]/,'[x]');
-  block.text=lines.join('\n');
-}
-
-/* ---------- Chart blocks ---------- */
-function chartBlock(){ return {id:uid(),type:'chart',title:'',unit:'',style:'line',points:[]}; }
-function chartPoints(b){ return [...(b.points||[])].sort((x,y)=>x.d<y.d?-1:x.d>y.d?1:0); }
-function chartSVG(b){
-  const pts=chartPoints(b);
-  if(pts.length<1) return '<p class="tiny muted">No readings yet.</p>';
-  const W=300,H=110,PADX=8,PADY=10;
-  const vals=pts.map(p=>Number(p.v)||0);
-  let lo=Math.min(...vals), hi=Math.max(...vals);
-  if(lo===hi){ lo=lo-1; hi=hi+1; }
-  const x=i=>pts.length===1?W/2:PADX+(W-PADX*2)*i/(pts.length-1);
-  const y=v=>H-PADY-(H-PADY*2)*((v-lo)/(hi-lo));
-  if(b.style==='bar'){
-    const bw=Math.max(4,Math.min(26,(W-PADX*2)/pts.length-4));
-    const bx=i=>pts.length===1 ? W/2-bw/2
-      : PADX + (W-PADX*2-bw)*i/(pts.length-1);        // inset so the first and last bars fit
-    return `<svg viewBox="0 0 ${W} ${H}" class="nchart" preserveAspectRatio="none">
-      ${pts.map((p,i)=>{const yy=y(Number(p.v)||0);return `<rect x="${bx(i).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw}" height="${(H-PADY-yy).toFixed(1)}" rx="2"/>`;}).join('')}</svg>`;
-  }
-  const d=pts.map((p,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(Number(p.v)||0).toFixed(1)}`).join(' ');
-  return `<svg viewBox="0 0 ${W} ${H}" class="nchart" preserveAspectRatio="none">
-    <path d="${d}" fill="none" class="line"/>
-    ${pts.map((p,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(Number(p.v)||0).toFixed(1)}" r="2.6"/>`).join('')}</svg>`;
-}
-function chartSummary(b){
-  const pts=chartPoints(b);
-  if(!pts.length) return '';
-  const last=Number(pts[pts.length-1].v)||0;
-  const first=Number(pts[0].v)||0;
-  const diff=Math.round((last-first)*100)/100;
-  const u=b.unit?` ${esc(b.unit)}`:'';
-  return `<span class="chartnow">${last}${u}</span>${pts.length>1?` <span class="tiny ${diff>=0?'up':'down'}">${diff>=0?'▲':'▼'}${Math.abs(diff)} since ${fmt(pts[0].d,{day:'numeric',month:'short'})}</span>`:''}`;
-}
 function toggleTodo(id){ const t=S.todos.find(x=>x.id===id); if(!t) return;
   t.done=!t.done; t.doneDay=t.done?today():null; if(t.done&&!t.day) t.day=today(); save(); }
 function pullTodo(id){ const t=S.todos.find(x=>x.id===id); if(t){ t.day=today(); save(); } }
@@ -1017,19 +961,38 @@ const Sync = {
      Authentication → URL Configuration → Redirect URLs. */
   async resetPassword(email){
     if(!this.live()) throw new Error('No server configured.');
-    const to=location.origin+location.pathname;
+    /* Supabase matches the allow-list exactly, and a missing trailing slash is
+       enough to make it fall back to the Site URL. Always send the slashed form. */
+    let to=location.origin+location.pathname;
+    if(!to.endsWith('/')) to+='/';
     try{ await api('/auth/v1/recover',{method:'POST',body:{email:email.trim(),redirect_to:to},noAuth:true}); }
     catch(e){ throw new Error(readableSyncError(e)); }
   },
   /* Arrives back from the email link with a token in the URL. */
   async claimRecovery(){
     if(!this.live()) return false;
+    /* Tokens can come back in the hash or the query, depending on the flow. */
     const h=new URLSearchParams((location.hash||'').replace(/^#/,''));
-    if(h.get('type')!=='recovery' || !h.get('access_token')) return false;
-    setSession({access_token:h.get('access_token'),refresh_token:h.get('refresh_token'),
-      expires_in:Number(h.get('expires_in'))||3600});
-    history.replaceState(null,'',location.pathname);
-    return true;
+    const qs=new URLSearchParams(location.search||'');
+    const grab=k=>h.get(k)||qs.get(k);
+    const err=grab('error_description')||grab('error');
+    if(err){ history.replaceState(null,'',location.pathname);
+      S.syncError=decodeURIComponent(String(err).replace(/\+/g,' ')); save(); return false; }
+    const at=grab('access_token');
+    if(at && (grab('type')==='recovery' || !S.session)){
+      setSession({access_token:at,refresh_token:grab('refresh_token'),expires_in:Number(grab('expires_in'))||3600});
+      history.replaceState(null,'',location.pathname);
+      return true;
+    }
+    /* PKCE style: exchange the one-time code for a session. */
+    const code=qs.get('code');
+    if(code){
+      try{ const d=await api('/auth/v1/token?grant_type=pkce',{method:'POST',body:{auth_code:code},noAuth:true});
+        if(setSession(d)){ history.replaceState(null,'',location.pathname); return true; }
+      }catch(e){}
+      history.replaceState(null,'',location.pathname);
+    }
+    return false;
   },
   async setPassword(pw){
     if(!this.live()) return;
@@ -1575,11 +1538,16 @@ function pNotes(){
   return `
   <button class="btn primary block" id="newnote" style="margin-bottom:14px">New note</button>
   ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>`<button class="noterow" data-note="${n.id}">
-      <div class="grow"><b>${esc(noteTitle(n))}</b>
-      <p class="tiny muted">${fmt(dkey(new Date(n.updatedAt)),{weekday:'short',day:'numeric',month:'short'})} · ${esc(notePreview(n).slice(0,44))}</p></div>
-      <span class="chev">›</span></button>`).join('')}</div>`:
-    `<div class="card empty"><b>No notes</b>Somewhere to write things properly — headings, lists, tick boxes, and little charts you fill in yourself.</div>`}`;
+      <div class="grow">
+        <div class="row between" style="gap:10px;align-items:baseline">
+          <b>${esc(noteTitle(n))}</b>
+          <span class="tiny muted" style="flex:none">${fmt(dkey(new Date(n.createdAt)),{day:'numeric',month:'short',year:'2-digit'})}</span>
+        </div>
+        <p class="tiny muted">${esc(notePreview(n).slice(0,60))}</p>
+      </div><span class="chev">›</span></button>`).join('')}</div>`:
+    `<div class="card empty"><b>No notes</b>Somewhere to write things down.</div>`}`;
 }
+
 
 
 /* ---------- Progress ---------- */
@@ -2013,7 +1981,7 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list and notes, both outside the economy — nothing there can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
-    <p><b style="color:var(--fg)">Notes.</b> Each note is made of blocks. A text block takes headings (<b>#</b>), bullets (<b>-</b>), numbered lists, tick boxes (<b>[ ]</b> — tap to tick), quotes (<b>&gt;</b>), rules (<b>---</b>) and <b>**bold**</b>; there's a toolbar so you don't have to remember any of it. Tap written text to edit it, Done to lay it out. A chart block is a little tracker you fill in yourself — name it, give it a unit, add readings with a date, and switch between line and bar. Good for things that aren't daily habits: van mileage, revision hours, weight. Notes carry the date they were last touched, and delete from the bin in the top corner.</p>
+    <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
 
     <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only, so there is nothing to moderate and no way to be unpleasant. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
@@ -2283,127 +2251,39 @@ function moveSheet(t){
 }
 function noteEditor(id){
   const n=S.notes.find(x=>x.id===id); if(!n) return;
-  /* A new or empty note opens straight into the keyboard — nothing to hunt for. */
-  let editing = noteEmpty(n) ? noteBlocks(n)[0].id : null;
+  migrateNote(n);
+  touchNote(n);                                        // opening it counts as using it
   const g=document.createElement('div'); g.className='gate noteedit';
-  document.body.appendChild(g);
-
-  const draw=()=>{
-    const blocks=noteBlocks(n);
-    g.innerHTML=`
+  g.innerHTML=`
     <div class="noteedit-bar">
       <button class="btn ghost sm" data-back>‹ Notes</button>
-      <span class="tiny muted">${fmt(dkey(new Date(n.updatedAt)),{weekday:'short',day:'numeric',month:'short'})}</span>
+      <span class="tiny muted" id="nsaved"></span>
       <button class="iconbtn" data-del aria-label="Delete note">${ICON.trash}</button>
     </div>
-    <div class="noteedit-body">
-      ${blocks.map((bl,i)=>bl.type==='chart'?chartBlockHtml(bl,i,blocks.length):textBlockHtml(bl,i,blocks.length,editing===bl.id)).join('')}
-      <div class="addblocks">
-        <button class="btn sm" data-addtext>+ Text</button>
-        <button class="btn sm" data-addchart>+ Chart</button>
-      </div>
-    </div>`;
-    bindEditor();
-  };
-
-  const textBlockHtml=(bl,i,total,isEditing)=>`
-    <div class="nblock" data-block="${bl.id}">
-      ${isEditing?`
-        <div class="mdbar">
-          ${[['# ','H'],['**','B'],['- ','•'],['1. ','1.'],['[ ] ','☐'],['> ','❝'],['---','—']].map(([ins,lab])=>
-            `<button class="mdbtn" data-ins="${esc(ins)}">${lab}</button>`).join('')}
-          <button class="btn sm primary" data-donetext style="margin-left:auto">Done</button>
-        </div>
-        <textarea class="nta" data-ta="${bl.id}" placeholder="Write anything. # for a heading, - for a bullet, [ ] for a tick box.">${esc(bl.text)}</textarea>`
-      :`<div class="mdview" data-view="${bl.id}">${mdRender(bl.text)}</div>`}
-      ${total>1?`<button class="iconbtn ghosty blockdel" data-rmblock="${bl.id}" aria-label="Remove block">${ICON.trash}</button>`:''}
-    </div>`;
-
-  const chartBlockHtml=(bl,i,total)=>`
-    <div class="nblock chartblock" data-block="${bl.id}">
-      <input type="text" class="charttitle" data-ctitle="${bl.id}" value="${esc(bl.title||'')}" placeholder="What are you tracking?" maxlength="40">
-      <div class="row" style="gap:10px;margin-top:8px;align-items:center">
-        <input type="text" class="chartunit" data-cunit="${bl.id}" value="${esc(bl.unit||'')}" placeholder="unit (kg, hrs…)" maxlength="10">
-        <div class="seg tiny-seg">${[['line','Line'],['bar','Bar']].map(([v,l])=>`<button class="${(bl.style||'line')===v?'on':''}" data-cstyle="${bl.id}|${v}">${l}</button>`).join('')}</div>
-      </div>
-      <div class="chartwrap">${chartSVG(bl)}</div>
-      <div class="row between" style="margin-top:4px"><span class="small">${chartSummary(bl)}</span>
-        <button class="btn sm" data-cadd="${bl.id}">+ Reading</button></div>
-      ${(bl.points||[]).length?`<details class="fold"><summary><span>Readings (${bl.points.length})</span></summary>
-        <ul class="list">${chartPoints(bl).map(pt=>`<li><span class="small">${fmt(pt.d,{day:'numeric',month:'short'})}</span>
-          <span class="row" style="gap:8px"><b class="small">${pt.v}${bl.unit?' '+esc(bl.unit):''}</b>
-          <button class="iconbtn ghosty" data-cdel="${bl.id}|${pt.id}" aria-label="Remove reading">${ICON.trash}</button></span></li>`).join('')}</ul></details>`:''}
-      ${total>1?`<button class="iconbtn ghosty blockdel" data-rmblock="${bl.id}" aria-label="Remove block">${ICON.trash}</button>`:''}
-    </div>`;
-
-  const bindEditor=()=>{
-    const q=sel=>g.querySelector(sel), qa=sel=>[...g.querySelectorAll(sel)];
-    q('[data-back]').onclick=leave;
-    q('[data-del]').onclick=()=>modal('<h2>Delete this note?</h2><p class="muted">It cannot be recovered.</p>','Delete',()=>{ dropNote(id); g.remove(); render(); },true);
-
-    qa('[data-view]').forEach(v=>v.onclick=e=>{
-      if(e.target.closest('.mdcheck')){
-        const line=Number(e.target.closest('.mdcheck').dataset.mdline);
-        const bl=noteBlocks(n).find(x=>x.id===v.dataset.view);
-        toggleMdLine(bl,line); touchNote(n); haptic(); draw(); return;
-      }
-      editing=v.dataset.view; draw();
-      const ta=g.querySelector(`[data-ta="${editing}"]`); if(ta){ ta.focus(); ta.selectionStart=ta.value.length; }
-    });
-
-    const ta=q('[data-ta]');
-    if(ta){
-      const bl=noteBlocks(n).find(x=>x.id===ta.dataset.ta);
-      let t0; ta.oninput=()=>{ bl.text=ta.value; clearTimeout(t0); t0=setTimeout(()=>touchNote(n),400); };
-      qa('[data-ins]').forEach(btn=>btn.onclick=()=>{
-        const ins=btn.dataset.ins;
-        const start=ta.selectionStart, val=ta.value;
-        if(ins==='**'){ const end=ta.selectionEnd; const mid=val.slice(start,end)||'bold';
-          ta.value=val.slice(0,start)+'**'+mid+'**'+val.slice(end);
-          ta.selectionStart=start+2; ta.selectionEnd=start+2+mid.length; }
-        else { const ls=val.lastIndexOf('\n',Math.max(0,start-1))+1;
-          ta.value=val.slice(0,ls)+ins+val.slice(ls);
-          ta.selectionStart=ta.selectionEnd=start+ins.length; }
-        bl.text=ta.value; touchNote(n); ta.focus(); haptic();
-      });
-      q('[data-donetext]').onclick=()=>{ bl.text=ta.value; touchNote(n); editing=null; draw(); };
-    }
-
-    qa('[data-ctitle]').forEach(el=>el.oninput=()=>{ const bl=noteBlocks(n).find(x=>x.id===el.dataset.ctitle); bl.title=el.value; touchNote(n); });
-    qa('[data-cunit]').forEach(el=>el.oninput=()=>{ const bl=noteBlocks(n).find(x=>x.id===el.dataset.cunit); bl.unit=el.value; touchNote(n); });
-    qa('[data-cstyle]').forEach(el=>el.onclick=()=>{ const [bid,st]=el.dataset.cstyle.split('|');
-      const bl=noteBlocks(n).find(x=>x.id===bid); bl.style=st; touchNote(n); haptic(); draw(); });
-    qa('[data-cadd]').forEach(el=>el.onclick=()=>{ const bl=noteBlocks(n).find(x=>x.id===el.dataset.cadd); readingSheet(bl,()=>{ touchNote(n); draw(); }); });
-    qa('[data-cdel]').forEach(el=>el.onclick=()=>{ const [bid,pid]=el.dataset.cdel.split('|');
-      const bl=noteBlocks(n).find(x=>x.id===bid); bl.points=(bl.points||[]).filter(x=>x.id!==pid); touchNote(n); haptic(); draw(); });
-
-    qa('[data-rmblock]').forEach(el=>el.onclick=()=>{
-      n.blocks=noteBlocks(n).filter(x=>x.id!==el.dataset.rmblock); touchNote(n); haptic(); draw(); });
-    q('[data-addtext]').onclick=()=>{ const nb={id:uid(),type:'text',text:''}; noteBlocks(n).push(nb); editing=nb.id; touchNote(n); draw();
-      const t=g.querySelector(`[data-ta="${nb.id}"]`); if(t) t.focus(); };
-    q('[data-addchart]').onclick=()=>{ noteBlocks(n).push(chartBlock()); touchNote(n); haptic(); draw(); };
-  };
-
-  const leave=()=>{ if(noteEmpty(n)) dropNote(id); else touchNote(n); g.remove(); render(); };
-  draw();
-  const first=g.querySelector('[data-ta]'); if(first) setTimeout(()=>first.focus(),120);
-}
-
-function readingSheet(bl,after){
-  const o=overlay(`<div class="modal"><h2>Add a reading</h2>
-    <div class="stack" style="margin-top:12px">
-      <input type="date" id="rdate" value="${today()}" max="${today()}">
-      <input type="number" id="rval" step="any" placeholder="Value${bl.unit?' in '+esc(bl.unit):''}">
+    <div class="noteedit-head">
+      <input type="text" id="ntitle" class="ntitle" placeholder="Title" maxlength="80" value="${esc(n.title||'')}">
+      <span class="tiny muted ndate">${fmt(dkey(new Date(n.createdAt)),{weekday:'short',day:'numeric',month:'short',year:'numeric'})}</span>
     </div>
-    <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Add</button></div></div>`,'center');
-  const val=o.querySelector('#rval'); setTimeout(()=>val.focus(),100);
-  o.querySelector('[data-x]').onclick=()=>close(o);
-  const ok=()=>{ const v=Number(val.value); if(!val.value.trim()||isNaN(v)){ toast('Needs a number'); return; }
-    const d=o.querySelector('#rdate').value||today();
-    bl.points=(bl.points||[]).filter(x=>x.d!==d).concat([{id:uid(),d,v:Math.round(v*100)/100}]);
-    close(o); haptic(); after&&after(); };
-  o.querySelector('[data-ok]').onclick=ok; val.onkeydown=e=>{ if(e.key==='Enter') ok(); };
+    <textarea id="nbody" class="nbody" placeholder="Write anything…">${esc(n.body||'')}</textarea>`;
+  document.body.appendChild(g);
+
+  const ti=g.querySelector('#ntitle'), ta=g.querySelector('#nbody'), st=g.querySelector('#nsaved');
+  let t0;
+  const flag=()=>{ st.textContent='Saved'; clearTimeout(flag.t); flag.t=setTimeout(()=>st.textContent='',1200); };
+  const store=()=>{ n.title=ti.value; n.body=ta.value; touchNote(n); flag(); };
+  const queue=()=>{ clearTimeout(t0); t0=setTimeout(store,400); };
+  ti.oninput=queue; ta.oninput=queue;
+  ti.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); ta.focus(); } };
+
+  const leave=()=>{ clearTimeout(t0); n.title=ti.value; n.body=ta.value;
+    if(noteEmpty(n)) dropNote(id); else touchNote(n);
+    g.remove(); render(); };
+  g.querySelector('[data-back]').onclick=leave;
+  g.querySelector('[data-del]').onclick=()=>modal('<h2>Delete this note?</h2><p class="muted">It cannot be recovered.</p>','Delete',()=>{ clearTimeout(t0); dropNote(id); g.remove(); render(); },true);
+
+  setTimeout(()=>{ (n.title||n.body?ta:ti).focus(); },120);
 }
+
 
 /* ---------- Time sheet (timed tasks) ---------- */
 function timeSheet(timed){
@@ -2970,7 +2850,11 @@ export function bootSteady(){
     setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } try{ reminderTick(); }catch(e){} },30000);
     setTimeout(()=>{ try{ reminderTick(); }catch(e){} },4000);
     document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } });
-    Sync.session().catch(()=>{}).then(()=>{ if(tab==='friends') render(); });
+    /* Arriving back from a password-reset email takes priority over everything. */
+    Sync.claimRecovery().then(rec=>{
+      if(rec){ document.querySelectorAll('.gate').forEach(g=>g.remove()); newPasswordGate(); return null; }
+      return Sync.session();
+    }).catch(()=>{}).then(()=>{ if(tab==='friends') render(); });
   }
 }
 
