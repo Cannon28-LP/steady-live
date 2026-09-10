@@ -46,14 +46,14 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.js"/>
-<link rel="preload" href="./app.css" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.css"/></noscript>
+<link rel="modulepreload" href="./app.v2.js"/>
+<link rel="preload" href="./app.v2.css" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v2.css"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
   <div id="bootfail" hidden><p style="max-width:26ch;text-align:center;font-size:.9rem;color:var(--fg2);line-height:1.5">
-    Couldn't load the app files. If you opened <b>index.html</b> on its own, it won't run — it needs app.js and app.css beside it.
+    Couldn't load the app files. If you opened <b>index.html</b> on its own, it won't run — it needs app.v2.js and app.v2.css beside it.
     Open the app from its web address instead.</p>
     <button id="bootretry" style="margin-top:14px;padding:11px 20px;border:0;border-radius:12px;background:var(--accent);color:#0b0f0e;font:inherit;font-weight:650">Try again</button></div></div>
 <div id="motif" aria-hidden="true"></div>
@@ -83,7 +83,7 @@ window.__steadyBootTimer = setTimeout(function(){
 }, 8000);
 </script>
 <script type="module">
-import { bootSteady } from './app.js';
+import { bootSteady } from './app.v2.js';
 const clear = () => { const b=document.getElementById('boot');
   if(b){ b.classList.add('gone'); setTimeout(()=>b.remove(),350); } };
 try { bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear(); }
