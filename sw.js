@@ -2,8 +2,8 @@
 // Stale-while-revalidate: the app opens instantly from cache, and a new build
 // downloads in the background and is used on the next open. Best of both —
 // no launch delay, and no cache version to bump by hand.
-const CACHE = 'steady-v2';
-const ASSETS = ['./', './index.html', './app.v2.js', './app.v2.css', './manifest.json', './icon.svg'];
+const CACHE = 'steady-v3';
+const ASSETS = ['./', './index.html', './app.v3.js?b=1', './app.v3.css?b=1', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -19,6 +19,25 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('message', e => { if (e.data === 'skipWaiting') self.skipWaiting(); });
 
+// ---- reminders ----
+self.addEventListener('push', e => {
+  let d = { title: 'Steady', body: 'Time to tick something off.' };
+  try { if (e.data) d = Object.assign(d, e.data.json()); } catch (err) { if (e.data) d.body = e.data.text(); }
+  e.waitUntil(self.registration.showNotification(d.title, {
+    body: d.body, icon: './icon.svg', badge: './icon.svg',
+    tag: d.tag || 'steady', renotify: false, data: { url: d.url || './' }
+  }));
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || './';
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    for (const c of list) { if ('focus' in c) return c.focus(); }
+    return self.clients.openWindow(url);
+  }));
+});
+
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -27,7 +46,7 @@ self.addEventListener('fetch', e => {
   const key = (req.mode === 'navigate' || req.destination === 'document') ? './index.html' : req;
 
   e.respondWith(
-    caches.match(key, { ignoreSearch: true }).then(hit => {
+    caches.match(key, { ignoreSearch: (key === './index.html') }).then(hit => {
       const net = fetch(req).then(res => {
         if (res && res.status === 200 && res.type === 'basic') {
           const copy = res.clone();
