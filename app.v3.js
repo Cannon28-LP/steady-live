@@ -1,7 +1,8 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
 const KEY = 'steady.v2';
-const BUILD = '2026-09-09-live';   // shown in Settings → Help, so you can tell which build a phone is running
+const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
+  return (b?'b'+b+' · ':'')+'2026-09-11'; }catch(e){ return '2026-09-11'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -579,6 +580,243 @@ function reminderTick(){
   }
 }
 
+/* ---------- Avatars ----------
+   A flat image, not a 3D model. Render a square PNG out of Blender, drop it in,
+   and it gets squashed to 128px JPEG — about 5KB, small enough to sit in your
+   profile row so friends see it too. */
+const AV_SIZE = 128, AV_MAX_BYTES = 20000;
+function avatarOf(who){ return who?.avatar || null; }
+function avatarHtml(who,cls){
+  const src=avatarOf(who);
+  if(src) return `<span class="avatar ${cls||''} img"><img src="${src}" alt=""></span>`;
+  if(who && who.char) return `<span class="avatar ${cls||''} img">${charSVG(who.char)}</span>`;
+  if(who && S.me && who.id===S.me.id) return `<span class="avatar ${cls||''} img">${charSVG(myChar())}</span>`;
+  return `<span class="avatar ${cls||''}">${esc((who?.name||'?')[0]).toUpperCase()}</span>`;
+}
+/* Centre-crop to a square, scale down, re-encode. */
+function fileToAvatar(file){
+  return new Promise((res,rej)=>{
+    if(!file) return rej(new Error('No file'));
+    if(!/^image\//.test(file.type)) return rej(new Error('That is not an image.'));
+    const fr=new FileReader();
+    fr.onerror=()=>rej(new Error('Could not read that file.'));
+    fr.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>rej(new Error('Could not open that image.'));
+      img.onload=()=>{
+        const c=document.createElement('canvas'); c.width=c.height=AV_SIZE;
+        const x=c.getContext('2d');
+        const side=Math.min(img.width,img.height);
+        x.drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,AV_SIZE,AV_SIZE);
+        let q=0.75, out=c.toDataURL('image/jpeg',q);
+        while(out.length>AV_MAX_BYTES && q>0.35){ q-=0.1; out=c.toDataURL('image/jpeg',q); }
+        if(out.length>AV_MAX_BYTES) return rej(new Error('Still too big — try a simpler render.'));
+        res(out);
+      };
+      img.src=fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+async function setMyAvatar(dataUrl){
+  me().avatar=dataUrl||null; save();
+  if(Sync.live()&&Sync.signedIn()){
+    try{ await api(`/rest/v1/profiles?id=eq.${S.me.id}`,{method:'PATCH',
+      body:{avatar:dataUrl||null},headers:{Prefer:'return=minimal'}});
+      S.syncError=null; save();
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  }
+}
+
+
+/* ---------- Characters ----------
+   Eight characters, each with its own face. Skin tone and hair colour are pickers
+   rather than baked in, so anybody can make anybody — including a ginger-haired
+   girl with a mid tone. Cosmetics are not split by gender: any item, any character. */
+const TONES = [
+  {id:'t1',hex:'#f6dcc8',shade:'#e3bfa4'},
+  {id:'t2',hex:'#ecc4a4',shade:'#d4a480'},
+  {id:'t3',hex:'#d39b6d',shade:'#b77d52'},
+  {id:'t4',hex:'#a9673c',shade:'#8d5130'},
+  {id:'t5',hex:'#7b4525',shade:'#63351b'},
+  {id:'t6',hex:'#4e2a17',shade:'#3b1f10'},
+];
+const HAIR_COLOURS = [
+  {id:'c-black', hex:'#241f1d'},
+  {id:'c-brown', hex:'#4a2f1d'},
+  {id:'c-mid',   hex:'#8a5a34'},
+  {id:'c-blond', hex:'#d9a95c'},
+  {id:'c-ginger',hex:'#c1521f'},
+  {id:'c-red',   hex:'#8e2a1c'},
+  {id:'c-grey',  hex:'#9a9a9a'},
+  {id:'c-dyed',  hex:'#6d5ae0'},
+];
+/* Faces: a few numbers each, so they read as different people without eight sets of art. */
+const BASES = [
+  {id:'b1',name:'Character 1',jaw:30,chin:35,eye:'round', brow:'flat',  mouth:'line',  lash:false},
+  {id:'b2',name:'Character 2',jaw:28,chin:33,eye:'narrow',brow:'angle', mouth:'smile', lash:false},
+  {id:'b3',name:'Character 3',jaw:31,chin:37,eye:'round', brow:'thick', mouth:'smirk', lash:false},
+  {id:'b4',name:'Character 4',jaw:27,chin:32,eye:'wide',  brow:'arch',  mouth:'open',  lash:false},
+  {id:'b5',name:'Character 5',jaw:27,chin:34,eye:'round', brow:'arch',  mouth:'smile', lash:true},
+  {id:'b6',name:'Character 6',jaw:26,chin:32,eye:'wide',  brow:'thin',  mouth:'line',  lash:true},
+  {id:'b7',name:'Character 7',jaw:28,chin:36,eye:'narrow',brow:'arch',  mouth:'smirk', lash:true},
+  {id:'b8',name:'Character 8',jaw:29,chin:33,eye:'round', brow:'flat',  mouth:'open',  lash:true},
+];
+/* Cosmetics. cost 0 = yours from the start. */
+const LOOK_ITEMS = [
+  // hair
+  {id:'h-crop',   slot:'hair', name:'Cropped',        cost:0},
+  {id:'h-short',  slot:'hair', name:'Short',          cost:0},
+  {id:'h-long',   slot:'hair', name:'Long',           cost:0},
+  {id:'h-bob',    slot:'hair', name:'Bob',            cost:0},
+  {id:'h-pony',   slot:'hair', name:'Ponytail',       cost:80},
+  {id:'h-bun',    slot:'hair', name:'Top bun',        cost:80},
+  {id:'h-curls',  slot:'hair', name:'Curls',          cost:110},
+  {id:'h-braids', slot:'hair', name:'Braids',         cost:110},
+  {id:'h-quiff',  slot:'hair', name:'Quiff',          cost:90},
+  {id:'h-buzz',   slot:'hair', name:'Buzzed',         cost:60},
+  // outfits
+  {id:'o-tee',    slot:'outfit', name:'T-shirt',      cost:0,   col:'#3f8f83'},
+  {id:'o-hoodie', slot:'outfit', name:'Hoodie',       cost:0,   col:'#4a5568'},
+  {id:'o-shirt',  slot:'outfit', name:'Collared shirt',cost:90, col:'#dfe6ef'},
+  {id:'o-stripe', slot:'outfit', name:'Striped top',  cost:110, col:'#e4e9f0'},
+  {id:'o-dress',  slot:'outfit', name:'Dress',        cost:140, col:'#c2466f'},
+  {id:'o-jacket', slot:'outfit', name:'Denim jacket', cost:160, col:'#3f6796'},
+  {id:'o-hivis',  slot:'outfit', name:'Hi-vis',       cost:120, col:'#e4d43a'},
+  {id:'o-jumper', slot:'outfit', name:'Knit jumper',  cost:130, col:'#8a6b4f'},
+  // eyewear
+  {id:'g-round',  slot:'glasses', name:'Round specs', cost:70},
+  {id:'g-square', slot:'glasses', name:'Square specs',cost:70},
+  {id:'g-shades', slot:'glasses', name:'Sunglasses',  cost:120},
+  {id:'g-cats',   slot:'glasses', name:'Cat-eye',     cost:130},
+  // headwear
+  {id:'a-cap',    slot:'hat', name:'Cap',             cost:100},
+  {id:'a-beanie', slot:'hat', name:'Beanie',          cost:100},
+  {id:'a-bow',    slot:'hat', name:'Hair bow',        cost:90},
+  {id:'a-band',   slot:'hat', name:'Headband',        cost:80},
+  // backdrops
+  {id:'bg-plain', slot:'backdrop', name:'Plain',      cost:0,  col:null},
+  {id:'bg-sun',   slot:'backdrop', name:'Sunrise',    cost:60, col:'#f0a05a'},
+  {id:'bg-mint',  slot:'backdrop', name:'Mint',       cost:60, col:'#6fd6bd'},
+  {id:'bg-night', slot:'backdrop', name:'Night',      cost:80, col:'#2c3358'},
+  {id:'bg-rose',  slot:'backdrop', name:'Rose',       cost:80, col:'#dd7ea4'},
+];
+const SLOTS = [['hair','Hair'],['outfit','Outfit'],['glasses','Eyewear'],['hat','Headwear'],['backdrop','Backdrop']];
+const lookItem = id => LOOK_ITEMS.find(i=>i.id===id);
+function looks(){
+  S.looks = S.looks || {owned:LOOK_ITEMS.filter(i=>!i.cost).map(i=>i.id), av:null};
+  if(!S.looks.owned) S.looks.owned=LOOK_ITEMS.filter(i=>!i.cost).map(i=>i.id);
+  LOOK_ITEMS.filter(i=>!i.cost).forEach(i=>{ if(!S.looks.owned.includes(i.id)) S.looks.owned.push(i.id); });
+  return S.looks;
+}
+function myChar(){
+  const L=looks();
+  if(!L.av) L.av={base:'b1',tone:'t2',hairCol:'c-brown',hair:'h-short',outfit:'o-tee',glasses:null,hat:null,backdrop:'bg-plain'};
+  return L.av;
+}
+const ownsLook = id => !id || looks().owned.includes(id);
+function buyLook(id){
+  const it=lookItem(id); if(!it||ownsLook(id)) return false;
+  if(S.points.coins < it.cost) return false;
+  S.points.coins-=it.cost; looks().owned.push(id); save(); return true;
+}
+
+/* ---------- Drawing one ---------- */
+function hairPath(id,c){
+  switch(id){
+    case 'h-buzz':   return `<path d="M28 42a22 22 0 0 1 44 0c0-14-9-22-22-22s-22 8-22 22z" fill="${c}" opacity=".92"/>`;
+    case 'h-crop':   return `<path d="M27 44c-1-16 9-25 23-25s24 9 23 25c-3-9-8-13-23-13s-20 4-23 13z" fill="${c}"/>`;
+    case 'h-short':  return `<path d="M26 46c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>`;
+    case 'h-quiff':  return `<path d="M27 45c-2-19 8-29 23-29 12 0 20 6 23 16-6-4-10-2-13 2-5-7-24-6-33 11z" fill="${c}"/>`;
+    case 'h-long':   return `<path d="M25 46c-2-19 10-29 25-29s27 10 25 29v26c-4 2-7-2-7-10 0-14-3-20-18-20s-18 6-18 20c0 8-3 12-7 10z" fill="${c}"/>`;
+    case 'h-bob':    return `<path d="M25 46c-2-19 10-29 25-29s27 10 25 29v10c-4 1-6-1-6-7 0-13-4-18-19-18s-19 5-19 18c0 6-2 8-6 7z" fill="${c}"/>`;
+    case 'h-pony':   return `<path d="M26 45c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
+                             <path d="M72 38c9 2 13 10 12 20-1 9-6 13-10 12 4-8 4-18-4-26z" fill="${c}"/>`;
+    case 'h-bun':    return `<path d="M26 45c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
+                             <circle cx="50" cy="13" r="9" fill="${c}"/>`;
+    case 'h-curls':  return `<path d="M26 46c-2-19 10-29 24-29s26 10 24 29c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
+                             ${[30,40,50,60,70].map((x,i)=>`<circle cx="${x}" cy="${20+(i%2)*4}" r="8" fill="${c}"/>`).join('')}`;
+    case 'h-braids': return `<path d="M26 45c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
+                             <path d="M26 40c-6 6-7 18-4 30 3-2 6-4 7-8-3-8-3-16-3-22z" fill="${c}"/>
+                             <path d="M74 40c6 6 7 18 4 30-3-2-6-4-7-8 3-8 3-16 3-22z" fill="${c}"/>`;
+    default: return '';
+  }
+}
+function outfitPath(id){
+  const it=lookItem(id)||lookItem('o-tee'); const col=it.col||'#3f8f83';
+  const body=`<path d="M18 100c0-16 14-24 32-24s32 8 32 24z" fill="${col}"/>`;
+  switch(id){
+    case 'o-hoodie': return body+`<path d="M36 78c4 6 24 6 28 0 3 3 4 7 4 10-12 5-24 5-36 0 0-3 1-7 4-10z" fill="#000" opacity=".16"/>`;
+    case 'o-shirt':  return body+`<path d="M44 77l6 9 6-9 4 2-10 14-10-14z" fill="#fff" opacity=".85"/>`;
+    case 'o-stripe': return body+[0,1,2,3].map(i=>`<rect x="18" y="${82+i*5}" width="64" height="2.6" fill="#2d4f9e" opacity=".75"/>`).join('');
+    case 'o-dress':  return `<path d="M16 100c0-18 16-24 34-24s34 6 34 24z" fill="${col}"/><path d="M40 78h20l2 8H38z" fill="#fff" opacity=".25"/>`;
+    case 'o-jacket': return body+`<path d="M44 77v23h-4V78zM56 77v23h4V78z" fill="#000" opacity=".22"/><path d="M40 79l10 7 10-7" fill="none" stroke="#000" stroke-opacity=".2" stroke-width="2"/>`;
+    case 'o-hivis':  return body+`<rect x="18" y="88" width="64" height="5" fill="#eee" opacity=".9"/><rect x="18" y="96" width="64" height="4" fill="#eee" opacity=".65"/>`;
+    case 'o-jumper': return body+`<path d="M18 100c6-4 14-6 32-6s26 2 32 6z" fill="#000" opacity=".12"/>`;
+    default: return body;
+  }
+}
+function glassesPath(id){
+  if(!id) return '';
+  const st='stroke="#1d2b28" stroke-width="2.4" fill="none"';
+  switch(id){
+    case 'g-round':  return `<circle cx="40" cy="50" r="8" ${st}/><circle cx="60" cy="50" r="8" ${st}/><path d="M48 50h4" ${st}/>`;
+    case 'g-square': return `<rect x="31" y="43" width="17" height="13" rx="2.5" ${st}/><rect x="52" y="43" width="17" height="13" rx="2.5" ${st}/><path d="M48 49h4" ${st}/>`;
+    case 'g-shades': return `<path d="M30 43h18v9a9 9 0 0 1-18 0z" fill="#1d2b28"/><path d="M52 43h18v9a9 9 0 0 1-18 0z" fill="#1d2b28"/><path d="M48 46h4" ${st}/>`;
+    case 'g-cats':   return `<path d="M30 44c6-4 16-3 18 3 0 6-5 9-10 9s-9-4-8-12z" fill="none" stroke="#1d2b28" stroke-width="2.4"/>
+                             <path d="M70 44c-6-4-16-3-18 3 0 6 5 9 10 9s9-4 8-12z" fill="none" stroke="#1d2b28" stroke-width="2.4"/><path d="M48 48h4" ${st}/>`;
+    default: return '';
+  }
+}
+function hatPath(id,hairCol){
+  if(!id) return '';
+  switch(id){
+    case 'a-cap':    return `<path d="M25 34a25 25 0 0 1 50 0c-4-12-14-18-25-18s-21 6-25 18z" fill="#2f6ea0"/><path d="M72 33h16c1 4-2 6-6 6H72z" fill="#27577d"/>`;
+    case 'a-beanie': return `<path d="M25 36a25 25 0 0 1 50 0c0-14-11-21-25-21S25 22 25 36z" fill="#b8543f"/><rect x="24" y="33" width="52" height="7" rx="3" fill="#9c422f"/>`;
+    case 'a-bow':    return `<path d="M64 22c6-5 14-4 14 3s-8 8-14 3z" fill="#dd5f8f"/><path d="M78 22c6-5 14-4 14 3s-8 8-14 3z" fill="#dd5f8f" transform="translate(-28)"/><circle cx="64" cy="25" r="3" fill="#c74d7b"/>`;
+    case 'a-band':   return `<path d="M26 36c2-6 10-8 24-8s22 2 24 8c-2-3-10-5-24-5s-22 2-24 5z" fill="#e0b84a"/>`;
+    default: return '';
+  }
+}
+function charSVG(av,size){
+  const a=av||myChar();
+  const base=BASES.find(b=>b.id===a.base)||BASES[0];
+  const tone=TONES.find(t=>t.id===a.tone)||TONES[1];
+  const hc=(HAIR_COLOURS.find(c=>c.id===a.hairCol)||HAIR_COLOURS[1]).hex;
+  const bg=(lookItem(a.backdrop)||{}).col;
+  const eye=(cx)=>{
+    if(base.eye==='narrow') return `<path d="M${cx-4} 50q4 3 8 0" stroke="#1d2b28" stroke-width="2.6" fill="none" stroke-linecap="round"/>`;
+    if(base.eye==='wide')   return `<circle cx="${cx}" cy="50" r="3.4" fill="#1d2b28"/><circle cx="${cx+1}" cy="49" r="1.1" fill="#fff"/>`;
+    return `<circle cx="${cx}" cy="50" r="2.6" fill="#1d2b28"/>`;
+  };
+  const brow=(cx)=>{
+    const d={flat:`M${cx-5} 42h10`,angle:`M${cx-5} 43l10-3`,thick:`M${cx-5} 42h10`,arch:`M${cx-5} 43q5-4 10 0`,thin:`M${cx-4} 42h8`}[base.brow];
+    const w={thick:3.4,thin:1.6}[base.brow]||2.4;
+    return `<path d="${d}" stroke="${hc}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`;
+  };
+  const mouth={
+    line:`<path d="M45 62h10" stroke="#8d4a44" stroke-width="2.4" stroke-linecap="round"/>`,
+    smile:`<path d="M44 60q6 6 12 0" stroke="#8d4a44" stroke-width="2.4" fill="none" stroke-linecap="round"/>`,
+    smirk:`<path d="M44 61q7 4 12-1" stroke="#8d4a44" stroke-width="2.4" fill="none" stroke-linecap="round"/>`,
+    open:`<ellipse cx="50" cy="62" rx="5" ry="3.4" fill="#8d4a44"/>`,
+  }[base.mouth];
+  const lashes=base.lash?`<path d="M35 46q3-2 6 0M59 46q3-2 6 0" stroke="#1d2b28" stroke-width="1.6" fill="none" stroke-linecap="round"/>`:'';
+  return `<svg viewBox="0 0 100 100" class="charsvg" ${size?`width="${size}" height="${size}"`:''}>
+    <defs><clipPath id="cc${a.base}${size||''}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
+    <g clip-path="url(#cc${a.base}${size||''})">
+      <rect width="100" height="100" fill="${bg||'var(--surface2)'}"/>
+      ${outfitPath(a.outfit)}
+      <rect x="44" y="66" width="12" height="12" fill="${tone.shade}"/>
+      <path d="M50 20c${base.jaw*0.6} 0 ${base.jaw} 8 ${base.jaw} 20 0 ${base.chin*0.5} -${base.jaw*0.5} ${base.chin} -${base.jaw} ${base.chin} -${base.jaw*0.5} 0 -${base.jaw} -${base.chin*0.5} -${base.jaw} -${base.chin} 0-12 ${base.jaw*0.4}-20 ${base.jaw}-20z" fill="${tone.hex}"/>
+      <ellipse cx="${50-base.jaw-1}" cy="52" rx="3.2" ry="4.6" fill="${tone.hex}"/>
+      <ellipse cx="${50+base.jaw+1}" cy="52" rx="3.2" ry="4.6" fill="${tone.hex}"/>
+      ${brow(40)}${brow(60)}${eye(40)}${eye(60)}${lashes}${mouth}
+      ${hairPath(a.hair,hc)}
+      ${glassesPath(a.glasses)}
+      ${hatPath(a.hat,hc)}
+    </g></svg>`;
+}
+
 /* ---------- Quick chat ----------
    Fixed phrases only, Rocket-League style. Nobody can type anything, so there is
    nothing to moderate, nothing to leak, and no way to be nasty in it. Phrases are
@@ -881,6 +1119,7 @@ function readableSyncError(e){
   const m=String(e?.message||e||'');
   if(/^network$|dynamically imported module|Failed to fetch|NetworkError|ERR_/i.test(m)) return "Can't reach the server. You're offline or the connection is blocked.";
   if(/Invalid login credentials/i.test(m)) return 'Wrong email or password.';
+  if(/Token has expired|invalid|otp_expired/i.test(m)) return 'That code has expired — send another.';
   if(/redirect|not allowed/i.test(m)) return "This address isn't in Supabase's allowed redirect list yet.";
   if(/For security purposes|rate/i.test(m)) return 'Too many tries — wait a minute and go again.';
   if(/User already registered|already been registered/i.test(m)) return 'That email already has an account — sign in instead.';
@@ -1094,8 +1333,8 @@ const Sync = {
   async _pull(){
     // 1. discover anyone who added US, so pairing works from either side
     const links=await api('/rest/v1/rpc/my_friends',{method:'POST',body:{}});
-    (links||[]).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{}};
-      else S.friends[p.id].name=p.display_name; });
+    (links||[]).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{},avatar:p.avatar||null};
+      else { S.friends[p.id].name=p.display_name; S.friends[p.id].avatar=p.avatar||S.friends[p.id].avatar||null; } });
     const ids=Object.keys(S.friends).filter(id=>!id.startsWith('demo-'));
     // drop challenge members we no longer know, now that the friend list is current
     S.challenges=chalList().map(c=>({...c,memberIds:(c.memberIds||[]).filter(id=>S.friends[id])})).filter(c=>c.memberIds.length);
@@ -1801,7 +2040,13 @@ function vFriends(){
     <ul class="list" style="margin-top:6px">${inbox.map(x=>`<li><span>${esc(x.text)}</span><span class="small ${x.coins?'':'muted'}" style="${x.coins?'color:var(--accent)':''}">${x.coins?`+${x.coins}`:fmt(x.date,{day:'numeric',month:'short'})}</span></li>`).join('')}</ul>
     <button class="btn sm block" id="clearinbox" style="margin-top:10px">Clear</button></div>`:''}
 
-  <div class="card" data-tour="code"><div class="row between"><div><div class="eyebrow">Your code</div><b style="font-size:1.4rem;letter-spacing:.08em">${m.code}</b>
+  <div class="card" data-tour="code"><div class="row" style="gap:12px;align-items:center;margin-bottom:12px">
+      <button class="avatarbtn" id="avpick" aria-label="Change your picture">${avatarHtml(m,'big')}<span class="avedit">${ICON.edit}</span></button>
+      <div class="grow"><b>${esc(m.name||'No name')}</b><p class="tiny muted">${avatarOf(m)?'Tap to change it':'Tap to build a character or add an image'}</p></div>
+      ${avatarOf(m)?`<button class="btn sm ghost" id="avclear">Remove</button>`:''}
+    </div>
+    <input type="file" id="avfile" accept="image/*" hidden>
+    <div class="row between"><div><div class="eyebrow">Your code</div><b style="font-size:1.4rem;letter-spacing:.08em">${m.code}</b>
       <p class="tiny muted" style="margin-top:4px">${esc(m.name||'No name')}${live?` · ${esc(S.me?.email||'')}`:''}</p></div>
     <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button></div></div>
     <div class="row" style="margin-top:12px"><input type="text" id="addcode" placeholder="Add a friend's code" maxlength="12" style="text-transform:uppercase"><button class="btn primary" id="addfriend">Add</button></div>
@@ -1824,7 +2069,7 @@ function vFriends(){
     const on=friendChallenge(f.id); const onQ=on?liveQuest(on):null;
     const others=onQ?onQ.members.filter(x=>x.id!==f.id):[];
     return `<div class="section"><h2>${esc(f.name)} <span class="muted">${f.title||''}</span></h2>
-    <button class="card friendcard" data-friend="${f.id}"><div class="row between" style="width:100%"><div class="row" style="gap:10px"><span class="avatar">${esc((f.name||'?')[0]).toUpperCase()}</span>
+    <button class="card friendcard" data-friend="${f.id}"><div class="row between" style="width:100%"><div class="row" style="gap:10px">${avatarHtml(f)}
       <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0} day streak · level ${f.level??1}</p></div></div>
       <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></button>
 
@@ -1848,7 +2093,7 @@ function vFriends(){
       <button class="btn sm ghost danger" data-unfriend="${f.id}">Remove</button></div>
     </div>`; }).join('')}
 
-  ${!fs.length?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak. One legendary at a time with one friend; rare and common can take two.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`:''}
+  ${!fs.length?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges. One legendary, one rare and two commons can run at once.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`:''}
   ${live&&inn?`<div class="card"><div class="row between"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Saves itself · last ${new Date(S.vaultAt).toLocaleString()}`:'Saves itself a few seconds after anything changes'}</p></div>
     <button class="btn sm ghost" id="signout">Sign out</button></div></div>`:''}`;
 }
@@ -1875,6 +2120,11 @@ function vShop(){
         <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
         <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
           al.maxed?`That is it ${al.period}` : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+  <div class="section"><h2>Looks <span class="muted">${looks().owned.length} of ${LOOK_ITEMS.length}</span></h2>
+    <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
+      <span class="avatar big img">${charSVG(myChar())}</span>
+      <div><b>Your character</b><p class="tiny muted">Hair, outfits, eyewear, headwear and backdrops — bought with coins.</p></div></div>
+      <span class="chev">›</span></button></div>
   <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
     ${S.locker.length?`<div class="card"><ul class="list">${[...S.locker].reverse().map(x=>`<li class="locker-item ${x.usedAt?'used':''}"><div><div>${esc(x.name)}</div><div class="tiny muted">${x.usedAt?'Used '+fmt(x.usedAt):'Bought '+fmt(x.boughtAt)}</div></div>${x.usedAt?'':`<button class="btn sm" data-use="${x.id}">Mark used</button>`}</li>`).join('')}</ul></div>`:'<div class="card"><p class="muted small">Things you buy land here.</p></div>'}</div>`;
 }
@@ -1986,6 +2236,8 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only, so there is nothing to moderate and no way to be unpleasant. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
     <p><b style="color:var(--fg)">Accounts.</b> The account exists only to back things up and to pair with people — everything works without one. Backing up happens by itself a few seconds after anything changes. Forgotten your password? Use the link on the sign-in screen and it emails you a reset. Lost the email as well? Your tasks, history and coins are still on this phone; sign up again with another email and this device carries on. You would lose the old backup and any pairing, nothing else.</p>
+    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture on Friends. Eight faces, six skin tones and eight hair colours are yours from the start, and they're separate choices — so any face can be any tone with any hair, including ginger. Cosmetics cost coins: hair styles, outfits, eyewear, headwear and backdrops. Nothing is limited to one kind of character; any item works on any of them.</p>
+    <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap the circle at the top of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to the initial.</p>
     <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
     <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons and your affirmation never leave this device.</p>
@@ -2043,6 +2295,26 @@ function bind(){
   const so=q('#signout'); if(so) so.onclick=()=>modal('<h2>Sign out?</h2><p class="muted">Your tasks and history stay on this device. Sign back in any time.</p>','Sign out',async()=>{ await Sync.signOut(); render(); toast('Signed out'); });
   const rn=q('#renameme'); if(rn) rn.onclick=()=>prompt$('Your name',me().name||'',async v=>{ await Sync.rename(v); render(); });
   const ci=q('#clearinbox'); if(ci) ci.onclick=()=>{ S.inbox=[]; save(); render(); };
+  const avp=q('#avpick'), avf=q('#avfile');
+  if(avp&&avf){ avp.onclick=()=>{
+      const o=overlay(`<div class="modal"><h2>Your picture</h2>
+        <div class="stack" style="margin-top:12px">
+          <button class="btn primary block" data-mkchar>Build a character</button>
+          <button class="btn block" data-mkphoto>Use an image</button>
+          ${avatarOf(me())?`<button class="btn block danger" data-mkclear>Remove the image</button>`:''}
+        </div>
+        <p class="tiny muted" style="margin-top:10px">An image overrides your character. Remove it to go back.</p>
+        <div style="display:flex;gap:10px;margin-top:16px"><button class="btn" style="flex:1" data-x>Cancel</button></div></div>`,'center');
+      o.querySelector('[data-x]').onclick=()=>close(o);
+      o.querySelector('[data-mkchar]').onclick=()=>{ close(o); charSheet(); };
+      o.querySelector('[data-mkphoto]').onclick=()=>{ close(o); avf.click(); };
+      const mc=o.querySelector('[data-mkclear]'); if(mc) mc.onclick=async()=>{ close(o); await setMyAvatar(null); render(); toast('Image removed'); };
+    };
+    avf.onchange=async()=>{ const f=avf.files?.[0]; if(!f) return;
+      try{ const d=await fileToAvatar(f); await setMyAvatar(d); haptic('success'); render(); toast('Picture set'); }
+      catch(e){ toast(e.message||'Could not use that image'); }
+      avf.value=''; }; }
+  const avc=q('#avclear'); if(avc) avc.onclick=async()=>{ await setMyAvatar(null); haptic(); render(); toast('Picture removed'); };
   const cc=q('#copycode'); if(cc) cc.onclick=()=>{ navigator.clipboard?.writeText(me().code); toast('Code copied'); };
   const af=q('#addfriend'); if(af){ const add=async()=>{ const v=q('#addcode').value.trim(); if(!v) return; af.disabled=true; af.textContent='…';
       try{ const f=await Sync.addByCode(v); haptic('success'); render(); toast(`${f.name} added`); }
@@ -2052,6 +2324,7 @@ function bind(){
     modal(`<h2>Remove ${esc(f.name)}?</h2><p class="muted">Your shared streak goes with it. If they're on a challenge, they leave it.</p>`,'Remove',async()=>{ await Sync.removeFriend(f.id); render(); toast('Removed'); },true); });
   const sc=q('#startchal'); if(sc) sc.onclick=()=>startChallengeModal();
   qa('[data-friend]').forEach(b=>b.onclick=()=>{ const f=S.friends[b.dataset.friend]; if(f) friendSheet(f); });
+  const ol=q('#openlooks'); if(ol) ol.onclick=()=>charSheet();
   qa('[data-crew]').forEach(b=>b.onclick=()=>chatView(b.dataset.crew));
   const nc=q('#newcrew'); if(nc) nc.onclick=()=>crewSheet(null);
   qa('[data-chest]').forEach(b=>b.onclick=()=>{ const win=claimChest(b.dataset.chest); if(win) chestScene(win); else toast('Not ready yet'); });
@@ -2464,7 +2737,7 @@ function friendStats(f){
 function friendSheet(f){
   const st=friendStats(f);
   const o=overlay(`<div class="sheet"><div class="grab"></div>
-    <div class="row" style="gap:12px;align-items:center"><span class="avatar big">${esc((f.name||'?')[0]).toUpperCase()}</span>
+    <div class="row" style="gap:12px;align-items:center">${avatarHtml(f,'big')}
       <div><h2 style="margin:0">${esc(f.name)}</h2><p class="tiny muted">${esc(f.title||'')} · level ${f.level??1} · code ${esc(f.code||'')}</p></div></div>
     <div class="stats" style="margin-top:14px">
       <div class="stat"><b>${st.chests}</b><span>chests together</span></div>
@@ -2486,19 +2759,43 @@ function friendSheet(f){
 }
 
 function forgotSheet(){
+  let sent=false;
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Forgotten your password</h2>
-    <p class="muted small" style="margin-bottom:12px">Put in the email you signed up with and we'll send a reset link. Open it on this phone and you'll come straight back here to set a new one.</p>
-    <input type="email" id="fpmail" placeholder="Email" autocomplete="email" value="${esc(S.me?.email||'')}">
-    <div class="card" style="margin-top:12px;padding:12px"><b class="small">If you've lost the email too</b>
-      <p class="tiny muted" style="margin-top:4px">Your tasks, history and coins are still on this phone — the account is only the backup. Sign up again with a different email and this device's data carries on as it is. You'd lose the old backup and any pairing, nothing else.</p></div>
-    <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Send link</button></div></div>`);
+    <div id="fpstep"></div>
+    <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Send it</button></div></div>`);
+  const step=o.querySelector('#fpstep'), ok=o.querySelector('[data-ok]');
+  const drawSend=()=>{
+    step.innerHTML=`<p class="muted small" style="margin-bottom:12px">Put in the email you signed up with. You'll get a message with a <b>6-digit code</b> and a link — either will do.</p>
+      <input type="email" id="fpmail" placeholder="Email" autocomplete="email" value="${esc(S.me?.email||'')}">
+      <div class="card" style="margin-top:12px;padding:12px"><b class="small">If you've lost the email too</b>
+        <p class="tiny muted" style="margin-top:4px">Your tasks, history and coins are still on this phone — the account is only the backup. Sign up again with another email and this device carries on as it is. You'd lose the old backup and any pairing, nothing else.</p></div>`;
+    ok.textContent='Send it';
+  };
+  const drawCode=email=>{
+    step.innerHTML=`<p class="muted small" style="margin-bottom:12px">Sent to <b>${esc(email)}</b>. Type the 6-digit code from the email below — that works whatever your phone does with the link.</p>
+      <input type="text" id="fpcode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code" style="letter-spacing:.3em;text-align:center;font-size:1.2rem">
+      <button class="btn ghost block" id="fpresend" style="margin-top:10px">Send another</button>
+      <p class="tiny muted" style="margin-top:10px">No code in the email, only a link? Add <b>{{ .Token }}</b> to the Reset Password template in Supabase → Authentication → Email Templates.</p>`;
+    ok.textContent='Check code';
+    o.querySelector('#fpresend').onclick=async()=>{ try{ await Sync.resetPassword(email); toast('Sent again'); }catch(e){ toast(e.message||'Could not send'); } };
+    setTimeout(()=>o.querySelector('#fpcode')?.focus(),100);
+  };
+  drawSend();
   o.querySelector('[data-x]').onclick=()=>close(o);
-  o.querySelector('[data-ok]').onclick=async()=>{
-    const em=o.querySelector('#fpmail').value.trim();
-    if(!em){ toast('Needs your email'); return; }
-    const btn=o.querySelector('[data-ok]'); btn.disabled=true; btn.textContent='…';
-    try{ await Sync.resetPassword(em); close(o); toast('Link sent — check your email'); }
-    catch(e){ btn.disabled=false; btn.textContent='Send link'; toast(e.message||'Could not send it'); }
+  ok.onclick=async()=>{
+    if(!sent){
+      const em=o.querySelector('#fpmail').value.trim();
+      if(!em){ toast('Needs your email'); return; }
+      ok.disabled=true; ok.textContent='…';
+      try{ await Sync.resetPassword(em); sent=em; ok.disabled=false; drawCode(em); toast('Check your email'); }
+      catch(e){ ok.disabled=false; ok.textContent='Send it'; toast(e.message||'Could not send it'); }
+      return;
+    }
+    const code=o.querySelector('#fpcode').value.trim();
+    if(code.length<6){ toast('Needs the 6-digit code'); return; }
+    ok.disabled=true; ok.textContent='…';
+    try{ await Sync.verifyRecoveryCode(sent,code); close(o); newPasswordGate(); }
+    catch(e){ ok.disabled=false; ok.textContent='Check code'; toast(e.message||'Code not accepted'); }
   };
 }
 function newPasswordGate(){
@@ -2523,6 +2820,55 @@ function newPasswordGate(){
       } else { if(blob) Sync.applyVault(blob); render(); toast('Password changed'); }
     }catch(e){ btn.disabled=false; btn.textContent='Save it'; toast(e.message||'Could not change it'); }
   };
+}
+
+function charSheet(){
+  let tab='face';
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <div class="charpreview" id="cprev"></div>
+    <div class="seg" id="ctabs" style="margin:12px 0"></div>
+    <div id="cbody"></div>
+    <div class="foot"><button class="btn" data-x>Done</button></div></div>`);
+  const TABS=[['face','Face'],['skin','Skin'],['hairc','Hair colour'],...SLOTS.map(([k,l])=>[k,l])];
+  const draw=()=>{
+    const a=myChar();
+    o.querySelector('#cprev').innerHTML=charSVG(a);
+    o.querySelector('#ctabs').innerHTML=TABS.map(([k,l])=>`<button class="${tab===k?'on':''}" data-ctab="${k}">${l}</button>`).join('');
+    const body=o.querySelector('#cbody');
+    if(tab==='face'){
+      body.innerHTML=`<div class="charGrid">${BASES.map(bs=>`<button class="charpick ${a.base===bs.id?'on':''}" data-cbase="${bs.id}">
+        ${charSVG({...a,base:bs.id},64)}</button>`).join('')}</div>
+        <p class="tiny muted" style="margin-top:8px">Eight faces. Skin and hair are separate, so any of them can be anyone.</p>`;
+    } else if(tab==='skin'){
+      body.innerHTML=`<div class="swatches">${TONES.map(t=>`<button class="sw ${a.tone===t.id?'on':''}" data-ctone="${t.id}" style="background:${t.hex}"></button>`).join('')}</div>`;
+    } else if(tab==='hairc'){
+      body.innerHTML=`<div class="swatches">${HAIR_COLOURS.map(c=>`<button class="sw ${a.hairCol===c.id?'on':''}" data-chair="${c.id}" style="background:${c.hex}"></button>`).join('')}</div>`;
+    } else {
+      const items=LOOK_ITEMS.filter(i=>i.slot===tab);
+      const optional=tab==='glasses'||tab==='hat';
+      body.innerHTML=`<div class="lookGrid">
+        ${optional?`<button class="lookpick ${!a[tab]?'on':''}" data-cequip="${tab}|"><span class="lookname">None</span></button>`:''}
+        ${items.map(i=>{const owned=ownsLook(i.id), on=a[tab]===i.id;
+          return `<button class="lookpick ${on?'on':''} ${owned?'':'locked'}" data-${owned?'cequip':'cbuy'}="${owned?tab+'|'+i.id:i.id}">
+            <span class="lookthumb">${charSVG({...a,[tab]:i.id},52)}</span>
+            <span class="lookname">${esc(i.name)}</span>
+            ${owned?'':`<span class="lookcost">${i.cost}</span>`}</button>`;}).join('')}
+      </div>
+      <p class="tiny muted" style="margin-top:8px">Locked items cost coins. Any item works on any character.</p>`;
+    }
+    o.querySelectorAll('[data-ctab]').forEach(b=>b.onclick=()=>{ tab=b.dataset.ctab; draw(); });
+    o.querySelectorAll('[data-cbase]').forEach(b=>b.onclick=()=>{ myChar().base=b.dataset.cbase; save(); haptic(); draw(); });
+    o.querySelectorAll('[data-ctone]').forEach(b=>b.onclick=()=>{ myChar().tone=b.dataset.ctone; save(); haptic(); draw(); });
+    o.querySelectorAll('[data-chair]').forEach(b=>b.onclick=()=>{ myChar().hairCol=b.dataset.chair; save(); haptic(); draw(); });
+    o.querySelectorAll('[data-cequip]').forEach(b=>b.onclick=()=>{ const [slot,id]=b.dataset.cequip.split('|');
+      myChar()[slot]=id||null; save(); haptic(); draw(); });
+    o.querySelectorAll('[data-cbuy]').forEach(b=>b.onclick=()=>{ const it=lookItem(b.dataset.cbuy);
+      modal(`<h2>Buy ${esc(it.name)}?</h2><p class="muted">${it.cost} coins. ${S.points.coins-it.cost} left after.</p>`,'Buy',()=>{
+        if(buyLook(it.id)){ myChar()[it.slot]=it.id; save(); haptic('success'); draw(); toast('Yours'); }
+        else toast(`${it.cost-S.points.coins} more coins needed`); }); });
+  };
+  draw();
+  o.querySelector('[data-x]').onclick=()=>{ close(o); render(); };
 }
 
 /* ---------- Chat thread ---------- */
@@ -2572,7 +2918,8 @@ function chatView(crewId){
         const mine=m.from==='me';
         const showName=!mine && (i===0 || ms[i-1].from!==m.from);
         if(m.kind==='system') return `<p class="msgsys">${esc(m.code)}</p>`;
-        return `<div class="msgrow ${mine?'mine':''}">${showName?`<span class="msgwho">${esc(nameOf(m.from))}</span>`:''}
+        const who=mine?null:S.friends[m.from];
+        return `<div class="msgrow ${mine?'mine':''}">${showName?`<span class="msgwho">${who?avatarHtml(who,'mini'):''}${esc(nameOf(m.from))}</span>`:''}
           <div class="msg ${m.kind==='emote'?'emote':''}">${m.kind==='emote'?esc(m.code):esc(PHRASE_MAP[m.code]||'…')}</div></div>`;
       }).join(''):`<p class="tiny muted" style="text-align:center;padding:26px 0">Nothing said yet. Pick a phrase below.</p>`}
     </div>
