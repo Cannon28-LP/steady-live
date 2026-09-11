@@ -523,6 +523,31 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .nbody:focus{box-shadow:none}
 .noterow b{display:block;font-size:1rem}
 .noterow p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.avatar.img{padding:0;overflow:hidden;background:var(--surface2)}
+.avatar.img img{width:100%;height:100%;object-fit:cover;display:block}
+.avatar.mini{width:20px;height:20px;font-size:.66rem;margin-right:6px;vertical-align:middle;display:inline-grid}
+.avatarbtn{position:relative;flex:none;border-radius:50%}
+.avatarbtn:active{transform:scale(.95)}
+.avatarbtn .avedit{position:absolute;right:-2px;bottom:-2px;width:22px;height:22px;border-radius:50%;
+  background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;border:2px solid var(--surface)}
+.avatarbtn .avedit svg{width:11px;height:11px}
+.msgwho{display:inline-flex;align-items:center}
+.charsvg{width:100%;height:100%;display:block}
+.charpreview{width:120px;height:120px;margin:0 auto;border-radius:50%;overflow:hidden;background:var(--surface2)}
+.charGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.charpick{border-radius:50%;overflow:hidden;aspect-ratio:1;background:var(--surface2);border:2px solid transparent;padding:0}
+.charpick.on{border-color:var(--accent)}
+.charpick svg{width:100%;height:100%}
+.lookGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.lookpick{position:relative;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface2);
+  padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:5px}
+.lookpick.on{border-color:var(--accent);background:var(--accent-soft)}
+.lookpick.locked{opacity:.72}
+.lookthumb{width:52px;height:52px;border-radius:50%;overflow:hidden;background:var(--surface)}
+.lookthumb svg{width:100%;height:100%}
+.lookname{font-size:.72rem;line-height:1.2;text-align:center;color:var(--fg2)}
+.lookcost{position:absolute;top:4px;right:5px;font-size:.66rem;font-weight:700;color:var(--accent);
+  background:var(--surface);border-radius:8px;padding:1px 5px}
 canvas#fx{position:fixed;inset:0;pointer-events:none;z-index:250}
 .sr{position:absolute;left:-9999px}
 
