@@ -46,9 +46,9 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.v3.js?b=13"/>
-<link rel="preload" href="./app.v3.css?b=13" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.v3.css?b=13"/></noscript>
+<link rel="modulepreload" href="./app.v3.js?b=15"/>
+<link rel="preload" href="./app.v3.css?b=15" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v3.css?b=15"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
@@ -83,7 +83,7 @@ window.__steadyBootTimer = setTimeout(function(){
 }, 8000);
 </script>
 <script type="module">
-import { bootSteady } from './app.v3.js?b=13';
+import { bootSteady } from './app.v3.js?b=15';
 const clear = () => { const b=document.getElementById('boot');
   if(b){ b.classList.add('gone'); setTimeout(()=>b.remove(),350); } };
 try { bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear(); }

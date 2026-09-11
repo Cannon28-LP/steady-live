@@ -664,17 +664,22 @@ const BASES = [
 ];
 /* Cosmetics. cost 0 = yours from the start. */
 const LOOK_ITEMS = [
-  // hair
-  {id:'h-crop',   slot:'hair', name:'Cropped',        cost:0},
-  {id:'h-short',  slot:'hair', name:'Short',          cost:0},
-  {id:'h-long',   slot:'hair', name:'Long',           cost:0},
-  {id:'h-bob',    slot:'hair', name:'Bob',            cost:0},
-  {id:'h-pony',   slot:'hair', name:'Ponytail',       cost:80},
-  {id:'h-bun',    slot:'hair', name:'Top bun',        cost:80},
-  {id:'h-curls',  slot:'hair', name:'Curls',          cost:110},
-  {id:'h-braids', slot:'hair', name:'Braids',         cost:110},
-  {id:'h-quiff',  slot:'hair', name:'Quiff',          cost:90},
-  {id:'h-buzz',   slot:'hair', name:'Buzzed',         cost:60},
+  // hair — every style works on every character
+  {id:'h-crop',    slot:'hair', name:'Short crop',   cost:0},
+  {id:'h-side',    slot:'hair', name:'Side part',    cost:0},
+  {id:'h-long',    slot:'hair', name:'Long',         cost:0},
+  {id:'h-bob',     slot:'hair', name:'Bob',          cost:0},
+  {id:'h-buzz',    slot:'hair', name:'Buzzed',       cost:50},
+  {id:'h-quiff',   slot:'hair', name:'Quiff',        cost:80},
+  {id:'h-undercut',slot:'hair', name:'Undercut',     cost:90},
+  {id:'h-fringe',  slot:'hair', name:'Fringe',       cost:80},
+  {id:'h-wavy',    slot:'hair', name:'Wavy',         cost:100},
+  {id:'h-pony',    slot:'hair', name:'Ponytail',     cost:90},
+  {id:'h-bun',     slot:'hair', name:'Top bun',      cost:90},
+  {id:'h-braids',  slot:'hair', name:'Braids',       cost:110},
+  {id:'h-space',   slot:'hair', name:'Space buns',   cost:110},
+  {id:'h-curls',   slot:'hair', name:'Curls',        cost:110},
+  {id:'h-afro',    slot:'hair', name:'Afro',         cost:110},
   // outfits
   {id:'o-tee',    slot:'outfit', name:'T-shirt',      cost:0,   col:'#3f8f83'},
   {id:'o-hoodie', slot:'outfit', name:'Hoodie',       cost:0,   col:'#4a5568'},
@@ -711,7 +716,7 @@ function looks(){
 }
 function myChar(){
   const L=looks();
-  if(!L.av) L.av={base:'b1',tone:'t2',hairCol:'c-brown',hair:'h-short',outfit:'o-tee',glasses:null,hat:null,backdrop:'bg-plain'};
+  if(!L.av) L.av={base:'b1',tone:'t2',hairCol:'c-brown',hair:'h-crop',outfit:'o-tee',glasses:null,hat:null,backdrop:'bg-plain'};
   return L.av;
 }
 const ownsLook = id => !id || looks().owned.includes(id);
@@ -723,22 +728,57 @@ function buyLook(id){
 
 /* ---------- Drawing one ---------- */
 function hairPath(id,c){
+  const dark=`<path d="" fill="none"/>`;
   switch(id){
-    case 'h-buzz':   return `<path d="M28 42a22 22 0 0 1 44 0c0-14-9-22-22-22s-22 8-22 22z" fill="${c}" opacity=".92"/>`;
-    case 'h-crop':   return `<path d="M27 44c-1-16 9-25 23-25s24 9 23 25c-3-9-8-13-23-13s-20 4-23 13z" fill="${c}"/>`;
-    case 'h-short':  return `<path d="M26 46c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>`;
-    case 'h-quiff':  return `<path d="M27 45c-2-19 8-29 23-29 12 0 20 6 23 16-6-4-10-2-13 2-5-7-24-6-33 11z" fill="${c}"/>`;
-    case 'h-long':   return `<path d="M25 46c-2-19 10-29 25-29s27 10 25 29v26c-4 2-7-2-7-10 0-14-3-20-18-20s-18 6-18 20c0 8-3 12-7 10z" fill="${c}"/>`;
-    case 'h-bob':    return `<path d="M25 46c-2-19 10-29 25-29s27 10 25 29v10c-4 1-6-1-6-7 0-13-4-18-19-18s-19 5-19 18c0 6-2 8-6 7z" fill="${c}"/>`;
-    case 'h-pony':   return `<path d="M26 45c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
-                             <path d="M72 38c9 2 13 10 12 20-1 9-6 13-10 12 4-8 4-18-4-26z" fill="${c}"/>`;
-    case 'h-bun':    return `<path d="M26 45c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
-                             <circle cx="50" cy="13" r="9" fill="${c}"/>`;
-    case 'h-curls':  return `<path d="M26 46c-2-19 10-29 24-29s26 10 24 29c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
-                             ${[30,40,50,60,70].map((x,i)=>`<circle cx="${x}" cy="${20+(i%2)*4}" r="8" fill="${c}"/>`).join('')}`;
-    case 'h-braids': return `<path d="M26 45c-2-18 9-28 24-28s26 10 24 28c-2-12-9-17-24-17s-22 5-24 17z" fill="${c}"/>
-                             <path d="M26 40c-6 6-7 18-4 30 3-2 6-4 7-8-3-8-3-16-3-22z" fill="${c}"/>
-                             <path d="M74 40c6 6 7 18 4 30-3-2-6-4-7-8 3-8 3-16 3-22z" fill="${c}"/>`;
+    /* --- close crops --- */
+    case 'h-buzz':
+      return `<path d="M24 44c0-16 11-25 26-25s26 9 26 25c-2-4-4-6-6-7-3-8-10-12-20-12s-17 4-20 12c-2 1-4 3-6 7z" fill="${c}" opacity=".95"/>`;
+    case 'h-crop':
+      return `<path d="M23 45c-1-17 10-27 27-27s28 10 27 27c-2-6-5-10-8-12-4-6-11-9-19-9s-15 3-19 9c-3 2-6 6-8 12z" fill="${c}"/>
+              <path d="M34 26c8-5 24-5 32 0-6-2-26-2-32 0z" fill="#000" opacity=".12"/>`;
+    case 'h-side':
+      return `<path d="M23 46c-2-18 10-29 27-29s28 11 27 29c-2-8-5-13-9-16-6 8-24 10-33 3-3 3-5 7-12 13z" fill="${c}"/>`;
+    case 'h-quiff':
+      return `<path d="M24 46c-2-19 9-29 26-29 12 0 21 6 25 15-5-2-9 0-12 4-4-9-27-10-39 10z" fill="${c}"/>
+              <path d="M40 20c8-8 22-6 28 2-8-4-20-5-28-2z" fill="${c}"/>`;
+    case 'h-undercut':
+      return `<path d="M26 34c4-11 13-17 24-17s20 6 24 17c-6-6-14-9-24-9s-18 3-24 9z" fill="${c}"/>
+              <path d="M24 46c1-6 3-10 5-13 10-6 32-6 42 0 2 3 4 7 5 13-3-9-11-13-26-13s-23 4-26 13z" fill="${c}" opacity=".45"/>`;
+    /* --- volume --- */
+    case 'h-curls':
+      return `${[[32,28],[42,20],[50,17],[58,20],[68,28],[26,38],[74,38],[36,16],[64,16]]
+        .map(([x,y])=>`<circle cx="${x}" cy="${y}" r="11" fill="${c}"/>`).join('')}
+        <path d="M23 46c-2-19 10-30 27-30s29 11 27 30c-3-13-11-19-27-19s-24 6-27 19z" fill="${c}"/>`;
+    case 'h-afro':
+      return `<ellipse cx="50" cy="26" rx="33" ry="25" fill="${c}"/>
+              <path d="M22 44c2-12 12-19 28-19s26 7 28 19c-4-9-13-14-28-14s-24 5-28 14z" fill="${c}"/>`;
+    /* --- longer --- */
+    case 'h-long':
+      return `<path d="M21 48c-3-21 11-32 29-32s32 11 29 32v30c-5 3-9-2-9-12 0-17-4-24-20-24s-20 7-20 24c0 10-4 15-9 12z" fill="${c}"/>
+              <path d="M32 26c10-7 26-7 36 0-8-4-28-4-36 0z" fill="#000" opacity=".12"/>`;
+    case 'h-wavy':
+      return `<path d="M21 48c-3-21 11-32 29-32s32 11 29 32c-1 12 2 18-2 26-4-3-5-9-4-16-1-16-5-22-23-22s-22 6-23 22c1 7 0 13-4 16-4-8-1-14-2-26z" fill="${c}"/>`;
+    case 'h-bob':
+      return `<path d="M21 48c-3-20 11-31 29-31s32 11 29 31v6c-1 6-6 8-8 3-1-14-5-20-21-20s-20 6-21 20c-2 5-7 3-8-3z" fill="${c}"/>
+              <path d="M30 30c6-8 34-8 40 0-8-5-32-5-40 0z" fill="#000" opacity=".14"/>`;
+    case 'h-fringe':
+      return `<path d="M21 47c-2-20 11-31 29-31s31 11 29 31v22c-4 3-8-1-8-10 0-16-4-22-21-22s-21 6-21 22c0 9-4 13-8 10z" fill="${c}"/>
+              <path d="M28 33c5-9 39-9 44 0 1 4 1 7 0 9-6-6-38-6-44 0-1-2-1-5 0-9z" fill="${c}"/>`;
+    /* --- tied back --- */
+    case 'h-pony':
+      return `<path d="M23 45c-2-19 10-29 27-29s29 10 27 29c-3-13-11-18-27-18s-24 5-27 18z" fill="${c}"/>
+              <path d="M74 34c10 3 15 12 13 23-2 10-8 15-13 13 6-10 6-24 0-36z" fill="${c}"/>
+              <ellipse cx="73" cy="34" rx="5" ry="4" fill="#000" opacity=".18"/>`;
+    case 'h-bun':
+      return `<path d="M23 45c-2-19 10-29 27-29s29 10 27 29c-3-13-11-18-27-18s-24 5-27 18z" fill="${c}"/>
+              <circle cx="50" cy="10" r="10" fill="${c}"/>
+              <ellipse cx="50" cy="19" rx="8" ry="3" fill="#000" opacity=".18"/>`;
+    case 'h-braids':
+      return `<path d="M23 45c-2-19 10-29 27-29s29 10 27 29c-3-13-11-18-27-18s-24 5-27 18z" fill="${c}"/>
+              ${[24,76].map(x=>`<g>${[0,1,2,3].map(i=>`<ellipse cx="${x}" cy="${46+i*9}" rx="6" ry="5.5" fill="${c}"/>`).join('')}</g>`).join('')}`;
+    case 'h-space':
+      return `<path d="M23 45c-2-19 10-29 27-29s29 10 27 29c-3-13-11-18-27-18s-24 5-27 18z" fill="${c}"/>
+              <circle cx="22" cy="34" r="9" fill="${c}"/><circle cx="78" cy="34" r="9" fill="${c}"/>`;
     default: return '';
   }
 }
@@ -1047,10 +1087,15 @@ function startChallenge(tier,questId,memberIds,crewId){
   const draft={id:uid(),questId,tier,startedAt:today(),memberIds:ids,crewId:crewId||null};
   if(!slotOk(draft,S.challenges)) return null;
   S.challenges=chalList().concat(draft); save();
-  if(crewId) msgsOf(crewId).push({id:uid(),from:'me',kind:'system',code:`${TIERS_C[tier].label} challenge started: ${def.name}`,at:Date.now()});
-  save(); return draft;
+  if(crewId){
+    msgsOf(crewId).push({id:uid(),from:'me',kind:'system',code:`${TIERS_C[tier].label} challenge started: ${def.name}`,at:Date.now()});
+    Sync.sendMessage(crewId,'system',`${TIERS_C[tier].label} challenge started: ${def.name}`).catch(()=>{});
+  }
+  save();
+  Sync.pushChallenge(draft).catch(()=>{});
+  return draft;
 }
-function dropChallenge(id){
+function dropChallenge(id){ Sync.removeChallenge(id).catch(()=>{});
   S.challenges=chalList().filter(c=>c.id!==id); save();
 }
 function pullFriendFromChallenges(fid){
@@ -1386,6 +1431,50 @@ const Sync = {
       await api('/rest/v1/crew_members?on_conflict=crew_id,user_id',{method:'POST',body:rows,
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
       S.syncError=null; save();
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  /* Chats someone else made you part of. Without this, only the person who
+     created the chat ever knew it existed. */
+  async pullCrews(){
+    if(!this.live()||!this.signedIn()) return;
+    try{
+      const rows=await api('/rest/v1/rpc/my_crews',{method:'POST',body:{}});
+      (rows||[]).forEach(r=>{
+        const others=(r.members||[]).filter(id=>id!==S.me.id);
+        const have=crewList().find(c=>c.id===r.id);
+        if(have){ have.name=r.name||have.name; have.memberIds=others; }
+        else { crewList().push({id:r.id,name:r.name||'',memberIds:others,createdAt:Date.now()}); S.msgs[r.id]=S.msgs[r.id]||[]; }
+      });
+      save();
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  /* Challenges are shared too — the other side needs the same row. */
+  async pushChallenge(ch){
+    if(!this.live()||!this.signedIn()) return;
+    try{ await api('/rest/v1/coop?on_conflict=id',{method:'POST',
+      body:{id:ch.id,owner_id:S.me.id,crew_id:ch.crewId||null,tier:ch.tier,
+            quest_id:ch.questId,started_at:ch.startedAt,
+            members:[S.me.id,...(ch.memberIds||[])]},
+      headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+      S.syncError=null; save();
+    }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  async removeChallenge(id){
+    if(!this.live()||!this.signedIn()) return;
+    try{ await api(`/rest/v1/coop?id=eq.${id}`,{method:'DELETE',headers:{Prefer:'return=minimal'}}); }catch(e){}
+  },
+  async pullChallenges(){
+    if(!this.live()||!this.signedIn()) return;
+    try{
+      const rows=await api('/rest/v1/rpc/my_coop',{method:'POST',body:{}});
+      const mine=chalList();
+      (rows||[]).forEach(r=>{
+        if(mine.some(c=>c.id===r.id)) return;
+        const others=(r.members||[]).filter(id=>id!==S.me.id);
+        mine.push({id:r.id,questId:r.quest_id,tier:r.tier,startedAt:r.started_at,
+          memberIds:others,crewId:r.crew_id||null});
+      });
+      S.challenges=mine; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
   },
   async pullMessages(){
@@ -2022,7 +2111,8 @@ function vFriends(){
   const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div></div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `
-    <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
+    ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Check for updates</button>`:''}
+  <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
       <div class="stack">
         ${authState.mode==='up'?`<input type="text" id="auname" placeholder="Your name" maxlength="24" value="${esc(m.name||'')}">`:''}
         <input type="email" id="auemail" placeholder="Email" autocomplete="email">
@@ -2040,6 +2130,7 @@ function vFriends(){
     <ul class="list" style="margin-top:6px">${inbox.map(x=>`<li><span>${esc(x.text)}</span><span class="small ${x.coins?'':'muted'}" style="${x.coins?'color:var(--accent)':''}">${x.coins?`+${x.coins}`:fmt(x.date,{day:'numeric',month:'short'})}</span></li>`).join('')}</ul>
     <button class="btn sm block" id="clearinbox" style="margin-top:10px">Clear</button></div>`:''}
 
+  ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Check for updates</button>`:''}
   <div class="card" data-tour="code"><div class="row" style="gap:12px;align-items:center;margin-bottom:12px">
       <button class="avatarbtn" id="avpick" aria-label="Change your picture">${avatarHtml(m,'big')}<span class="avedit">${ICON.edit}</span></button>
       <div class="grow"><b>${esc(m.name||'No name')}</b><p class="tiny muted">${avatarOf(m)?'Tap to change it':'Tap to build a character or add an image'}</p></div>
@@ -2324,6 +2415,9 @@ function bind(){
     modal(`<h2>Remove ${esc(f.name)}?</h2><p class="muted">Your shared streak goes with it. If they're on a challenge, they leave it.</p>`,'Remove',async()=>{ await Sync.removeFriend(f.id); render(); toast('Removed'); },true); });
   const sc=q('#startchal'); if(sc) sc.onclick=()=>startChallengeModal();
   qa('[data-friend]').forEach(b=>b.onclick=()=>{ const f=S.friends[b.dataset.friend]; if(f) friendSheet(f); });
+  const sn2=q('#syncnow'); if(sn2) sn2.onclick=async()=>{ sn2.textContent='…';
+    await Sync.pull(); await Sync.pullCrews(); await Sync.pullChallenges(); await Sync.pullMessages();
+    render(); toast(S.syncError?S.syncError:'Up to date'); };
   const ol=q('#openlooks'); if(ol) ol.onclick=()=>charSheet();
   qa('[data-crew]').forEach(b=>b.onclick=()=>chatView(b.dataset.crew));
   const nc=q('#newcrew'); if(nc) nc.onclick=()=>crewSheet(null);
@@ -2334,7 +2428,7 @@ function bind(){
   });
   qa('[data-cheer]').forEach(b=>b.onclick=async()=>{ const f=S.friends[b.dataset.cheer]; const kind=b.dataset.kind;
     b.disabled=true; await Sync.cheer(f,kind); haptic('success'); render();
-    toast(S.syncError?'Could not send':(kind==='cheer'?`Cheer sent to ${f.name}`:`Nudge sent to ${f.name}`)); });
+    toast(S.syncError ? S.syncError : (kind==='cheer'?`Cheer sent to ${f.name}`:`Nudge sent to ${f.name}`)); });
   qa('[data-recap]').forEach(b=>b.onclick=()=>{ const key=b.dataset.recap;
     const r=S.recaps.find(x=>String(x.week||x.n)===key); if(r) recapView(r,false); });
   qa('[data-sub]').forEach(b=>b.onclick=()=>{progState.sub=b.dataset.sub;haptic();render();window.scrollTo({top:0});});
@@ -3151,7 +3245,12 @@ function scheduleBackup(){ clearTimeout(_bkT); _bkT=setTimeout(()=>Sync.backup()
 function friendsTick(){
   if(Sync.live()&&Sync.signedIn()) scheduleBackup();
   if(!friendList().length && !Sync.signedIn()) return;
-  Sync.pull().then(()=>Sync.pullMessages()).then(()=>{ if(tab==='friends') render(); }).catch(()=>{});
+  Sync.pull()
+    .then(()=>Sync.pullCrews())
+    .then(()=>Sync.pullChallenges())
+    .then(()=>Sync.pullMessages())
+    .then(()=>{ if(tab==='friends'||tab==='shop') render(); })
+    .catch(()=>{});
   Sync.push().catch(()=>{});
 }
 function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); }
