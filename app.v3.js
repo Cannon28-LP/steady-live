@@ -2656,9 +2656,16 @@ function noteEditor(id){
 function timeSheet(timed){
   const mins={}; timed.forEach(t=>mins[t.id]=t.target);
   const room=()=>OT_DAY_CAP-overtimeToday();
-  const opts=t=>[t.target,t.target+5,t.target+10,t.target+15,t.target+30];
-  const card=t=>`<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
-    <div class="timerow">${opts(t).map((m,i)=>`<button class="chip ${i===0?'on':''}" data-m="${m}">${m}m${i===0?'':''}</button>`).join('')}<button class="chip add" data-other>Other</button></div></div>`;
+  const opts=t=>{
+    const tg=t.target;
+    const under=[Math.max(1,Math.round(tg/2)), Math.max(1,tg-10), Math.max(1,tg-5)]
+      .filter(v=>v<tg).filter((v,i,a)=>a.indexOf(v)===i).sort((a,b)=>a-b);
+    const over=[tg+5,tg+10,tg+15,tg+30];
+    return [...under, tg, ...over];
+  };
+  const card=t=>{ const list=opts(t), ti=list.indexOf(t.target);
+    return `<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
+    <div class="timerow">${list.map((m,i)=>`<button class="chip ${i===ti?'on':''}" data-m="${m}">${m}m</button>`).join('')}<button class="chip add" data-other>Other</button></div></div>`; };
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>How long did ${timed.length===1?'it':'each'} take?</h2><p class="muted small" style="margin-bottom:14px">Still counts as done either way — a short session just pays less of the coins. Over the target pays +1 per ${OT_PER} minutes on top.</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot"><button class="btn" data-skip>Skip</button><button class="btn primary" data-ok>Mark done</button></div></div>`);
   const refresh=()=>{ let left=room();
     timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
@@ -2689,16 +2696,18 @@ function promptNum(titleTxt,val,fn){
 function missGate(){
   const pend=S.pendingMisses; if(!pend.length) return false;
   const reasons=[...DEFAULT_REASONS,...S.customReasons]; const picked={};
-  const item=(p,i)=>{const t=S.tasks.find(x=>x.id===p.taskId); return `<div class="card" style="padding:12px" data-miss="${i}"><div class="row between"><b>${esc(t?.name||'Task')}</b><span class="tiny muted">${fmt(p.date)}</span></div><div class="chips" style="margin-top:10px">${reasons.map(r=>`<button class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-custom>+ Other</button></div><input type="text" placeholder="Anything to add? (optional)" style="margin-top:10px;padding:9px 12px" data-c maxlength="120"></div>`;};
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${pend.length===1?'One thing slipped':pend.length+' things slipped'}</h2><p class="muted small" style="margin-bottom:14px">No points lost. Just say why — patterns show up in Progress.</p>${pend.length>1?`<div class="chips" style="margin-bottom:12px"><span class="tiny muted" style="align-self:center">Same for all:</span>${reasons.map(r=>`<button class="chip" data-all="${esc(r)}">${esc(r)}</button>`).join('')}</div>`:''}<div class="stack">${pend.map(item).join('')}</div><div class="foot"><button class="btn primary" data-ok disabled>Save</button></div></div>`);
+  const item=(p,i)=>{const t=S.tasks.find(x=>x.id===p.taskId); return `<div class="card" style="padding:12px" data-miss="${i}"><div class="row between"><b>${esc(t?.name||'Task')}</b><span class="tiny muted">${fmt(p.date)}</span></div><div class="chips" style="margin-top:10px">${reasons.map(r=>`<button class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-custom>+ Other</button></div><input type="text" placeholder="Or type your own reason" style="margin-top:10px;padding:9px 12px" data-c maxlength="120"></div>`;};
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${pend.length===1?'One thing slipped':pend.length+' things slipped'}</h2><p class="muted small" style="margin-bottom:14px">No points lost. Pick a chip or type your own — patterns show up in Progress.</p>${pend.length>1?`<div class="chips" style="margin-bottom:12px"><span class="tiny muted" style="align-self:center">Same for all:</span>${reasons.map(r=>`<button class="chip" data-all="${esc(r)}">${esc(r)}</button>`).join('')}</div>`:''}<div class="stack">${pend.map(item).join('')}</div><div class="foot"><button class="btn primary" data-ok disabled>Save</button></div></div>`);
   const okb=o.querySelector('[data-ok]');
-  const check=()=>{okb.disabled=Object.keys(picked).length<pend.length;};
+  const reasonOf=card=>{ const i=card.dataset.miss; const typed=card.querySelector('[data-c]')?.value.trim()||''; return (picked[i]||typed||'').trim(); };
+  const check=()=>{ okb.disabled=[...o.querySelectorAll('[data-miss]')].some(card=>!reasonOf(card)); };
   o.querySelectorAll('[data-miss]').forEach(card=>{ const i=card.dataset.miss;
-    card.querySelectorAll('[data-r]').forEach(c=>c.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');picked[i]=c.dataset.r;haptic();check();});
-    card.querySelector('[data-custom]').onclick=()=>prompt$('What got in the way?','',v=>{ if(!S.customReasons.includes(v)){S.customReasons.push(v);save();} const b=document.createElement('button');b.className='chip on';b.textContent=v;b.dataset.r=v;b.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));b.classList.add('on');picked[i]=v;check();}; card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); card.querySelector('[data-custom]').before(b); picked[i]=v; check(); });
+    card.querySelectorAll('[data-r]').forEach(c=>c.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');picked[i]=c.dataset.r; haptic(); check();});
+    const inp=card.querySelector('[data-c]'); if(inp) inp.oninput=()=>{ if(inp.value.trim()){ card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); delete picked[i]; } check(); };
+    card.querySelector('[data-custom]').onclick=()=>prompt$('What got in the way?','',v=>{ if(!v) return; if(!S.customReasons.includes(v)){S.customReasons.push(v);save();} const b=document.createElement('button');b.className='chip on';b.textContent=v;b.dataset.r=v;b.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));b.classList.add('on');picked[i]=v; if(inp) inp.value=''; check();}; card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); card.querySelector('[data-custom]').before(b); picked[i]=v; if(inp) inp.value=''; check(); });
   });
-  o.querySelectorAll('[data-all]').forEach(a=>a.onclick=()=>{ o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on')); a.classList.add('on'); o.querySelectorAll('[data-miss]').forEach(card=>{ card.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x.dataset.r===a.dataset.all)); picked[card.dataset.miss]=a.dataset.all; }); haptic(); check(); });
-  okb.onclick=()=>{ o.querySelectorAll('[data-miss]').forEach(card=>{const i=card.dataset.miss;const p=pend[i];const e=day(p.date).tasks[p.taskId]; if(e){e.reason=picked[i];const c=card.querySelector('[data-c]').value.trim();if(c)e.comment=c;}}); S.pendingMisses=[]; save(); close(o); haptic(); render(); toast('Noted. Fresh day.'); };
+  o.querySelectorAll('[data-all]').forEach(a=>a.onclick=()=>{ o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on')); a.classList.add('on'); o.querySelectorAll('[data-miss]').forEach(card=>{ card.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x.dataset.r===a.dataset.all)); picked[card.dataset.miss]=a.dataset.all; const inp=card.querySelector('[data-c]'); if(inp) inp.value=''; }); haptic(); check(); });
+  okb.onclick=()=>{ o.querySelectorAll('[data-miss]').forEach(card=>{const i=card.dataset.miss;const p=pend[i];const e=day(p.date).tasks[p.taskId]; if(e){ const reason=reasonOf(card); e.reason=reason; if(reason && !DEFAULT_REASONS.includes(reason) && !S.customReasons.includes(reason)){ S.customReasons.push(reason); } }}); S.pendingMisses=[]; save(); close(o); haptic(); render(); toast('Noted. Fresh day.'); };
   return true;
 }
 
