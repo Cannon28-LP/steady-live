@@ -1728,7 +1728,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:''}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview'};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:''}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -1739,7 +1739,7 @@ const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   coin:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9.5A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5.5 1.5" stroke-linecap="round"/></svg>',
   flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
 
-function setTab(t){ endTour(true); rollTabAff(); tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+function setTab(t){ if(t!=='progress') progState.taskId=null; endTour(true); rollTabAff(); tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
 function render(){
   if(!$app || !document.body.contains($app)) $app=document.getElementById('app');
   if(!$app) return;
@@ -1884,11 +1884,17 @@ const DELTA=(now,prev)=>{ if(prev===null||prev===undefined) return ''; const d=n
 
 function vProgress(){
   const L=level();
-  const sub=progState.sub||'overview';
+  if(progState.taskId){
+    const t=S.tasks.find(x=>x.id===progState.taskId);
+    if(!t){ progState.taskId=null; }
+    else return pTaskDetail(t);
+  }
+  const sub=progState.sub==='calendar'?'overview':(progState.sub||'overview');
+  progState.sub=sub;
   const head=`<div class="head"><div><div class="eyebrow">${S.points.xp} XP · level ${L.L}</div><h1>Progress</h1></div></div>
     ${affirmationLine()}
-    <div class="seg" style="margin-bottom:14px">${[['overview','Overview'],['calendar','Calendar'],['tasks','Tasks']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-sub="${v}">${l}</button>`).join('')}</div>`;
-  return head + ({overview:pOverview,calendar:pCalendar,tasks:pTasks})[sub]();
+    <div class="seg" style="margin-bottom:14px">${[['overview','Overview'],['tasks','Tasks']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-sub="${v}">${l}</button>`).join('')}</div>`;
+  return head + ({overview:pOverview,tasks:pTasks})[sub]();
 }
 
 function pOverview(){
@@ -1930,6 +1936,10 @@ function pOverview(){
     ${S.recaps.slice().reverse().map(r=>`<button class="noterow" data-recap="${r.week||r.n}" style="padding:12px 0"><div class="grow"><b>${esc(r.name)}${r.weekly?' <span class="tiny muted">week</span>':''}</b><p class="tiny muted">${fmt(r.at,{day:'numeric',month:'short',year:'numeric'})} · ${r.rate}% · ${r.cleared} cleared${r.missTotal?` · ${r.missTotal} missed`:''}</p></div><span class="chev">›</span></button>`).join('')}</div>`:
     `<div class="card"><div class="row between"><div><b class="small">Next recap</b><p class="tiny muted">${(()=>{const nx=MILESTONES.find(([n])=>daysSinceStart()<n); return nx?`${nx[0]-daysSinceStart()} day${nx[0]-daysSinceStart()===1?'':'s'} to ${nx[1].toLowerCase()}`:'All milestones reached';})()}</p></div>
       <span class="pill">day ${daysSinceStart()}</span></div></div>`}
+  <div class="card"><div class="row between" style="margin-bottom:8px"><b class="small">Note for today</b><span class="tiny muted">${fmt(today(),{weekday:'short',day:'numeric',month:'short'})}</span></div>
+    <textarea id="daynote" placeholder="Anything about today…" rows="2">${esc(S.days[today()]?.note||'')}</textarea>
+    <p class="tiny muted" style="margin-top:6px">Day notes used to live on the calendar. They’re here now — and also on a day you tap inside a task.</p></div>
+
   <details class="acc"><summary>Records</summary><div class="body"><ul class="list">
     <li><span>Best login streak</span><b>${rec.bestLogin} d</b></li>
     <li><span>Longest run of cleared days</span><b>${rec.perfectRun} d</b></li>
@@ -1963,17 +1973,56 @@ function pCalendar(){
 function pTasks(){
   const list=S.tasks.filter(t=>!t.archived).map(t=>({t,s:strengthOf(t)})).sort((a,b)=>b.s-a.s);
   if(!list.length) return '<div class="card empty"><b>No tasks yet</b>Add some in Settings and this fills up.</div>';
-  return list.map(({t,s})=>{ const ts=taskStats(t);
-    return `<details class="card taskcard" ${taskState.month[t.id]?'open':''}><summary><div class="grow"><div class="row between"><b>${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}</b><span class="small ${s<50?'muted':''}" style="${s>=50?'color:var(--accent)':''}">${s}%</span></div>
+  return `<p class="tiny muted" style="margin:0 2px 10px">Tap a task for its history and calendar.</p>` + list.map(({t,s})=>{ const ts=taskStats(t);
+    return `<button class="card taskcard taskrow" data-opentask="${t.id}"><div class="grow"><div class="row between"><b>${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}</b><span class="small ${s<50?'muted':''}" style="${s>=50?'color:var(--accent)':''}">${s}%</span></div>
       <div class="strbar"><i style="width:${s}%"></i></div>
-      <div class="row between" style="margin-top:8px"><span class="dots">${ts.recent.map(x=>`<i class="${x==='done'?'d':x==='missed'?'m':''}"></i>`).join('')}</span><span class="tiny muted">last 14 days</span></div></div></summary>
-      <div class="body">
-        <div class="stats"><div class="stat"><b>${ts.streak}</b><span>current streak</span></div><div class="stat"><b>${ts.best}</b><span>best streak</span></div>
-          <div class="stat"><b>${ts.done}</b><span>done all time</span></div><div class="stat"><b>${ts.misses}</b><span>missed all time</span></div>
-          ${t.target?`<div class="stat"><b>${ts.hours}</b><span>total time</span></div><div class="stat"><b>${ts.avgMin}m</b><span>avg (target ${t.target}m)</span></div>`:''}</div>
-        ${taskHistory(t)}
-        ${ts.reasons.length?`<div style="margin-top:14px"><h2 style="font-size:.9rem;margin-bottom:6px">Why it was missed</h2>${ts.reasons.slice(0,4).map(([r,n])=>`<div class="tod"><span class="small">${esc(r)}</span><div class="todbar"><i class="warn" style="width:${100*n/ts.misses}%"></i></div><span class="tiny muted">${n}</span></div>`).join('')}</div>`:''}
-      </div></details>`; }).join('');
+      <div class="row between" style="margin-top:8px"><span class="dots">${ts.recent.map(x=>`<i class="${x==='done'?'d':x==='missed'?'m':''}"></i>`).join('')}</span><span class="chev">›</span></div></div></button>`; }).join('');
+}
+
+function taskMonthBars(t){
+  const k=today();
+  const start=t.createdAt.slice(0,7);
+  const months=[];
+  let y=Number(start.slice(0,4)), m=Number(start.slice(5,7));
+  const endY=Number(k.slice(0,4)), endM=Number(k.slice(5,7));
+  while(y<endY || (y===endY && m<=endM)){
+    const key=`${y}-${pad(m)}`;
+    const days=new Date(y,m,0).getDate();
+    let done=0, miss=0, active=0;
+    for(let d=1;d<=days;d++){
+      const dk=`${y}-${pad(m)}-${pad(d)}`;
+      if(dk>k || !activeOn(t,dk)) continue;
+      active++;
+      const st=statusOf(dk,t.id);
+      if(st==='done') done++;
+      else if(st==='missed') miss++;
+    }
+    months.push({key, label:new Date(y,m-1,1).toLocaleDateString(undefined,{month:'short',year:'2-digit'}), done, miss, active});
+    m++; if(m>12){ m=1; y++; }
+  }
+  const show=months.slice(-12);
+  const max=Math.max(1, ...show.map(x=>x.done));
+  return `<div class="card" data-tour="thistchart"><div class="section" style="margin:0 0 8px"><h2>History <span class="muted">days done / month</span></h2></div>
+    <div class="monthchart">${show.map(x=>`<div class="col ${x.key===k.slice(0,7)?'today':''}"><span class="n">${x.done||''}</span><div class="bar ${x.done?'':'zero'}" style="height:${Math.max(4, Math.round(100*x.done/max))}%"></div><span class="tiny muted">${esc(x.label)}</span></div>`).join('')}</div>
+    ${show.length<2?`<p class="tiny muted" style="margin-top:8px">More months appear as you keep going.</p>`:''}</div>`;
+}
+
+function pTaskDetail(t){
+  const s=strengthOf(t), ts=taskStats(t);
+  return `
+  <div class="head"><div><button class="btn sm ghost" data-taskback style="margin-bottom:8px">‹ Tasks</button>
+    <div class="eyebrow">${s}% strength${t.target?` · ${t.target}m target`:''}</div><h1>${esc(t.name)}</h1></div></div>
+  ${affirmationLine()}
+  <div class="card"><div class="stats"><div class="stat"><b>${ts.streak}</b><span>current streak</span></div><div class="stat"><b>${ts.best}</b><span>best streak</span></div>
+    <div class="stat"><b>${ts.done}</b><span>done all time</span></div><div class="stat"><b>${ts.misses}</b><span>missed all time</span></div>
+    ${t.target?`<div class="stat"><b>${ts.hours}</b><span>total time</span></div><div class="stat"><b>${ts.avgMin}m</b><span>avg (target ${t.target}m)</span></div>`:''}</div>
+    <div class="strbar" style="margin-top:12px"><i style="width:${s}%"></i></div></div>
+  ${taskMonthBars(t)}
+  <div class="card"><div class="section" style="margin:0 0 4px"><h2>Calendar</h2></div>
+    ${taskHistory(t)}
+  </div>
+  ${ts.reasons.length?`<div class="card"><div class="section" style="margin:0 0 6px"><h2>Why it was missed</h2></div>
+    ${ts.reasons.slice(0,6).map(([r,n])=>`<div class="tod"><span class="small">${esc(r)}</span><div class="todbar"><i class="warn" style="width:${100*n/ts.misses}%"></i></div><span class="tiny muted">${n}</span></div>`).join('')}</div>`:''}`;
 }
 
 /* Full history for one task — every month back to the day it was created. */
@@ -2005,7 +2054,8 @@ function taskHistory(t){
       <span class="small" style="color:${e?.status==='done'?'var(--accent)':e?.status==='missed'?'var(--danger)':'var(--fg2)'}">${e?.status==='done'?'Done':e?.status==='missed'?'Missed':activeOn(t,sel)&&sel<=k?'Not recorded':'Not active yet'}</span></div>
       ${e?.minutes?`<p class="tiny muted" style="margin-top:4px">${e.minutes} minutes${t.target?` (target ${t.target})`:''}${e.bonus?` · +${e.bonus} bonus`:''}</p>`:''}
       ${e?.reason?`<p class="tiny muted" style="margin-top:4px">Reason: ${esc(e.reason)}</p>`:''}
-      ${e?.comment?`<p class="tiny muted" style="margin-top:2px">“${esc(e.comment)}”</p>`:''}</div>`:
+      ${e?.comment?`<p class="tiny muted" style="margin-top:2px">“${esc(e.comment)}”</p>`:''}
+      ${sel<=k?`<textarea id="daynote" data-noteday="${sel}" placeholder="Note for this day…" rows="2" style="margin-top:10px">${esc(S.days[sel]?.note||'')}</textarea>`:''}</div>`:
       `<p class="tiny muted" style="text-align:center;margin-top:8px">Tap a day to see what happened.</p>`}
   </div>`;
 }
@@ -2431,7 +2481,9 @@ function bind(){
     toast(S.syncError ? S.syncError : (kind==='cheer'?`Cheer sent to ${f.name}`:`Nudge sent to ${f.name}`)); });
   qa('[data-recap]').forEach(b=>b.onclick=()=>{ const key=b.dataset.recap;
     const r=S.recaps.find(x=>String(x.week||x.n)===key); if(r) recapView(r,false); });
-  qa('[data-sub]').forEach(b=>b.onclick=()=>{progState.sub=b.dataset.sub;haptic();render();window.scrollTo({top:0});});
+  qa('[data-sub]').forEach(b=>b.onclick=()=>{progState.sub=b.dataset.sub; progState.taskId=null; haptic();render();window.scrollTo({top:0});});
+  qa('[data-opentask]').forEach(b=>b.onclick=()=>{ progState.taskId=b.dataset.opentask; progState.sub='tasks'; haptic(); render(); window.scrollTo({top:0}); });
+  qa('[data-taskback]').forEach(b=>b.onclick=()=>{ progState.taskId=null; progState.sub='tasks'; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-day]').forEach(b=>b.onclick=()=>{progState.sel=b.dataset.day;render();});
   qa('[data-tday]').forEach(b=>b.onclick=()=>{ const [id,dk]=b.dataset.tday.split('|');
     taskState.sel[id]=taskState.sel[id]===dk?null:dk; if(!taskState.month[id]) taskState.month[id]=dk.slice(0,7); haptic(); render(); });
@@ -2442,7 +2494,7 @@ function bind(){
   qa('[data-month]').forEach(b=>b.onclick=()=>{const [y,m]=progState.month.split('-').map(Number);const d=new Date(y,m-1+Number(b.dataset.month),1);progState.month=`${d.getFullYear()}-${pad(d.getMonth()+1)}`;render();});
   qa('[data-jump]').forEach(b=>b.onclick=()=>{progState.month=b.dataset.jump;render();});
   qa('[data-range]').forEach(b=>b.onclick=()=>{progState.range=b.dataset.range;render();});
-  const dn=q('#daynote'); if(dn) dn.oninput=()=>{ day(progState.sel).note=dn.value; save(); };
+  const dn=q('#daynote'); if(dn) dn.oninput=()=>{ const k=dn.dataset.noteday||today(); day(k).note=dn.value; save(); };
   // Shop
   qa('[data-buy]').forEach(b=>b.onclick=()=>buy(b.dataset.buy));
   qa('[data-use]').forEach(b=>b.onclick=()=>{const x=S.locker.find(l=>l.id===b.dataset.use); x.usedAt=today(); save(); haptic(); render(); toast('Enjoy it.');});
