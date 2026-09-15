@@ -3248,6 +3248,17 @@ function chatView(crewId){
     const db=g.querySelector('[data-dropchal]'); if(db) db.onclick=()=>modal('<h2>Drop this challenge?</h2><p class="muted">The slot frees up, but progress starts again if you retry.</p>','Drop',()=>{ dropChallenge(db.dataset.dropchal); draw(); },true);
   };
   draw();
+  const poll=setInterval(async()=>{
+    if(!document.body.contains(g)){ clearInterval(poll); return; }
+    const n=msgsOf(crewId).length;
+    try{ await Sync.pullMessages(); }catch(e){}
+    if(msgsOf(crewId).length!==n) draw();
+  }, 2500);
+  const _back=()=>{ clearInterval(poll); };
+  const origDraw=draw;
+  // wrap back button rebinding each draw — hook once via Mutation-free override on remove
+  const obs=new MutationObserver(()=>{ if(!document.body.contains(g)){ clearInterval(poll); obs.disconnect(); } });
+  obs.observe(document.body,{childList:true});
 }
 function chalCardInChat(raw){
   const ch=liveQuest(raw)||raw;
