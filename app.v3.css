@@ -575,3 +575,7 @@ canvas#fx{position:fixed;inset:0;pointer-events:none;z-index:250}
 .monthchart .tiny{font-size:.62rem;text-align:center;line-height:1.1}
 button.taskrow{width:100%;text-align:left;cursor:pointer;margin-bottom:10px}
 button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
+
+.donerow{display:flex;align-items:center;gap:8px}
+.donerow .task{flex:1;min-width:0}
+.donerow-acts{display:flex;gap:6px;flex:none;padding-right:2px}

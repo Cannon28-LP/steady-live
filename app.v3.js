@@ -1903,43 +1903,53 @@ function completeSelected(mins){
   changed.forEach(id=>document.querySelector(`[data-task="${id}"]`)?.classList.add('leaving'));
   const streakWin = cleared ? payClearStreak() : null;
   const streakPay=streakWin?.amount||0;
+  if(streakPay){ d.clearStreakPay=(d.clearStreakPay||0)+streakPay; d.clearStreakBlock=streakWin.block; }
   S.undo={date:k,ids:changed,coins:coins+streakPay,xp:xp+streakPay,cleared,streakPay,streakBlock:streakWin?.block||null};
   save();
   setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick();
     if(streakWin) setTimeout(()=>streakScene(streakWin),900);
-    toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`, 'Undo', undoLast); if(cleared) celebrate(); }, motionOK()?220:0);
+    toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`); if(cleared) celebrate(); }, motionOK()?220:0);
+}
+function clawClearStreak(d){
+  const pay=d.clearStreakPay||0; if(!pay) return 0;
+  S.points.coins-=pay; S.points.xp-=pay;
+  if(d.clearStreakBlock) S.clearPaidBlock=Math.max(0,d.clearStreakBlock-1);
+  d.clearStreakPay=0; d.clearStreakBlock=null;
+  return pay;
 }
 function undoLast(){
   const u=S.undo; if(!u) return; const d=day(u.date);
   u.ids.forEach(id=>{ delete d.tasks[id]; });
-  if(u.cleared){ d.cleared=false; d.clearBonus=0; }
-  if(u.streakPay){ S.clearPaidBlock=Math.max(0,(u.streakBlock||1)-1); }
-  d.points-=(u.coins-(u.streakPay||0)); S.points.coins-=u.coins; S.points.xp-=u.xp; d.perfect=false;
-  S.undo=null; save(); haptic(); render(); toast('Undone');
+  const dayPts=u.coins-(u.streakPay||0);
+  let refund=dayPts;
+  if(u.cleared){ d.cleared=false; d.clearBonus=0; refund+=clawClearStreak(d); }
+  d.points-=dayPts; S.points.coins-=refund; S.points.xp-=refund; d.perfect=false;
+  if(S.points.coins<0) S.points.coins=0;
+  if(S.points.xp<0) S.points.xp=0;
+  if(d.points<0) d.points=0;
+  S.undo=null; save(); haptic(); render(); toast(`Undone · −${refund} coins`);
 }
-/* Unmark one done task today — undoes its coins and any day-clear bonus it was carrying. */
+/* Unmark one done task today — refunds its coins (and day-clear / streak pay if that breaks the clear). */
 function unmarkDone(id){
   const k=today(), d=day(k), e=d.tasks[id];
   if(!e||e.status!=='done') return;
-  let coins=(e.value||0)+(e.bonus||0), xp=e.value||0;
+  let dayPts=(e.value||0)+(e.bonus||0), wallet=(e.value||0)+(e.bonus||0), xp=e.value||0;
   delete d.tasks[id];
   if(d.cleared){
-    const cb=d.clearBonus||0; coins+=cb; xp+=cb;
+    const cb=d.clearBonus||0;
+    dayPts+=cb; wallet+=cb; xp+=cb;
     d.cleared=false; d.clearBonus=0; d.perfect=false;
-    /* If a full-clear streak payout just landed today and the day is no longer clear, claw it back. */
-    const u=S.undo;
-    if(u&&u.date===k&&u.streakPay&&u.cleared){
-      S.points.coins-=u.streakPay; S.points.xp-=u.streakPay;
-      S.clearPaidBlock=Math.max(0,(u.streakBlock||1)-1);
-      u.streakPay=0; u.cleared=false;
-    }
+    wallet+=clawClearStreak(d);
   }
-  d.points-=coins; S.points.coins-=coins; S.points.xp-=xp;
+  d.points-=dayPts; S.points.coins-=wallet; S.points.xp-=xp;
+  if(S.points.coins<0) S.points.coins=0;
+  if(S.points.xp<0) S.points.xp=0;
+  if(d.points<0) d.points=0;
   if(S.undo&&S.undo.ids?.includes(id)){
     S.undo.ids=S.undo.ids.filter(x=>x!==id);
     if(!S.undo.ids.length) S.undo=null;
   }
-  save(); haptic(); render(); toast('Undone');
+  save(); haptic(); render(); toast(`Undone · −${wallet} coins`);
 }
 function doneSheet(id){
   const t=S.tasks.find(x=>x.id===id); if(!t) return;
@@ -1947,7 +1957,7 @@ function doneSheet(id){
   const timed=!!t.target;
   const o=overlay(`<div class="sheet"><div class="grab"></div>
     <h2>${esc(t.name)}</h2>
-    <p class="muted small" style="margin-bottom:14px">${timed?(e.minutes!=null?`Logged ${e.minutes}m · target ${t.target}m.`:`Timed · target ${t.target}m.`)+' Fix the time or undo if you meant to leave it open.':'Marked done. Undo if that was a miss-tap.'}</p>
+    <p class="muted small" style="margin-bottom:14px">${timed?(e.minutes!=null?`Logged ${e.minutes}m · target ${t.target}m.`:`Timed · target ${t.target}m.`)+' Edit the time, or undo anytime today — coins come back.':'Marked done. Undo refunds the coins anytime today.'}</p>
     <div class="stack">
       ${timed?`<button class="btn primary block" data-edit>Edit time</button>`:''}
       <button class="btn ${timed?'':'primary'} block" data-undo>Undo</button>
@@ -2051,7 +2061,9 @@ function vToday(){
     open.length===0?`<div class="card empty"><b>All done</b>Everything's ticked. See you tomorrow.</div>`:`
     <ul class="tasks" data-tour="tasks">${open.map(row).join('')}</ul>
     <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below.</p>`}
-    ${done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">tap to undo${done.some(t=>t.target)?' or edit time':''}</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id]; const inner=`<span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(e?.value||0)+(e?.bonus||0)}${e?.minutes!=null?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${e.minutes}m</span>`:''}</span>`; return `<li><button class="task done" data-donetap="${t.id}">${inner}</button></li>`; }).join('')}</ul></details>`:''}
+    ${done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">undo anytime today</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id];
+      return `<li class="donerow"><button class="task done" data-donetap="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(e?.value||0)+(e?.bonus||0)}${e?.minutes!=null?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${e.minutes}m</span>`:''}</span></button>
+        <div class="donerow-acts">${t.target?`<button class="btn sm ghost" data-edittime="${t.id}">Edit</button>`:''}<button class="btn sm" data-undone="${t.id}">Undo</button></div></li>`; }).join('')}</ul></details>`:''}
   </div>
   ${iosInstallNudge()}
   ${backupNudge()}
@@ -2485,7 +2497,7 @@ function vFriends(){
   const sub=(['list','chats','challenges'].includes(friendsState.sub)?friendsState.sub:'list');
   friendsState.sub=sub;
   const openId=friendsState.open;
-  const seg=`<div class="seg" style="margin-bottom:14px">${[['list','Friend list'],['chats','Chats'],['challenges','Active challenges']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-fsub="${v}">${l}</button>`).join('')}</div>`;
+  const seg=`<div class="seg" style="margin-bottom:14px" data-tour="fsubs">${[['list','Friend list'],['chats','Chats'],['challenges','Active challenges']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-fsub="${v}">${l}</button>`).join('')}</div>`;
 
   const inboxCard=inbox.length?`<div class="card callout" style="margin-bottom:10px"><b>${inbox.length===1?'New message':`${inbox.length} new messages`}</b>
     <ul class="list" style="margin-top:6px">${inbox.map(x=>`<li><span>${esc(x.text)}</span><span class="small ${x.coins?'':'muted'}" style="${x.coins?'color:var(--accent)':''}">${x.coins?`+${x.coins}`:fmt(x.date,{day:'numeric',month:'short'})}</span></li>`).join('')}</ul>
@@ -2675,9 +2687,9 @@ function vSettings(){
   ${(()=>{ const live=Sync.live(), inn=Sync.signedIn();
     if(!live) return `<details class="acc"><summary>Account</summary><div class="body"><p class="tiny muted">No server configured on this build.</p>
       <button class="btn sm block" id="syncnow" style="margin-top:10px">Update app</button></div></details>`;
-    if(!inn) return `<details class="acc" id="acc-account"><summary>Account</summary><div class="body"><p class="tiny muted">Sign in on Friends first — backups ride with your account.</p>
+    if(!inn) return `<details class="acc" id="acc-account" data-tour="account"><summary>Account</summary><div class="body"><p class="tiny muted">Sign in on Friends first — backups ride with your account.</p>
       <button class="btn sm block" id="syncnow" style="margin-top:10px">Update app</button></div></details>`;
-    return `<details class="acc" id="acc-account"><summary>Account <span class="muted">${S.vaultAt?'synced':'not yet'}</span></summary><div class="body">
+    return `<details class="acc" id="acc-account" data-tour="account"><summary>Account <span class="muted">${S.vaultAt?'synced':'not yet'}</span></summary><div class="body">
       <p class="tiny muted">${esc(S.me?.email||me().name||'')}</p>
       <p class="tiny muted" style="margin-top:8px">${S.vaultAt?`Last backup ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
       <p class="tiny muted" style="margin-top:4px">Saves itself a few seconds after changes. Use Restore if another device is ahead.</p>
@@ -2694,7 +2706,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, multiplied by that task's habit strength (up to ×1.5). Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
     <p><b style="color:var(--fg)">Day cleared.</b> Tick everything and you get +${CLEAR_PER_TASK} per task on top.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Tap anything in Done today to undo a miss-tap, or to correct the minutes on a timed task — coins move by the difference.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
     <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
@@ -2730,6 +2742,8 @@ function bind(){
   // Today
   qa('[data-task]').forEach(b=>b.onclick=()=>{ const id=b.dataset.task; sel.has(id)?sel.delete(id):sel.add(id); b.classList.toggle('selected'); haptic(); updateConfirm(); });
   qa('[data-donetap]').forEach(b=>b.onclick=()=>doneSheet(b.dataset.donetap));
+  qa('[data-undone]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); unmarkDone(b.dataset.undone); });
+  qa('[data-edittime]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); const t=S.tasks.find(x=>x.id===b.dataset.edittime); if(t?.target) timeSheet([t], true); });
   updateConfirm();
   // Progress
   // Plan — list
@@ -3187,12 +3201,12 @@ function onboarding(next){
 
 /* ---------- Spotlight tour ---------- */
 const TOURS={
-  today:[['ring','Coins earned today. Each task pays 10, boosted by its habit strength.'],['tasks','Tap to pick, confirm at the bottom. The thin bar is strength — it grows when you show up and only dents when you don’t.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
-  plan:[['listadd','Add anything, dated whenever you like — today, a date, or someday. List, Notes and Affirmations live here.']],
+  today:[['ring','Coins earned today. Each task pays 10, boosted by its habit strength.'],['tasks','Tap to pick, confirm below. Timed ones ask how long — and Done today lets you Undo anytime (coins come back) or Edit the minutes.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
+  plan:[['listadd','List, Notes and Affirmations. Add anything for today, a date, or someday — nothing here can be failed.']],
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
-  shop:[['balance','Coins to spend. XP fills the level bar and is never spent.'],['gate','Spending unlocks when average habit strength is 70%+.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
-  settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, font colour, designs, type.']],
-  friends:[['crews','Chats. Fixed phrases and emotes only — no typing, nothing to moderate. Challenges get started inside a chat.'],['code','Swap codes to pair up — adding one pairs you both ways. Only totals sync, never task names or notes.'],['friend','Invite someone to a challenge and pick the tier — that sets how hard it is and how big the chest. One legendary, one rare and two commons can run at once.']],
+  shop:[['balance','Coins to spend. XP fills the level bar and is never spent. The shop stays open — allowances on each reward do the limiting.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
+  settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, designs, font, type size.'],['remind','Optional nudges: morning, evening if anything’s open, and your own affirmations.'],['account','Update app, backup/restore, and sign out live here.']],
+  friends:[['fsubs','Three tabs: Friend list, Chats, and Active challenges.'],['code','Add a friend’s code here — pairs both ways. Your code sits underneath to share. Only totals sync, never task names or notes.']],
 };
 let tourLive=null;
 function endTour(markSeen){
