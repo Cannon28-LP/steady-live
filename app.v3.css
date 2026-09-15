@@ -579,3 +579,6 @@ button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
 .donerow{display:flex;align-items:center;gap:8px}
 .donerow .task{flex:1;min-width:0}
 .donerow-acts{display:flex;gap:6px;flex:none;padding-right:2px}
+
+.questpick.locked{opacity:.45;pointer-events:none}
+.questpick.locked b{text-decoration:line-through}

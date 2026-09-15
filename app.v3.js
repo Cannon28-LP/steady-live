@@ -287,7 +287,7 @@ function fresh(){
   return {
     tasks:[], rewards:[], locker:[], customReasons:[],
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
-    clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null, chalCooldownUntil:null,
+    clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null, chalCooldownUntil:null, chalLocks:{},
     crews:[], msgs:{}, muted:[],
     settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true,
       remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}}},
@@ -993,7 +993,45 @@ const CHALLENGES = {
   ],
 };
 const findChallenge = id => Object.entries(CHALLENGES).flatMap(([tier,l])=>l.map(c=>({...c,tier}))).find(c=>c.id===id);
+function monthOf(d=today()){ return (d||today()).slice(0,7); }
+function nextMonth(d=today()){
+  let [y,m]=(d||today()).split('-').map(Number);
+  if(m===12){ y++; m=1; } else m++;
+  return y+'-'+String(m).padStart(2,'0');
+}
 function pairOf(f){ return S.pairs[f.id] || (S.pairs[f.id]={done:[],chests:[]}); }
+/* Completed quest → locked until the named month (YYYY-MM). Fail uses the 1-day cooldown instead. */
+function lockQuestUntil(questId, unlockMonth){
+  S.chalLocks=S.chalLocks||{};
+  S.chalLocks[questId]=unlockMonth||nextMonth();
+  save();
+  try{ Sync.pushChalLocks(); }catch(e){}
+}
+function iQuestLocked(questId){
+  const u=(S.chalLocks||{})[questId];
+  return !!(u && monthOf()<u);
+}
+function friendQuestLocked(f, questId){
+  if(!f||!questId) return false;
+  const u=f.chalLocks?.[questId];
+  if(u && monthOf()<u) return true;
+  const mk=monthOf();
+  return (pairOf(f).chests||[]).some(c=>c.questId===questId && c.at && String(c.at).slice(0,7)===mk);
+}
+function questLockReasons(questId, memberIds){
+  const why=[];
+  if(iQuestLocked(questId)) why.push('You already finished this this month');
+  for(const id of (memberIds||[])){
+    const f=S.friends[id]; if(!f) continue;
+    if(friendQuestLocked(f,questId)) why.push(esc(f.name)+' already finished this');
+  }
+  return why;
+}
+function questAvailable(questId, memberIds){ return !questLockReasons(questId, memberIds).length; }
+function firstOpenQuest(tier, memberIds){
+  const list=CHALLENGES[tier]||[];
+  return (list.find(q=>questAvailable(q.id, memberIds))||list[0]||{}).id;
+}
 function chalList(state){ return (state||S).challenges || []; }
 function chalBusyPeople(list){
   const s=new Set();
@@ -1126,6 +1164,9 @@ function challengeProgress(ch){
   return {have:Math.min(combined,need),need,mine,theirs};
 }
 function startChallenge(tier,questId,memberIds,crewId){
+  if(chalOnCooldown()) return null;
+  const ids0=[...(memberIds||[])];
+  if(!questAvailable(questId, ids0)) return null;
   const def=findChallenge(questId);
   if(!def||def.tier!==tier) return null;
   const ids=[...new Set(memberIds||[])].filter(id=>S.friends[id]);
@@ -1208,13 +1249,15 @@ function claimChest(cid){
   const heads=(ch.memberIds||[]).length+1;
   const amount=Math.round(t.rolls[Math.floor(Math.random()*t.rolls.length)]*crewMultiplier(heads)/5)*5;
   S.points.coins+=amount; S.points.xp+=amount;
+  const qid=ch.questId||ch.id;
   for(const f of ch.members){
     const p=pairOf(f);
     p.done=p.done||[]; p.chests=p.chests||[];
-    p.done.push(ch.questId||ch.id);
-    p.chests.push({tier:ch.tier,amount,at:today(),name:ch.name,crew:ch.members.map(x=>x.name)});
+    p.done.push(qid);
+    p.chests.push({tier:ch.tier,questId:qid,amount,at:today(),name:ch.name,crew:ch.members.map(x=>x.name)});
   }
-  S.challenges=chalList().filter(c=>c.id!==cid); setChalCooldown(); save();
+  lockQuestUntil(qid, nextMonth());
+  S.challenges=chalList().filter(c=>c.id!==cid); save();
   const mult=crewMultiplier(heads);
   return {tier:ch.tier,amount,name:ch.name,colour:t.colour,heads,
     rolls:t.rolls.map(r=>Math.round(r*mult/5)*5)};
@@ -1574,9 +1617,15 @@ const Sync = {
   async _pull(){
     // 1. discover anyone who added US, so pairing works from either side
     const links=await api('/rest/v1/rpc/my_friends',{method:'POST',body:{}});
-    (links||[]).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{},avatar:p.avatar||null};
-      else { S.friends[p.id].name=p.display_name; S.friends[p.id].avatar=p.avatar||S.friends[p.id].avatar||null; } });
+    (links||[]).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{},avatar:p.avatar||null,chalLocks:p.chal_locks||{}};
+      else { S.friends[p.id].name=p.display_name; S.friends[p.id].avatar=p.avatar||S.friends[p.id].avatar||null; if(p.chal_locks) S.friends[p.id].chalLocks=p.chal_locks; } });
     const ids=Object.keys(S.friends).filter(id=>!id.startsWith('demo-'));
+    if(ids.length){
+      try{
+        const rows=await api(`/rest/v1/profiles?id=in.(${ids.join(',')})&select=id,chal_locks`);
+        (rows||[]).forEach(r=>{ if(S.friends[r.id]) S.friends[r.id].chalLocks=r.chal_locks||{}; });
+      }catch(e){ /* column may not exist yet — local locks still work */ }
+    }
     // drop challenge members we no longer know, now that the friend list is current
     S.challenges=chalList().map(c=>({...c,memberIds:(c.memberIds||[]).filter(id=>S.friends[id])})).filter(c=>c.memberIds.length);
     // 2. their daily stats
@@ -1648,6 +1697,11 @@ const Sync = {
       });
       save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  async pushChalLocks(){
+    if(!this.live()||!this.signedIn()||!S.me?.id) return;
+    try{ await api(`/rest/v1/profiles?id=eq.${S.me.id}`,{method:'PATCH',
+      body:{chal_locks:S.chalLocks||{}},headers:{Prefer:'return=minimal'}}); }catch(e){}
   },
   /* Challenges are shared too — the other side needs the same row. */
   async pushChallenge(ch){
@@ -2425,7 +2479,7 @@ function challengeCard(raw){
   </div>`;
 }
 function startChallengeModal(crewId,after){
-  if(chalOnCooldown()){ toast('Cooldown until '+fmt(S.chalCooldownUntil,{day:'numeric',month:'short'})+' — after a finish or a fail'); return; }
+  if(chalOnCooldown()){ toast('Cooldown until '+fmt(S.chalCooldownUntil,{day:'numeric',month:'short'})+' — after a fail, try again tomorrow'); return; }
   const crew=crewId?crewOf(crewId):null;
   const busy=chalBusyPeople();
   const free=(crew?crewMembers(crew):friendList()).filter(f=>!busy.has(f.id));
@@ -2435,19 +2489,22 @@ function startChallengeModal(crewId,after){
   const openTiers=['legendary','rare','common'].filter(t=>tierSlotOpen(t));
   if(!openTiers.length){ toast('No challenge slots free'); return; }
   const picks=new Set();
-  if(crew) free.slice(0,CHAL_PARTY_MAX).forEach(f=>picks.add(f.id));   // the chat IS the group — everyone's in by default
+  if(crew) free.slice(0,CHAL_PARTY_MAX).forEach(f=>picks.add(f.id));
   else if(free.length===1) picks.add(free[0].id);
   let tier=openTiers.includes('legendary')?'legendary':openTiers[0];
-  let qid=CHALLENGES[tier][0].id;
+  let qid=firstOpenQuest(tier, [...picks]);
   const o=overlay(`<div class="modal tall"><div id="chalform"></div></div>`,'center');
   const draw=()=>{
     const cap=Math.min(partyCap(tier), left);
     const atCap=picks.size>=cap;
     if(picks.size>cap) [...picks].slice(cap).forEach(id=>picks.delete(id));
+    const members=[...picks];
+    if(!questAvailable(qid, members)) qid=firstOpenQuest(tier, members);
     const box=o.querySelector('#chalform');
     const n=chalCounts();
-    const why=`Slots: legendary ${n.legendary}/1 · rare ${n.rare}/1 · common ${n.common}/2. Harder tier, harder challenge, bigger chest.`;
+    const why=`Slots: legendary ${n.legendary}/1 · rare ${n.rare}/1 · common ${n.common}/2. Finish a quest and it locks until next month for everyone. Fail → try again tomorrow.`;
     const whoHint=`Up to ${CHAL_PARTY_MAX} people on any tier. The more of you, the bigger the pot — and the harder it gets.`;
+    const anyOpen=(CHALLENGES[tier]||[]).some(q=>questAvailable(q.id, members));
     box.innerHTML=`<h2>Start a challenge</h2>
       <p class="tiny muted" style="margin-top:6px">${whoHint} ${cap} ${cap===1?'seat':'seats'} left on this one.</p>
       <p class="small" style="margin-top:14px"><b>Who's in</b></p>
@@ -2459,14 +2516,21 @@ function startChallengeModal(crewId,after){
         return `<button type="button" class="chip ${tier===t?'on':''}" data-tier="${t}" ${open?'':'disabled'}>${label}${open?'':' · taken'}</button>`;
       }).join('')}</div>
       <p class="tiny muted" style="margin-top:8px">${why}</p>
-      <div style="margin-top:8px">${CHALLENGES[tier].map(q=>`<button type="button" class="questpick ${qid===q.id?'on':''}" data-qid="${q.id}"><b>${esc(q.name)}</b><p class="tiny muted">${esc(q.desc)}</p><p class="tiny muted" style="margin-top:4px">${TIERS_C[tier].rolls[0]}–${TIERS_C[tier].rolls[TIERS_C[tier].rolls.length-1]} coins</p></button>`).join('')}</div>
-      <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok ${picks.size?'':'disabled'}>Start</button></div>`;
+      <div style="margin-top:8px">${CHALLENGES[tier].map(q=>{
+        const locks=questLockReasons(q.id, members);
+        const locked=!!locks.length;
+        const on=qid===q.id&&!locked;
+        return `<button type="button" class="questpick ${on?'on':''} ${locked?'locked':''}" data-qid="${q.id}" ${locked?'disabled':''}><b>${esc(q.name)}</b><p class="tiny muted">${esc(q.desc)}</p>
+          <p class="tiny muted" style="margin-top:4px">${locked?locks[0]:`${TIERS_C[tier].rolls[0]}–${TIERS_C[tier].rolls[TIERS_C[tier].rolls.length-1]} coins`}</p></button>`;
+      }).join('')}</div>
+      ${!anyOpen?`<p class="tiny muted" style="margin-top:8px">Nothing left open for this group this month — try another tier or wait.</p>`:''}
+      <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok ${picks.size&&anyOpen&&questAvailable(qid,members)?'':'disabled'}>Start</button></div>`;
     box.querySelectorAll('[data-fid]').forEach(b=>b.onclick=()=>{ if(picks.has(b.dataset.fid)) picks.delete(b.dataset.fid); else { if(picks.size>=cap) return; picks.add(b.dataset.fid);} haptic(); draw(); });
-    box.querySelectorAll('[data-tier]').forEach(b=>b.onclick=()=>{ if(b.disabled) return; tier=b.dataset.tier; qid=CHALLENGES[tier][0].id; haptic(); draw(); });
-    box.querySelectorAll('[data-qid]').forEach(b=>b.onclick=()=>{ qid=b.dataset.qid; haptic(); draw(); });
+    box.querySelectorAll('[data-tier]').forEach(b=>b.onclick=()=>{ if(b.disabled) return; tier=b.dataset.tier; qid=firstOpenQuest(tier, [...picks]); haptic(); draw(); });
+    box.querySelectorAll('[data-qid]').forEach(b=>b.onclick=()=>{ if(b.disabled) return; qid=b.dataset.qid; haptic(); draw(); });
     box.querySelector('[data-x]').onclick=()=>close(o);
     const ok=box.querySelector('[data-ok]');
-    ok.onclick=()=>{ if(!picks.size) return; const started=startChallenge(tier,qid,[...picks],crewId); close(o);
+    ok.onclick=()=>{ if(!picks.size||!questAvailable(qid,[...picks])) return; const started=startChallenge(tier,qid,[...picks],crewId); close(o);
       if(started){ haptic('success'); if(after) after(); else render(); toast(chalIsPending(started)?'Invite sent — waiting for accept':'Challenge started'); } else toast('Could not start that'); };
   };
   draw();
@@ -2718,7 +2782,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
-    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Fail a day (or buy during shop silence) and it ends at once. After a finish or a fail you wait one day before starting another.</p>
+    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
