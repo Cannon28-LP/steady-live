@@ -601,3 +601,7 @@ button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
 .noterowfold>summary.noterow{width:100%}
 .noterowfold .chev{transition:transform .15s}
 .noterowfold[open] .chev{transform:rotate(90deg)}
+
+.planfold.open>.noterow .chev,.planfold.open .chev{transform:rotate(90deg)}
+.planfold[data-affrow] .editrow[data-afftog],.planfold[data-noterow]>.noterow{cursor:pointer;width:100%;text-align:left;background:none;border:0;color:inherit}
+.planfold-body [data-affedit],.planfold-body [data-note-body]{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}

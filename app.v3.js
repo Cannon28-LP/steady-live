@@ -2085,7 +2085,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:''}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null,openNote:null,editNote:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -2275,20 +2275,33 @@ function pNotes(){
   return `
   <button class="btn primary block" id="newnote" style="margin-bottom:14px">New note</button>
   ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>{
+      const open=planState.openNote===n.id;
+      const editing=planState.editNote===n.id;
       const title=firstLine(noteTitle(n), 52);
       const body=(n.body||'').trim();
-      const more=!!body || textHasMore(noteTitle(n),52);
-      return `<details class="planfold noterowfold">
-        <summary class="noterow">
+      return `<div class="planfold noterowfold ${open?'open':''}" data-noterow="${n.id}">
+        <button type="button" class="noterow" data-notetog="${n.id}">
           <div class="grow"><div class="row between" style="gap:10px;align-items:baseline">
             <b class="planfold-title">${esc(title)}</b>
             <span class="tiny muted" style="flex:none">${fmt(dkey(new Date(n.createdAt)),{day:'numeric',month:'short',year:'2-digit'})}</span>
-          </div></div><span class="chev">›</span>
-        </summary>
-        <div class="planfold-body">${body?esc(body):'<span class="muted">No body yet</span>'}
-          <button type="button" class="btn sm primary" style="margin-top:10px" data-note="${n.id}">Open to edit</button>
-        </div>
-      </details>`; }).join('')}</div>`:
+          </div></div><span class="chev">${open?'‹':'›'}</span>
+        </button>
+        ${open?`<div class="planfold-body" data-notebody="${n.id}">
+          ${editing?`<input type="text" class="ntitle" data-note-title="${n.id}" maxlength="400" value="${esc(n.title||'')}" placeholder="Title" style="width:100%;margin-bottom:8px">
+            <textarea data-note-body="${n.id}" maxlength="5000" rows="6" placeholder="Write anything…" style="width:100%;resize:vertical">${esc(n.body||'')}</textarea>
+            <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+              <button type="button" class="btn primary sm" data-notesave="${n.id}">Save</button>
+              <button type="button" class="btn sm ghost" data-notecancel="${n.id}">Cancel</button>
+              <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
+            </div>`
+          :`<p class="planfold-title" style="font-weight:650;white-space:pre-wrap;overflow-wrap:anywhere">${esc(noteTitle(n))}</p>
+            <p style="margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere">${body?esc(body):'<span class="muted">No body yet</span>'}</p>
+            <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+              <button type="button" class="btn sm primary" data-noteedit="${n.id}">Edit</button>
+              <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
+            </div>`}
+        </div>`:''}
+      </div>`; }).join('')}</div>`:
     all.length?`<div class="card empty"><b>Nothing matched</b>Try another word from the title.</div>`:
     `<div class="card empty"><b>No notes</b>Somewhere to write things down.</div>`}`;
 }
@@ -2299,18 +2312,30 @@ function pAffirmations(){
   <div class="card" style="margin-bottom:14px;padding:12px">
     <textarea id="newwhy" placeholder="Add an affirmation…" maxlength="700" rows="2" style="width:100%;resize:vertical"></textarea>
     <button class="btn primary block" id="addwhy" style="margin-top:8px">Add</button>
-    <p class="tiny muted" style="margin-top:8px">Shown on the morning screen and under page titles. First line shows in the list — tap to expand. Tap the line again in the open view to bring it to the top.</p>
+    <p class="tiny muted" style="margin-top:8px">First line in the list — tap to expand. Tap again (when not editing) to close. Edit from the open view.</p>
   </div>
   ${list.length?`<div class="card" style="padding:4px 12px">${list.map(w=>{
-      const more=textHasMore(w.text);
+      const open=planState.openAff===w.id;
+      const editing=planState.editAff===w.id;
       const line=esc(firstLine(w.text));
       const del=`<button class="iconbtn" data-delwhy="${w.id}" aria-label="Remove">${ICON.trash}</button>`;
-      if(!more) return `<div class="editrow"><button type="button" class="name planfold-title" data-touchwhy="${w.id}">${line}</button>${del}</div>`;
-      return `<details class="planfold afffold"><summary class="editrow" style="border:0;padding:10px 0">
-        <span class="name planfold-title">${line}</span>${del}
-      </summary>
-      <div class="planfold-body"><button type="button" class="afffull" data-touchwhy="${w.id}">${esc(w.text)}</button></div>
-    </details>`;
+      return `<div class="planfold afffold ${open?'open':''}" data-affrow="${w.id}">
+        <div class="editrow" style="border:0;padding:10px 0" data-afftog="${w.id}">
+          <span class="name planfold-title">${line}</span>${del}
+        </div>
+        ${open?`<div class="planfold-body" data-affbody="${w.id}">
+          ${editing?`<textarea data-affedit="${w.id}" maxlength="700" rows="4" style="width:100%;resize:vertical">${esc(w.text)}</textarea>
+            <div class="row" style="gap:8px;margin-top:10px">
+              <button type="button" class="btn primary sm" data-affsave="${w.id}">Save</button>
+              <button type="button" class="btn sm ghost" data-affcancel="${w.id}">Cancel</button>
+            </div>`
+          :`<button type="button" class="afffull" data-touchwhy="${w.id}">${esc(w.text)}</button>
+            <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+              <button type="button" class="btn sm primary" data-affeditbtn="${w.id}">Edit</button>
+              <button type="button" class="btn sm ghost" data-touchwhy="${w.id}">Bring to top</button>
+            </div>`}
+        </div>`:''}
+      </div>`;
     }).join('')}</div>`:
     all.length?`<div class="card empty"><b>Nothing matched</b>Try another word.</div>`:
     `<div class="card empty"><b>No affirmations yet</b>Add one above — on the days you can’t be bothered, it’s what catches you.</div>`}`;
@@ -2895,7 +2920,7 @@ function bind(){
   updateConfirm();
   // Progress
   // Plan — list
-  qa('[data-psub]').forEach(b=>b.onclick=()=>{ planState.sub=b.dataset.psub; haptic(); render(); window.scrollTo({top:0}); });
+  qa('[data-psub]').forEach(b=>b.onclick=()=>{ planState.sub=b.dataset.psub; planState.openAff=planState.editAff=planState.openNote=planState.editNote=null; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-fsub]').forEach(b=>b.onclick=()=>{ friendsState.sub=b.dataset.fsub; friendsState.open=null; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-ftog]').forEach(b=>b.onclick=()=>{ const id=b.dataset.ftog; friendsState.open=friendsState.open===id?null:id; haptic(); render(); });
   qa('[data-acceptchal]').forEach(b=>b.onclick=()=>acceptChallenge(b.dataset.acceptchal));
@@ -2917,8 +2942,27 @@ function bind(){
   qa('[data-tdrop]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
     toast('Removed','Undo',()=>{ S.todos.push(t); save(); render(); }); });
   // Plan — notes
-  const nn=q('#newnote'); if(nn) nn.onclick=()=>{ const n=addNote(); render(); noteEditor(n.id); };
+  const nn=q('#newnote'); if(nn) nn.onclick=()=>{ const n=addNote(); planState.openNote=n.id; planState.editNote=n.id; planState.openAff=planState.editAff=null; haptic(); render(); };
   qa('[data-note]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); noteEditor(b.dataset.note); });
+  qa('[data-notetog]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const id=b.dataset.notetog;
+    if(planState.editNote===id) return;
+    if(planState.openNote===id){ planState.openNote=null; planState.editNote=null; }
+    else { planState.openNote=id; planState.editNote=null; planState.openAff=planState.editAff=null; }
+    haptic(); render(); });
+  qa('[data-notebody]').forEach(b=>b.onclick=e=>{
+    if(planState.editNote===b.dataset.notebody) return;
+    if(e.target.closest('button,input,textarea,a')) return;
+    planState.openNote=null; planState.editNote=null; haptic(); render();
+  });
+  qa('[data-noteedit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); planState.openNote=b.dataset.noteedit; planState.editNote=b.dataset.noteedit; haptic(); render();
+    setTimeout(()=>document.querySelector(`[data-note-title="${b.dataset.noteedit}"]`)?.focus(),40); });
+  qa('[data-notesave]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const id=b.dataset.notesave; const n=S.notes.find(x=>x.id===id); if(!n) return;
+    const ti=document.querySelector(`[data-note-title="${id}"]`);
+    const ta=document.querySelector(`[data-note-body="${id}"]`);
+    n.title=ti?ti.value:''; n.body=ta?ta.value:''; touchNote(n); planState.editNote=null; haptic('success'); render(); toast('Saved'); });
+  qa('[data-notecancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); planState.editNote=null; haptic(); render(); });
   const nsearch=q('#notesearch'); if(nsearch){ nsearch.oninput=()=>{ planState.noteQ=nsearch.value; render(); const el=document.getElementById('notesearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
   // Friends  // Friends
   qa('[data-authmode]').forEach(b=>b.onclick=()=>{ authState.mode=b.dataset.authmode; haptic(); render(); });
@@ -3050,8 +3094,33 @@ function bind(){
   const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); document.getElementById('newwhy')?.focus();};
     q('#addwhy').onclick=add; nw.onkeydown=e=>{ if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); add(); } }; }
   const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ planState.affQ=asearch.value; render(); const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
+  qa('[data-afftog]').forEach(b=>b.onclick=e=>{
+    if(e.target.closest('[data-delwhy]')) return;
+    e.preventDefault(); e.stopPropagation();
+    const id=b.dataset.afftog;
+    if(planState.editAff===id) return;
+    if(planState.openAff===id){ planState.openAff=null; planState.editAff=null; }
+    else { planState.openAff=id; planState.editAff=null; planState.openNote=planState.editNote=null; }
+    haptic(); render();
+  });
+  qa('[data-affbody]').forEach(b=>b.onclick=e=>{
+    if(planState.editAff===b.dataset.affbody) return;
+    if(e.target.closest('button,textarea,input,a')) return;
+    planState.openAff=null; planState.editAff=null; haptic(); render();
+  });
+  qa('[data-affeditbtn]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    planState.openAff=b.dataset.affeditbtn; planState.editAff=b.dataset.affeditbtn; haptic(); render();
+    setTimeout(()=>document.querySelector(`[data-affedit="${b.dataset.affeditbtn}"]`)?.focus(),40); });
+  qa('[data-affsave]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const id=b.dataset.affsave; const w=S.whys.find(x=>x.id===id); if(!w) return;
+    const ta=document.querySelector(`[data-affedit="${id}"]`);
+    const v=(ta?.value||'').trim(); if(!v){ toast('Write something first'); return; }
+    w.text=v; touchWhy(w); planState.editAff=null; haptic('success'); render(); toast('Saved'); });
+  qa('[data-affcancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); planState.editAff=null; haptic(); render(); });
   qa('[data-touchwhy]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const w=S.whys.find(x=>x.id===b.dataset.touchwhy); if(!w) return; touchWhy(w); haptic(); render(); });
-  qa('[data-delwhy]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); });
+  qa('[data-delwhy]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    if(planState.openAff===b.dataset.delwhy){ planState.openAff=null; planState.editAff=null; }
+    S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); });
   const nr=q('#newreward'); const np=q('#newprice');
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
