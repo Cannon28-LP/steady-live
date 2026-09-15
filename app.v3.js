@@ -1764,6 +1764,21 @@ function undoLast(){
   d.points-=u.coins; S.points.coins-=u.coins; S.points.xp-=u.xp; d.perfect=false;
   S.undo=null; save(); haptic(); render(); toast('Undone');
 }
+/* Recast a done timed task's minutes today. Coins/XP move by the difference only. */
+function recastDone(id,mins){
+  const k=today(), d=day(k), e=d.tasks[id];
+  if(!e||e.status!=='done') return;
+  const t=S.tasks.find(x=>x.id===id); if(!t) return;
+  const oldCoins=(e.value||0)+(e.bonus||0), oldXp=e.value||0;
+  const others=overtimeToday(k)-(e.bonus||0);
+  const v=paidValue(t,mins);
+  const bonus=clamp(overtimeFor(t,mins),0,Math.max(0,OT_DAY_CAP-others));
+  e.minutes=mins; e.value=v; e.bonus=bonus; e.full=!t.target||!mins||mins>=t.target;
+  const dc=(v+bonus)-oldCoins, dx=v-oldXp;
+  d.points+=dc; S.points.coins+=dc; S.points.xp+=dx;
+  save(); haptic(); render();
+  toast(dc>0?`Time updated · +${dc}`:dc<0?`Time updated · ${dc}`:'Time updated');
+}
 
 /* ---------- Toast ---------- */
 let toastT;
@@ -1843,7 +1858,7 @@ function vToday(){
     open.length===0?`<div class="card empty"><b>All done</b>Everything's ticked. See you tomorrow.</div>`:`
     <ul class="tasks" data-tour="tasks">${open.map(row).join('')}</ul>
     <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below.</p>`}
-    ${done.length?`<details class="fold"><summary><span>Done today (${done.length})</span><span class="tiny">back tomorrow</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>`<li><div class="task done"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(d.tasks[t.id]?.value||0)+(d.tasks[t.id]?.bonus||0)}${d.tasks[t.id]?.minutes?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${d.tasks[t.id].minutes}m</span>`:''}</span></div></li>`).join('')}</ul></details>`:''}
+    ${done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">${done.some(t=>t.target)?'tap to edit time':'back tomorrow'}</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id]; const inner=`<span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(e?.value||0)+(e?.bonus||0)}${e?.minutes?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${e.minutes}m</span>`:''}</span>`; return t.target?`<li><button class="task done" data-editdone="${t.id}">${inner}</button></li>`:`<li><div class="task done">${inner}</div></li>`; }).join('')}</ul></details>`:''}
   </div>
   ${iosInstallNudge()}
   ${backupNudge()}
@@ -2442,7 +2457,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, multiplied by that task's habit strength (up to ×1.5). Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
     <p><b style="color:var(--fg)">Day cleared.</b> Tick everything and you get +${CLEAR_PER_TASK} per task on top.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Tap a done timed task today to correct the minutes — coins move by the difference, so you do not have to wait until tomorrow.</p>
     <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
@@ -2476,6 +2491,7 @@ function bind(){
   qa('[data-go]').forEach(b=>b.onclick=()=>{ const open=b.dataset.open; setTab(b.dataset.go); if(open){ const acc=document.getElementById('acc-'+open); if(acc){acc.open=true; acc.querySelector('input')?.focus();} } });
   // Today
   qa('[data-task]').forEach(b=>b.onclick=()=>{ const id=b.dataset.task; sel.has(id)?sel.delete(id):sel.add(id); b.classList.toggle('selected'); haptic(); updateConfirm(); });
+  qa('[data-editdone]').forEach(b=>b.onclick=()=>{ const t=S.tasks.find(x=>x.id===b.dataset.editdone); if(t?.target) timeSheet([t], true); });
   updateConfirm();
   // Progress
   // Plan — list
@@ -2813,9 +2829,16 @@ function noteEditor(id){
 
 
 /* ---------- Time sheet (timed tasks) ---------- */
-function timeSheet(timed){
-  const mins={}; timed.forEach(t=>mins[t.id]=t.target);
-  const room=()=>OT_DAY_CAP-overtimeToday();
+function timeSheet(timed, edit){
+  const mins={}; timed.forEach(t=>{
+    const logged=edit? day(today()).tasks[t.id]?.minutes : null;
+    mins[t.id]=logged||t.target;
+  });
+  const room=()=>{
+    let used=overtimeToday();
+    if(edit) timed.forEach(t=>{ used-=(day(today()).tasks[t.id]?.bonus||0); });
+    return OT_DAY_CAP-used;
+  };
   const opts=t=>{
     const tg=t.target;
     const under=[Math.max(1,Math.round(tg/2)), Math.max(1,tg-10), Math.max(1,tg-5)]
@@ -2823,25 +2846,27 @@ function timeSheet(timed){
     const over=[tg+5,tg+10,tg+15,tg+30];
     return [...under, tg, ...over];
   };
-  const card=t=>{ const list=opts(t), ti=list.indexOf(t.target);
+  const card=t=>{ const list=opts(t); let ti=list.indexOf(mins[t.id]);
+    const extra=ti<0&&mins[t.id]?`<button class="chip on" data-m="${mins[t.id]}">${mins[t.id]}m</button>`:'';
+    if(ti<0) ti=-1;
     return `<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
-    <div class="timerow">${list.map((m,i)=>`<button class="chip ${i===ti?'on':''}" data-m="${m}">${m}m</button>`).join('')}<button class="chip add" data-other>Other</button></div></div>`; };
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>How long did ${timed.length===1?'it':'each'} take?</h2><p class="muted small" style="margin-bottom:14px">Still counts as done either way — a short session just pays less of the coins. Over the target pays +1 per ${OT_PER} minutes on top.</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot"><button class="btn" data-skip>Skip</button><button class="btn primary" data-ok>Mark done</button></div></div>`);
+    <div class="timerow">${list.map((m,i)=>`<button class="chip ${i===ti?'on':''}" data-m="${m}">${m}m</button>`).join('')}${extra}<button class="chip add" data-other>Other</button></div></div>`; };
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot"><button class="btn" data-skip>${edit?'Cancel':'Skip'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
   const refresh=()=>{ let left=room();
     timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
       const pay=paidValue(t,mins[t.id]);
       c.innerHTML=b?`<span class="otval">+${pay+b}</span> coins`
         :mins[t.id]<t.target?`<span class="otval">+${pay}</span> coins <span class="tiny muted">of ${taskValue(t)}</span>`
         :`<span class="otval">+${pay}</span> coins`; });
-    o.querySelector('[data-ok]').textContent=sel.size>1?`Mark ${sel.size} done`:'Mark done';
+    if(!edit) o.querySelector('[data-ok]').textContent=sel.size>1?`Mark ${sel.size} done`:'Mark done';
     const cap=o.querySelector('[data-cap]'); if(cap) cap.hidden=left>0; };
   timed.forEach(t=>{ const el=o.querySelector(`[data-time="${t.id}"]`);
     const pick=(m,btn)=>{ el.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); btn?.classList.add('on'); mins[t.id]=m; haptic(); refresh(); };
     el.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>pick(Number(b.dataset.m),b));
     el.querySelector('[data-other]').onclick=()=>promptNum('Minutes on “'+t.name+'”',mins[t.id],v=>{ const b=document.createElement('button'); b.className='chip on'; b.textContent=v+'m'; b.dataset.m=v; b.onclick=()=>pick(v,b); el.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); el.querySelector('[data-other]').before(b); mins[t.id]=v; refresh(); });
   });
-  o.querySelector('[data-skip]').onclick=()=>{ close(o); completeSelected(); };
-  o.querySelector('[data-ok]').onclick=()=>{ close(o); completeSelected(mins); };
+  o.querySelector('[data-skip]').onclick=()=>{ close(o); if(!edit) completeSelected(); };
+  o.querySelector('[data-ok]').onclick=()=>{ close(o); if(edit) timed.forEach(t=>recastDone(t.id,mins[t.id])); else completeSelected(mins); };
   refresh();
 }
 function promptNum(titleTxt,val,fn){

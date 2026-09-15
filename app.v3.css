@@ -112,6 +112,7 @@ textarea{resize:vertical;min-height:80px}
 .task .str i{display:block;height:100%;background:var(--accent);border-radius:3px}
 .dots.big{gap:6px}.dots.big i{width:14px;height:14px;border-radius:4px}.dots i.t{border:2px solid var(--accent);background:transparent}.dots i.f{background:var(--fg3)}
 .task.done{opacity:.6}
+button.task.done{width:100%;text-align:left;cursor:pointer}
 .task.done .box{border-color:var(--accent);background:var(--accent)}
 .task.done .box svg{opacity:1;transform:none;color:var(--accent-fg)}
 .task.done .name{text-decoration:line-through;text-decoration-color:var(--fg3)}
