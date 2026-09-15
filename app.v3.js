@@ -966,7 +966,8 @@ function nextDemoName(){
    Nothing here can be failed: windows roll forward, so a bad patch costs
    time, never progress you already had. */
 const TIERS_C = {
-  common:    {label:'Common',    colour:'#22c55e', rolls:[10,20,30]},
+  /* Common grey · Rare blue · Legendary purple — matches the chest panels. */
+  common:    {label:'Common',    colour:'#94a3b8', rolls:[10,20,30]},
   rare:      {label:'Rare',      colour:'#3b82f6', rolls:[50,70,90]},
   legendary: {label:'Legendary', colour:'#a855f7', rolls:[150,180,200]},
 };
@@ -2066,7 +2067,43 @@ const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   archive:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg>',
   cal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>',
-  chest:(c)=>`<svg viewBox="0 0 64 64" fill="none"><path d="M8 26h48v26a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4z" fill="${c}" opacity=".9"/><path d="M8 26a24 24 0 0 1 48 0z" fill="${c}"/><rect x="26" y="30" width="12" height="14" rx="2" fill="#0b0f0e" opacity=".55"/><circle cx="32" cy="36" r="2.4" fill="${c}"/><path d="M8 26h48" stroke="#0b0f0e" stroke-opacity=".35" stroke-width="2.5"/></svg>`,
+  chest:(c)=>{
+    const id=('c'+String(c).replace(/[^a-zA-Z0-9]/g,''));
+    return `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="${id}m" x1="8" y1="10" x2="56" y2="56"><stop stop-color="#e8eef5"/><stop offset=".35" stop-color="#9aa6b5"/><stop offset=".7" stop-color="#5c6674"/><stop offset="1" stop-color="#2a313b"/></linearGradient>
+        <linearGradient id="${id}p" x1="16" y1="14" x2="48" y2="52"><stop stop-color="#fff" stop-opacity=".55"/><stop offset=".25" stop-color="${c}"/><stop offset=".75" stop-color="${c}" stop-opacity=".85"/><stop offset="1" stop-color="#1a1030" stop-opacity=".9"/></linearGradient>
+        <radialGradient id="${id}g" cx="32" cy="28" r="22"><stop stop-color="${c}" stop-opacity=".9"/><stop offset="1" stop-color="${c}" stop-opacity=".35"/></radialGradient>
+        <linearGradient id="${id}hi" x1="12" y1="8" x2="40" y2="40"><stop stop-color="#fff" stop-opacity=".7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+      </defs>
+      <!-- feet -->
+      <path d="M12 54h8l-2 4H14zM44 54h8l-2 4H46z" fill="url(#${id}m)"/>
+      <!-- body shell -->
+      <path d="M8 28h48v24c0 2.2-1.8 4-4 4H12c-2.2 0-4-1.8-4-4V28z" fill="url(#${id}m)"/>
+      <!-- body panel -->
+      <path d="M12 32h40v16c0 1.2-1 2.2-2.2 2.2H14.2C13 50.2 12 49.2 12 48V32z" fill="url(#${id}p)"/>
+      <path d="M14 34h36v12c0 .8-.6 1.4-1.4 1.4H15.4c-.8 0-1.4-.6-1.4-1.4V34z" fill="url(#${id}g)" opacity=".85"/>
+      <!-- lid -->
+      <path d="M8 28c0-10 8.5-18 24-18s24 8 24 18H8z" fill="url(#${id}m)"/>
+      <path d="M12 26c1.2-8 8-14 20-14s18.8 6 20 14H12z" fill="url(#${id}p)"/>
+      <path d="M16 24c1-5.5 6-10 16-10s15 4.5 16 10H16z" fill="url(#${id}g)" opacity=".9"/>
+      <!-- metal bands -->
+      <path d="M20 10.5v43.5M44 10.5v43.5" stroke="url(#${id}m)" stroke-width="5" stroke-linecap="round"/>
+      <path d="M20 10.5v43.5M44 10.5v43.5" stroke="#fff" stroke-opacity=".25" stroke-width="1.2"/>
+      <path d="M8 28h48" stroke="#1a2030" stroke-opacity=".55" stroke-width="2.2"/>
+      <path d="M10 48h44" stroke="url(#${id}m)" stroke-width="3.5" stroke-linecap="round"/>
+      <!-- lock plate -->
+      <circle cx="32" cy="38" r="7.2" fill="url(#${id}m)" stroke="#1a2030" stroke-opacity=".4" stroke-width="1"/>
+      <circle cx="32" cy="38" r="4.6" fill="#1a2030" opacity=".55"/>
+      <circle cx="32" cy="37.2" r="1.6" fill="#c9d2de"/>
+      <path d="M32 38.6v3.2" stroke="#c9d2de" stroke-width="1.4" stroke-linecap="round"/>
+      <!-- rivets -->
+      <circle cx="20" cy="28" r="1.3" fill="#d7dee8"/><circle cx="44" cy="28" r="1.3" fill="#d7dee8"/>
+      <circle cx="20" cy="48" r="1.3" fill="#d7dee8"/><circle cx="44" cy="48" r="1.3" fill="#d7dee8"/>
+      <!-- gloss -->
+      <path d="M14 16c4-6 12-9 18-9 2 0 4 .3 6 .8-6 1.2-12 5-16 10.5L14 16z" fill="url(#${id}hi)"/>
+    </svg>`;
+  },
   coin:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9.5A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5.5 1.5" stroke-linecap="round"/></svg>',
   flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
 
