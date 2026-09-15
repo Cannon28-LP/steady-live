@@ -1898,11 +1898,13 @@ function completeSelected(mins){
   let cleared=false;
   if(n && allDone===n && !d.cleared){ d.cleared=true; d.clearBonus=CLEAR_PER_TASK*n; coins+=d.clearBonus; xp+=d.clearBonus; cleared=true; }
   d.points+=coins; S.points.coins+=coins; S.points.xp+=xp; d.perfect=!!d.cleared;
-  S.undo={date:k,ids:changed,coins,xp,cleared};
   sel.clear(); save();
   haptic(cleared?'success':'light');
   changed.forEach(id=>document.querySelector(`[data-task="${id}"]`)?.classList.add('leaving'));
   const streakWin = cleared ? payClearStreak() : null;
+  const streakPay=streakWin?.amount||0;
+  S.undo={date:k,ids:changed,coins:coins+streakPay,xp:xp+streakPay,cleared,streakPay,streakBlock:streakWin?.block||null};
+  save();
   setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick();
     if(streakWin) setTimeout(()=>streakScene(streakWin),900);
     toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`, 'Undo', undoLast); if(cleared) celebrate(); }, motionOK()?220:0);
@@ -1911,8 +1913,49 @@ function undoLast(){
   const u=S.undo; if(!u) return; const d=day(u.date);
   u.ids.forEach(id=>{ delete d.tasks[id]; });
   if(u.cleared){ d.cleared=false; d.clearBonus=0; }
-  d.points-=u.coins; S.points.coins-=u.coins; S.points.xp-=u.xp; d.perfect=false;
+  if(u.streakPay){ S.clearPaidBlock=Math.max(0,(u.streakBlock||1)-1); }
+  d.points-=(u.coins-(u.streakPay||0)); S.points.coins-=u.coins; S.points.xp-=u.xp; d.perfect=false;
   S.undo=null; save(); haptic(); render(); toast('Undone');
+}
+/* Unmark one done task today — undoes its coins and any day-clear bonus it was carrying. */
+function unmarkDone(id){
+  const k=today(), d=day(k), e=d.tasks[id];
+  if(!e||e.status!=='done') return;
+  let coins=(e.value||0)+(e.bonus||0), xp=e.value||0;
+  delete d.tasks[id];
+  if(d.cleared){
+    const cb=d.clearBonus||0; coins+=cb; xp+=cb;
+    d.cleared=false; d.clearBonus=0; d.perfect=false;
+    /* If a full-clear streak payout just landed today and the day is no longer clear, claw it back. */
+    const u=S.undo;
+    if(u&&u.date===k&&u.streakPay&&u.cleared){
+      S.points.coins-=u.streakPay; S.points.xp-=u.streakPay;
+      S.clearPaidBlock=Math.max(0,(u.streakBlock||1)-1);
+      u.streakPay=0; u.cleared=false;
+    }
+  }
+  d.points-=coins; S.points.coins-=coins; S.points.xp-=xp;
+  if(S.undo&&S.undo.ids?.includes(id)){
+    S.undo.ids=S.undo.ids.filter(x=>x!==id);
+    if(!S.undo.ids.length) S.undo=null;
+  }
+  save(); haptic(); render(); toast('Undone');
+}
+function doneSheet(id){
+  const t=S.tasks.find(x=>x.id===id); if(!t) return;
+  const e=day(today()).tasks[id]; if(!e||e.status!=='done') return;
+  const timed=!!t.target;
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <h2>${esc(t.name)}</h2>
+    <p class="muted small" style="margin-bottom:14px">${timed?(e.minutes!=null?`Logged ${e.minutes}m · target ${t.target}m.`:`Timed · target ${t.target}m.`)+' Fix the time or undo if you meant to leave it open.':'Marked done. Undo if that was a miss-tap.'}</p>
+    <div class="stack">
+      ${timed?`<button class="btn primary block" data-edit>Edit time</button>`:''}
+      <button class="btn ${timed?'':'primary'} block" data-undo>Undo</button>
+      <button class="btn ghost block" data-x>Cancel</button>
+    </div></div>`);
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  const ub=o.querySelector('[data-undo]'); if(ub) ub.onclick=()=>{ close(o); unmarkDone(id); };
+  const eb=o.querySelector('[data-edit]'); if(eb) eb.onclick=()=>{ close(o); timeSheet([t], true); };
 }
 /* Recast a done timed task's minutes today. Coins/XP move by the difference only. */
 function recastDone(id,mins){
@@ -1936,7 +1979,7 @@ function toast(msg,action,fn){
   const el=document.getElementById('toast'); clearTimeout(toastT);
   el.innerHTML=`<span>${esc(msg)}</span>${action?`<button id="toastact">${esc(action)}</button>`:''}`;
   if(action) el.querySelector('#toastact').onclick=()=>{ el.classList.remove('show'); fn&&fn(); };
-  el.classList.add('show'); toastT=setTimeout(()=>el.classList.remove('show'),action?6000:2200);
+  el.classList.add('show'); toastT=setTimeout(()=>el.classList.remove('show'),action?12000:2200);
 }
 function fxCanvas(){
   let c=document.getElementById('fx');
@@ -2008,7 +2051,7 @@ function vToday(){
     open.length===0?`<div class="card empty"><b>All done</b>Everything's ticked. See you tomorrow.</div>`:`
     <ul class="tasks" data-tour="tasks">${open.map(row).join('')}</ul>
     <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below.</p>`}
-    ${done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">${done.some(t=>t.target)?'tap to edit time':'back tomorrow'}</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id]; const inner=`<span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(e?.value||0)+(e?.bonus||0)}${e?.minutes?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${e.minutes}m</span>`:''}</span>`; return t.target?`<li><button class="task done" data-editdone="${t.id}">${inner}</button></li>`:`<li><div class="task done">${inner}</div></li>`; }).join('')}</ul></details>`:''}
+    ${done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">tap to undo${done.some(t=>t.target)?' or edit time':''}</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id]; const inner=`<span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(e?.value||0)+(e?.bonus||0)}${e?.minutes!=null?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${e.minutes}m</span>`:''}</span>`; return `<li><button class="task done" data-donetap="${t.id}">${inner}</button></li>`; }).join('')}</ul></details>`:''}
   </div>
   ${iosInstallNudge()}
   ${backupNudge()}
@@ -2651,7 +2694,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and ${TASK_BASE} XP, multiplied by that task's habit strength (up to ×1.5). Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
     <p><b style="color:var(--fg)">Day cleared.</b> Tick everything and you get +${CLEAR_PER_TASK} per task on top.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Tap a done timed task today to correct the minutes — coins move by the difference, so you do not have to wait until tomorrow.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Tap anything in Done today to undo a miss-tap, or to correct the minutes on a timed task — coins move by the difference.</p>
     <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
@@ -2686,7 +2729,7 @@ function bind(){
   qa('[data-go]').forEach(b=>b.onclick=()=>{ const open=b.dataset.open; setTab(b.dataset.go); if(open){ const acc=document.getElementById('acc-'+open); if(acc){acc.open=true; acc.querySelector('input')?.focus();} } });
   // Today
   qa('[data-task]').forEach(b=>b.onclick=()=>{ const id=b.dataset.task; sel.has(id)?sel.delete(id):sel.add(id); b.classList.toggle('selected'); haptic(); updateConfirm(); });
-  qa('[data-editdone]').forEach(b=>b.onclick=()=>{ const t=S.tasks.find(x=>x.id===b.dataset.editdone); if(t?.target) timeSheet([t], true); });
+  qa('[data-donetap]').forEach(b=>b.onclick=()=>doneSheet(b.dataset.donetap));
   updateConfirm();
   // Progress
   // Plan — list
