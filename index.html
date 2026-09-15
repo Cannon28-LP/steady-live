@@ -46,9 +46,9 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.v3.js?b=38"/>
-<link rel="preload" href="./app.v3.css?b=38" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.v3.css?b=38"/></noscript>
+<link rel="modulepreload" href="./app.v3.js?b=39"/>
+<link rel="preload" href="./app.v3.css?b=39" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v3.css?b=39"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
@@ -73,25 +73,28 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 <div class="toast" id="toast" role="status"></div>
 
 <script>
-// If the module never runs (missing app.js, half-finished download, opened as a
-// lone file), say so rather than spinning forever.
 window.__steadyBootTimer = setTimeout(function(){
   if (window.__steadyBooted) return;
   var r=document.querySelector('#boot .ring'), s=document.getElementById('bootsub'), f=document.getElementById('bootfail');
   if(r) r.hidden=true; if(s) s.hidden=true; if(f) f.hidden=false;
   var b=document.getElementById('bootretry'); if(b) b.onclick=function(){ location.reload(); };
-}, 8000);
+}, 25000);
 </script>
 <script type="module">
-import { bootSteady } from './app.v3.js?b=38';
-const clear = () => { const b=document.getElementById('boot');
-  if(b){ b.classList.add('gone'); setTimeout(()=>b.remove(),350); } };
-try { bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear(); }
-catch (e) {
-  window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear();
-  const el = document.getElementById('app');
-  if (el) el.innerHTML = '<div class="page"><div class="card"><b>Couldn\u2019t start</b><p class="small muted" style="margin-top:8px">'+String(e&&e.message||e)+'</p></div></div>';
-}
+const clear = () => { const b=document.getElementById('app') && document.getElementById('boot');
+  const boot=document.getElementById('boot');
+  if(boot){ boot.classList.add('gone'); setTimeout(()=>boot.remove(),350); } };
+const fail = (e) => {
+  window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer);
+  var r=document.querySelector('#boot .ring'), s=document.getElementById('bootsub'), f=document.getElementById('bootfail');
+  if(r) r.hidden=true; if(s) s.hidden=true; if(f){ f.hidden=false;
+    var p=f.querySelector('p'); if(p) p.textContent = 'Couldn\u2019t start: '+(e&&e.message||e||'unknown error')+'. Tap Try again.'; }
+  var b=document.getElementById('bootretry'); if(b) b.onclick=function(){ location.reload(); };
+};
+import('./app.v3.js?b=39').then(m => {
+  try { m.bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear(); }
+  catch (e) { fail(e); }
+}).catch(fail);
 </script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
