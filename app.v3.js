@@ -3187,7 +3187,7 @@ function bind(){
   const rv=q('#remevening'); if(rv) rv.onchange=()=>{ remindCfg().evening=rv.value; save(); subscribePush().catch(()=>{}); toast('Evening nudge set'); };
   const ii=q('[data-iosinstall]'); if(ii) ii.onclick=()=>iosInstallSheet();
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
-  const ro=q('#replayonb'); if(ro) ro.onclick=()=>{ haptic(); onboarding(()=>{ render(); toast('Setup replayed'); }, true); };
+  const rob=q('#replayonb'); if(rob) rob.onclick=()=>{ haptic(); onboarding(()=>{ render(); toast('Setup replayed'); }, true); };
   const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
   const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, points and rewards. This cannot be undone.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
 }
