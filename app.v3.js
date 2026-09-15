@@ -2,7 +2,7 @@
 /* ============ Steady — local-first consistency tracker ============ */
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-11'; }catch(e){ return '2026-09-11'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-15'; }catch(e){ return '2026-09-15'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -2523,8 +2523,8 @@ function bind(){
   };
   const fp=q('#forgotpw'); if(fp) fp.onclick=()=>forgotSheet();
   const so=q('#signout'); if(so) so.onclick=()=>modal('<h2>Sign out?</h2><p class="muted">Your tasks and history stay on this device. Sign back in any time.</p>','Sign out',async()=>{ await Sync.signOut(); render(); toast('Signed out'); });
-  const rv=q('#restorevault'); if(rv) rv.onclick=async()=>{
-    rv.disabled=true; rv.textContent='…';
+  const rvault=q('#restorevault'); if(rvault) rvault.onclick=async()=>{
+    rvault.disabled=true; rvault.textContent='…';
     try{
       const remote=await Sync.fetchVault();
       if(!remote?.blob){ toast('No backup on the account yet — open the app on your phone for a minute so it can upload.'); }
@@ -2532,7 +2532,7 @@ function bind(){
         modal('<h2>Restore from account?</h2><p class="muted">This replaces what is on <b>this</b> device with the cloud backup (usually your phone). You cannot undo it from here.</p>','Restore',()=>{ Sync.applyVault(remote.blob, remote.updatedAt); render(); toast('Restored from account'); friendsTick(); });
       }
     }catch(e){ toast(e.message||'Could not reach backup'); }
-    finally{ rv.disabled=false; rv.textContent='Restore from account'; }
+    finally{ rvault.disabled=false; rvault.textContent='Restore from account'; }
   };
   const bn=q('#backupnow'); if(bn) bn.onclick=async()=>{
     bn.disabled=true; bn.textContent='…';

@@ -1,9 +1,8 @@
 // Steady service worker.
-// Stale-while-revalidate: the app opens instantly from cache, and a new build
-// downloads in the background and is used on the next open. Best of both —
-// no launch delay, and no cache version to bump by hand.
-const CACHE = 'steady-v22';
-const ASSETS = ['./', './index.html', './app.v3.js?b=20', './app.v3.css?b=20', './manifest.json', './icon.svg'];
+// HTML/JS/CSS: network-first so a broken build never sticks.
+// Other assets: stale-while-revalidate.
+const CACHE = 'steady-v23';
+const ASSETS = ['./', './index.html', './app.v3.js?b=21', './app.v3.css?b=21', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -19,7 +18,6 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('message', e => { if (e.data === 'skipWaiting') self.skipWaiting(); });
 
-// ---- reminders ----
 self.addEventListener('push', e => {
   let d = { title: 'Steady', body: 'Time to tick something off.' };
   try { if (e.data) d = Object.assign(d, e.data.json()); } catch (err) { if (e.data) d.body = e.data.text(); }
@@ -41,20 +39,37 @@ self.addEventListener('notificationclick', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  if (new URL(req.url).origin !== self.location.origin) return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
 
-  const key = (req.mode === 'navigate' || req.destination === 'document') ? './index.html' : req;
+  const path = url.pathname;
+  const isDoc = req.mode === 'navigate' || req.destination === 'document';
+  const isCode = /\.(js|css)$/.test(path) || path.endsWith('/sw.js');
 
-  e.respondWith(
-    caches.match(key, { ignoreSearch: (key === './index.html') }).then(hit => {
-      const net = fetch(req).then(res => {
+  // Always try the network first for the shell and code, so a bad deploy can't lock people out.
+  if (isDoc || isCode) {
+    e.respondWith(
+      fetch(req).then(res => {
         if (res && res.status === 200 && res.type === 'basic') {
           const copy = res.clone();
+          const key = isDoc ? './index.html' : req;
           caches.open(CACHE).then(c => c.put(key, copy));
         }
         return res;
+      }).catch(() => caches.match(isDoc ? './index.html' : req).then(hit => hit || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  e.respondWith(
+    caches.match(req).then(hit => {
+      const net = fetch(req).then(res => {
+        if (res && res.status === 200 && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(req, copy));
+        }
+        return res;
       }).catch(() => hit);
-      // Serve the cached copy straight away; refresh it behind the scenes.
       return hit || net;
     })
   );
