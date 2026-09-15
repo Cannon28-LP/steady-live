@@ -386,6 +386,21 @@ function textHasMore(text, max=60){
   if(t.includes('\n')) return t.split('\n').filter(l=>l.trim()).length>1 || (t.split('\n')[0]||'').length>max;
   return t.length>max;
 }
+/* What the dropdown shows under the first line — no repeat of the headline. */
+function restAfterFirstLine(text, max=60){
+  const raw=String(text||'').replace(/\r/g,'');
+  const t=raw.trim();
+  if(!t) return '';
+  const nl=t.indexOf('\n');
+  if(nl>=0){
+    const first=(t.slice(0,nl)).trim();
+    const rest=t.slice(nl+1).replace(/^\n+/,'').trimEnd();
+    if(first.length>max) return first.slice(max-1)+ (rest?('\n'+rest):'');
+    return rest;
+  }
+  if(t.length<=max) return '';
+  return t.slice(max-1);
+}
 function addNote(){
   const now=Date.now();
   const n={id:uid(),title:'',body:'',createdAt:now,updatedAt:now};
@@ -2294,8 +2309,7 @@ function pNotes(){
               <button type="button" class="btn sm ghost" data-notecancel="${n.id}">Cancel</button>
               <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
             </div>`
-          :`<p class="planfold-title" style="font-weight:650;white-space:pre-wrap;overflow-wrap:anywhere">${esc(noteTitle(n))}</p>
-            <p style="margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere">${body?esc(body):'<span class="muted">No body yet</span>'}</p>
+          :`<p style="white-space:pre-wrap;overflow-wrap:anywhere">${body?esc(body):'<span class="muted">No body yet</span>'}</p>
             <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="btn sm primary" data-noteedit="${n.id}">Edit</button>
               <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
@@ -2329,7 +2343,9 @@ function pAffirmations(){
               <button type="button" class="btn primary sm" data-affsave="${w.id}">Save</button>
               <button type="button" class="btn sm ghost" data-affcancel="${w.id}">Cancel</button>
             </div>`
-          :`<button type="button" class="afffull" data-touchwhy="${w.id}">${esc(w.text)}</button>
+          :`${(()=>{ const rest=restAfterFirstLine(w.text); return rest
+              ?`<button type="button" class="afffull" data-touchwhy="${w.id}">${esc(rest)}</button>`
+              :`<p class="tiny muted">That’s the whole line.</p>`; })()}
             <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="btn sm primary" data-affeditbtn="${w.id}">Edit</button>
               <button type="button" class="btn sm ghost" data-touchwhy="${w.id}">Bring to top</button>
