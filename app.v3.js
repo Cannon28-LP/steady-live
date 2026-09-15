@@ -15,7 +15,7 @@ const SYNC = {
   url:    'https://rjytcvajeysfnfmtgakm.supabase.co',
   anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
 };
-const MAX_REWARDS = 6, SPARES = 2, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
+const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
 const MAX_TASKS = 10, MIN_REWARD_PRICE = 10;
 const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
 const CREW_MAX = 8;              // past this a chat stops being a conversation
@@ -138,7 +138,7 @@ function nextAvailable(r){
   if(m>12){ m=1; y++; }
   return `${y}-${pad(m)}-01`;
 }
-/* One spare beyond what you planned, then it stops. Life happens; twice is a pattern. */
+/* One spare beyond what you planned, then it stops. Life happens once; twice is a pattern. */
 function allowanceState(r){
   const used=boughtInWindow(r), limit=allowanceOf(r), hard=limit+SPARES;
   const f=rewardFreq(r);
@@ -2448,7 +2448,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
     <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn over the last four weeks. Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
-    <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber on the first spare and red on the last. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
+    <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Misses.</b> Anything untouched at local midnight becomes a miss on next open, and you are asked why. Those answers are the most useful thing in the app: they feed <i>Why you miss</i> in Progress, the breakdown on each task, the day detail in a task's history, and every recap.</p>
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
