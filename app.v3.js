@@ -399,7 +399,7 @@ function migrateWhy(w){
 function touchWhy(w){ migrateWhy(w); w.touchedAt=Date.now(); save(); }
 function whysSorted(){ (S.whys||[]).forEach(migrateWhy); return [...(S.whys||[])].sort((a,b)=>(b.touchedAt||0)-(a.touchedAt||0)); }
 function notesFiltered(){ const q=planState.noteQ||''; return notesSorted().filter(n=>keywordMatch(noteTitle(n)+' '+ (n.body||''), q)); }
-function whysFiltered(){ const q=typeof affQ==='string'?affQ:''; return whysSorted().filter(w=>keywordMatch(w.text, q)); }
+function whysFiltered(){ const q=planState.affQ||''; return whysSorted().filter(w=>keywordMatch(w.text, q)); }
 
 function toggleTodo(id){ const t=S.todos.find(x=>x.id===id); if(!t) return;
   t.done=!t.done; t.doneDay=t.done?today():null; if(t.done&&!t.day) t.day=today(); save(); }
@@ -1745,7 +1745,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:''}, affQ='', progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:''}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -1839,11 +1839,21 @@ function backupNudge(){
 }
 
 function vPlan(){
-  const sub=planState.sub;
+  const sub=planState.sub==='affirmations'||planState.sub==='notes'||planState.sub==='list'?planState.sub:'list';
+  planState.sub=sub;
+  const q = sub==='notes'?(planState.noteQ||''):sub==='affirmations'?(planState.affQ||''):'';
+  const search = (sub==='notes'||sub==='affirmations')?`<div class="card" style="margin-bottom:12px;padding:12px">
+    <input type="search" id="${sub==='notes'?'notesearch':'affsearch'}" placeholder="${sub==='notes'?'Search notes by a word…':'Search affirmations by a word…'}" value="${esc(q)}" autocomplete="off">
+    <p class="tiny muted" style="margin-top:8px">${(()=>{
+      if(!(q||'').trim()) return 'Last opened sits at the top.';
+      const n = sub==='notes'?notesFiltered().length:whysFiltered().length;
+      return n?`${n} match${n===1?'':'es'}`:'No matches';
+    })()}</p></div>`:'';
   return `<div class="head"><div><div class="eyebrow">Outside the points — nothing here can be failed</div><h1>Plan</h1></div></div>
   ${affirmationLine()}
-  <div class="seg" style="margin-bottom:14px">${[['list','List'],['notes','Notes']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-psub="${v}">${l}</button>`).join('')}</div>
-  ${sub==='list'?pList():pNotes()}`;
+  <div class="seg" style="margin-bottom:14px">${[['list','List'],['notes','Notes'],['affirmations','Affirmations']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-psub="${v}">${l}</button>`).join('')}</div>
+  ${search}
+  ${sub==='list'?pList():sub==='notes'?pNotes():pAffirmations()}`;
 }
 
 function pList(){
@@ -1882,8 +1892,6 @@ function pNotes(){
   const all=notesSorted(), ns=notesFiltered(), q=planState.noteQ||'';
   return `
   <button class="btn primary block" id="newnote" style="margin-bottom:14px">New note</button>
-  ${all.length?`<div class="card" style="margin-bottom:12px;padding:12px"><input type="search" id="notesearch" placeholder="Search by a word in the title…" value="${esc(q)}" autocomplete="off">
-    <p class="tiny muted" style="margin-top:8px">${q?(ns.length?`${ns.length} match${ns.length===1?'':'es'}`:'No matches'):'Last opened sits at the top.'}</p></div>`:''}
   ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>`<button class="noterow" data-note="${n.id}">
       <div class="grow">
         <div class="row between" style="gap:10px;align-items:baseline">
@@ -1894,6 +1902,18 @@ function pNotes(){
       </div><span class="chev">›</span></button>`).join('')}</div>`:
     all.length?`<div class="card empty"><b>Nothing matched</b>Try another word from the title.</div>`:
     `<div class="card empty"><b>No notes</b>Somewhere to write things down.</div>`}`;
+}
+
+function pAffirmations(){
+  const all=whysSorted(), list=whysFiltered(), q=planState.affQ||'';
+  return `
+  <div class="card" style="margin-bottom:14px;padding:12px">
+    <div class="row"><input type="text" id="newwhy" placeholder="Add an affirmation…" maxlength="140"><button class="btn primary" id="addwhy">Add</button></div>
+    <p class="tiny muted" style="margin-top:8px">Shown on the morning screen and under page titles. Tap a line to bring it to the top.</p>
+  </div>
+  ${list.length?`<div class="card" style="padding:4px 12px">${list.map(w=>`<div class="editrow"><button type="button" class="name" style="font-weight:500;text-align:left;background:none;border:0;color:inherit;padding:0;flex:1;cursor:pointer" data-touchwhy="${w.id}">${esc(w.text)}</button><button class="iconbtn" data-delwhy="${w.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')}</div>`:
+    all.length?`<div class="card empty"><b>Nothing matched</b>Try another word.</div>`:
+    `<div class="card empty"><b>No affirmations yet</b>Add one above — on the days you can’t be bothered, it’s what catches you.</div>`}`;
 }
 
 
@@ -2343,11 +2363,6 @@ function vSettings(){
     <div class="opt"><label>Haptics <span class="hint">buzz on confirms</span></label>${tg('haptics',st.haptics)}</div>
     <div class="opt"><label>Glow</label>${tg('glow',st.glow)}</div>
     <div class="opt"><label>Reset</label><button class="btn sm" id="resetlook">Defaults</button></div></div></details>
-  <details class="acc" id="acc-affirmations"><summary>Affirmations <span class="muted">${S.whys.length||'none'}</span></summary><div class="body">
-    <div class="row" style="margin-bottom:10px"><input type="text" id="newwhy" placeholder="Add an affirmation…" maxlength="140"><button class="btn primary" id="addwhy">Add</button></div>
-    ${S.whys.length?`<input type="search" id="affsearch" placeholder="Search by a word…" value="${esc(typeof affQ==='string'?affQ:'')}" autocomplete="off" style="margin-bottom:10px;width:100%">
-    <p class="tiny muted" style="margin-bottom:8px">${(affQ||'').trim()?(whysFiltered().length?`${whysFiltered().length} match${whysFiltered().length===1?'':'es'}`:'No matches'):'Last opened sits at the top. Tap a line to bring it up.'}</p>`:''}
-    ${whysFiltered().map(w=>`<div class="editrow"><button type="button" class="name" style="font-weight:500;text-align:left;background:none;border:0;color:inherit;padding:0;flex:1;cursor:pointer" data-touchwhy="${w.id}">${esc(w.text)}</button><button class="iconbtn" data-delwhy="${w.id}">${ICON.trash}</button></div>`).join('')||(S.whys.length?'<p class="muted small">Nothing matched.</p>':'<p class="muted small">This is what you see when the app opens. Nothing is written for you.</p>')}</div></details>
   <details class="acc" id="acc-remind" data-tour="remind" ${remOpen?'open':''}><summary>Reminders <span class="muted">${remindCfg().on&&notifyState()==='granted'?'on':'off'}</span></summary><div class="body">
     <div class="opt"><label>Reminders <span class="hint">a nudge in the morning, and in the evening if anything's open</span></label>
       <button class="toggle ${remindCfg().on?'on':''}" data-remind-on role="switch" aria-checked="${remindCfg().on}"></button></div>
@@ -2393,8 +2408,9 @@ function vSettings(){
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
-    <p><b style="color:var(--fg)">Plan.</b> A list and notes, both outside the economy — nothing there can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
-    <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
+    <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
+    <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
+    <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
 
     <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only, so there is nothing to moderate and no way to be unpleasant. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
@@ -2532,11 +2548,11 @@ function bind(){
   qa('[data-deltask]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.deltask); modal(`<h2>Remove “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. Past days stay in Progress.</p>`,'Remove',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();render();document.getElementById('acc-tasks').open=true;toast('Removed');},true);});
   // rewards
   qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
-  const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; document.getElementById('newwhy')?.focus();};
+  const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); document.getElementById('newwhy')?.focus();};
     q('#addwhy').onclick=add; nw.onkeydown=e=>{if(e.key==='Enter')add();}; }
-  const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ affQ=asearch.value; render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
-  qa('[data-touchwhy]').forEach(b=>b.onclick=()=>{ const w=S.whys.find(x=>x.id===b.dataset.touchwhy); if(!w) return; touchWhy(w); haptic(); render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; });
-  qa('[data-delwhy]').forEach(b=>b.onclick=()=>{ S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; });
+  const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ planState.affQ=asearch.value; render(); const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
+  qa('[data-touchwhy]').forEach(b=>b.onclick=()=>{ const w=S.whys.find(x=>x.id===b.dataset.touchwhy); if(!w) return; touchWhy(w); haptic(); render(); });
+  qa('[data-delwhy]').forEach(b=>b.onclick=()=>{ S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); });
   const nr=q('#newreward'); const np=q('#newprice');
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
@@ -2809,7 +2825,7 @@ function onboarding(next){
     if(step===0) g.innerHTML=`${steps}<h1>Why are you doing this?</h1>
       <p>Not the goal — the reason underneath it. What is it you actually want out of keeping your word to yourself?</p>
       <textarea id="onbwhy" style="margin-top:16px" maxlength="140" placeholder="e.g. I want to be someone who follows through."></textarea>
-      <p class="tiny muted" style="margin-top:10px">This is your affirmation. You'll see it on the opening screen every day, and it sits in Settings where you can change it or add more. On the days you can't be bothered, it's the thing that's meant to catch you.</p>
+      <p class="tiny muted" style="margin-top:10px">This is your affirmation. You'll see it on the opening screen every day, and it sits under Plan → Affirmations where you can change it or add more. On the days you can't be bothered, it's the thing that's meant to catch you.</p>
       <div class="actions"><button class="btn primary block" data-n ${line?'':'disabled'}>Next</button>
         <button class="btn ghost block" data-skip0 style="margin-top:8px">Skip — I'll write one later</button></div>`;
     if(step===1) g.innerHTML=`${steps}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions"><button class="btn primary block" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
@@ -2826,7 +2842,7 @@ function onboarding(next){
 /* ---------- Spotlight tour ---------- */
 const TOURS={
   today:[['ring','Coins earned today. Each task pays 10, boosted by its habit strength.'],['tasks','Tap to pick, confirm at the bottom. The thin bar is strength — it grows when you show up and only dents when you don’t.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
-  plan:[['listadd','Add anything, dated whenever you like — today, a date, or someday.']],
+  plan:[['listadd','Add anything, dated whenever you like — today, a date, or someday. List, Notes and Affirmations live here.']],
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
   shop:[['balance','Coins to spend. XP fills the level bar and is never spent.'],['gate','Spending unlocks when average habit strength is 70%+.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
   settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, font colour, designs, type.']],
