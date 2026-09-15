@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Steady"/>
 <link rel="icon" type="image/svg+xml" href="./icon.svg"/>
 <link rel="apple-touch-icon" href="./icon.svg"/>
+<base href="/steady-live/">
 <link rel="manifest" href="./manifest.json"/>
 
 <!-- Critical styles inline: the splash must paint before app.css or app.js arrive. -->
@@ -46,16 +47,16 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.v3.js?b=39"/>
-<link rel="preload" href="./app.v3.css?b=39" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.v3.css?b=39"/></noscript>
+<link rel="modulepreload" href="./app.v3.js?b=40"/>
+<link rel="preload" href="./app.v3.css?b=40" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v3.css?b=40"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
   <div id="bootfail" hidden><p style="max-width:26ch;text-align:center;font-size:.9rem;color:var(--fg2);line-height:1.5">
     Couldn't load the app files. If you opened <b>index.html</b> on its own, it won't run — it needs app.v3.js and app.v3.css beside it.
     Open the app from its web address instead.</p>
-    <button id="bootretry" style="margin-top:14px;padding:11px 20px;border:0;border-radius:12px;background:var(--accent);color:#0b0f0e;font:inherit;font-weight:650">Try again</button></div></div>
+    <button id="bootretry" type="button" style="margin-top:14px;padding:11px 20px;border:0;border-radius:12px;background:var(--accent);color:#0b0f0e;font:inherit;font-weight:650">Try again</button></div></div>
 <div id="motif" aria-hidden="true"></div>
 <div id="app"></div>
 <div class="tabbar" id="tabbar" hidden>
@@ -73,31 +74,36 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 <div class="toast" id="toast" role="status"></div>
 
 <script>
+function steadyHardReload(){
+  var go=function(){ location.replace('/steady-live/?t='+Date.now()); };
+  var tasks=[];
+  try{ if(navigator.serviceWorker) tasks.push(navigator.serviceWorker.getRegistrations().then(function(rs){ return Promise.all(rs.map(function(r){ return r.unregister(); })); })); }catch(e){}
+  try{ if(window.caches) tasks.push(caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); })); }catch(e){}
+  Promise.all(tasks).then(go, go);
+}
+window.steadyHardReload=steadyHardReload;
+document.getElementById('bootretry').onclick=function(){ steadyHardReload(); };
 window.__steadyBootTimer = setTimeout(function(){
   if (window.__steadyBooted) return;
   var r=document.querySelector('#boot .ring'), s=document.getElementById('bootsub'), f=document.getElementById('bootfail');
   if(r) r.hidden=true; if(s) s.hidden=true; if(f) f.hidden=false;
-  var b=document.getElementById('bootretry'); if(b) b.onclick=function(){ location.reload(); };
-}, 25000);
+}, 20000);
 </script>
 <script type="module">
-const clear = () => { const b=document.getElementById('app') && document.getElementById('boot');
-  const boot=document.getElementById('boot');
+const src = '/steady-live/app.v3.js?b=40';
+const clear = () => { const boot=document.getElementById('boot');
   if(boot){ boot.classList.add('gone'); setTimeout(()=>boot.remove(),350); } };
 const fail = (e) => {
   window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer);
   var r=document.querySelector('#boot .ring'), s=document.getElementById('bootsub'), f=document.getElementById('bootfail');
   if(r) r.hidden=true; if(s) s.hidden=true; if(f){ f.hidden=false;
     var p=f.querySelector('p'); if(p) p.textContent = 'Couldn\u2019t start: '+(e&&e.message||e||'unknown error')+'. Tap Try again.'; }
-  var b=document.getElementById('bootretry'); if(b) b.onclick=function(){ location.reload(); };
 };
-import('./app.v3.js?b=39').then(m => {
-  try { m.bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear(); }
-  catch (e) { fail(e); }
+import(src).then(m => {
+  try { m.bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/steady-live/sw.js');
+  } catch (e) { fail(e); }
 }).catch(fail);
-</script>
-<script>
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 </script>
 </body>
 </html>
