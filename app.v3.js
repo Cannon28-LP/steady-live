@@ -383,6 +383,23 @@ function dropNote(id){ S.notes=S.notes.filter(n=>n.id!==id); save(); }
 function noteEmpty(n){ migrateNote(n); return !n.title.trim() && !n.body.trim(); }
 /* Most recently opened or edited first. */
 function notesSorted(){ S.notes.forEach(migrateNote); return [...S.notes].sort((a,b)=>b.updatedAt-a.updatedAt); }
+/* Keyword search: every space-separated word must appear somewhere in the text (not an exact title match). */
+function keywordMatch(hay, q){
+  const words=String(q||'').toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if(!words.length) return true;
+  const h=String(hay||'').toLowerCase();
+  return words.every(w=>h.includes(w));
+}
+function migrateWhy(w){
+  if(!w || typeof w!=='object') return w;
+  if(!w.touchedAt) w.touchedAt=w.createdAt||Date.now();
+  if(!w.createdAt) w.createdAt=w.touchedAt;
+  return w;
+}
+function touchWhy(w){ migrateWhy(w); w.touchedAt=Date.now(); save(); }
+function whysSorted(){ (S.whys||[]).forEach(migrateWhy); return [...(S.whys||[])].sort((a,b)=>(b.touchedAt||0)-(a.touchedAt||0)); }
+function notesFiltered(){ const q=planState.noteQ||''; return notesSorted().filter(n=>keywordMatch(noteTitle(n)+' '+ (n.body||''), q)); }
+function whysFiltered(){ const q=typeof affQ==='string'?affQ:''; return whysSorted().filter(w=>keywordMatch(w.text, q)); }
 
 function toggleTodo(id){ const t=S.todos.find(x=>x.id===id); if(!t) return;
   t.done=!t.done; t.doneDay=t.done?today():null; if(t.done&&!t.day) t.day=today(); save(); }
@@ -1728,7 +1745,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:''}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:''}, affQ='', progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -1862,9 +1879,11 @@ function rowTodo(t){
 }
 
 function pNotes(){
-  const ns=notesSorted();
+  const all=notesSorted(), ns=notesFiltered(), q=planState.noteQ||'';
   return `
   <button class="btn primary block" id="newnote" style="margin-bottom:14px">New note</button>
+  ${all.length?`<div class="card" style="margin-bottom:12px;padding:12px"><input type="search" id="notesearch" placeholder="Search by a word in the title…" value="${esc(q)}" autocomplete="off">
+    <p class="tiny muted" style="margin-top:8px">${q?(ns.length?`${ns.length} match${ns.length===1?'':'es'}`:'No matches'):'Last opened sits at the top.'}</p></div>`:''}
   ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>`<button class="noterow" data-note="${n.id}">
       <div class="grow">
         <div class="row between" style="gap:10px;align-items:baseline">
@@ -1873,6 +1892,7 @@ function pNotes(){
         </div>
         <p class="tiny muted">${esc(notePreview(n).slice(0,60))}</p>
       </div><span class="chev">›</span></button>`).join('')}</div>`:
+    all.length?`<div class="card empty"><b>Nothing matched</b>Try another word from the title.</div>`:
     `<div class="card empty"><b>No notes</b>Somewhere to write things down.</div>`}`;
 }
 
@@ -2323,9 +2343,11 @@ function vSettings(){
     <div class="opt"><label>Haptics <span class="hint">buzz on confirms</span></label>${tg('haptics',st.haptics)}</div>
     <div class="opt"><label>Glow</label>${tg('glow',st.glow)}</div>
     <div class="opt"><label>Reset</label><button class="btn sm" id="resetlook">Defaults</button></div></div></details>
-  <details class="acc"><summary>Affirmation <span class="muted">${S.whys.length||'none'}</span></summary><div class="body">
-    <div class="row" style="margin-bottom:10px"><input type="text" id="newwhy" placeholder="" maxlength="140"><button class="btn primary" id="addwhy">Add</button></div>
-    ${S.whys.map(w=>`<div class="editrow"><span class="name" style="font-weight:500">${esc(w.text)}</span><button class="iconbtn" data-delwhy="${w.id}">${ICON.trash}</button></div>`).join('')||'<p class="muted small">This is what you see when the app opens. Nothing is written for you.</p>'}</div></details>
+  <details class="acc" id="acc-affirmations"><summary>Affirmations <span class="muted">${S.whys.length||'none'}</span></summary><div class="body">
+    <div class="row" style="margin-bottom:10px"><input type="text" id="newwhy" placeholder="Add an affirmation…" maxlength="140"><button class="btn primary" id="addwhy">Add</button></div>
+    ${S.whys.length?`<input type="search" id="affsearch" placeholder="Search by a word…" value="${esc(typeof affQ==='string'?affQ:'')}" autocomplete="off" style="margin-bottom:10px;width:100%">
+    <p class="tiny muted" style="margin-bottom:8px">${(affQ||'').trim()?(whysFiltered().length?`${whysFiltered().length} match${whysFiltered().length===1?'':'es'}`:'No matches'):'Last opened sits at the top. Tap a line to bring it up.'}</p>`:''}
+    ${whysFiltered().map(w=>`<div class="editrow"><button type="button" class="name" style="font-weight:500;text-align:left;background:none;border:0;color:inherit;padding:0;flex:1;cursor:pointer" data-touchwhy="${w.id}">${esc(w.text)}</button><button class="iconbtn" data-delwhy="${w.id}">${ICON.trash}</button></div>`).join('')||(S.whys.length?'<p class="muted small">Nothing matched.</p>':'<p class="muted small">This is what you see when the app opens. Nothing is written for you.</p>')}</div></details>
   <details class="acc" id="acc-remind" data-tour="remind" ${remOpen?'open':''}><summary>Reminders <span class="muted">${remindCfg().on&&notifyState()==='granted'?'on':'off'}</span></summary><div class="body">
     <div class="opt"><label>Reminders <span class="hint">a nudge in the morning, and in the evening if anything's open</span></label>
       <button class="toggle ${remindCfg().on?'on':''}" data-remind-on role="switch" aria-checked="${remindCfg().on}"></button></div>
@@ -2415,6 +2437,7 @@ function bind(){
   // Plan — notes
   const nn=q('#newnote'); if(nn) nn.onclick=()=>{ const n=addNote(); render(); noteEditor(n.id); };
   qa('[data-note]').forEach(b=>b.onclick=()=>noteEditor(b.dataset.note));
+  const nsearch=q('#notesearch'); if(nsearch){ nsearch.oninput=()=>{ planState.noteQ=nsearch.value; render(); const el=document.getElementById('notesearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
   // Friends  // Friends
   qa('[data-authmode]').forEach(b=>b.onclick=()=>{ authState.mode=b.dataset.authmode; haptic(); render(); });
   const ag=q('#authgo'); if(ag) ag.onclick=async()=>{
@@ -2509,9 +2532,11 @@ function bind(){
   qa('[data-deltask]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.deltask); modal(`<h2>Remove “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. Past days stay in Progress.</p>`,'Remove',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();render();document.getElementById('acc-tasks').open=true;toast('Removed');},true);});
   // rewards
   qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
-  const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; S.whys.push({id:uid(),text:v}); save(); haptic(); render(); qa('.acc')[4].open=true; document.getElementById('newwhy')?.focus();};
+  const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; document.getElementById('newwhy')?.focus();};
     q('#addwhy').onclick=add; nw.onkeydown=e=>{if(e.key==='Enter')add();}; }
-  qa('[data-delwhy]').forEach(b=>b.onclick=()=>{ S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); qa('.acc')[4].open=true; });
+  const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ affQ=asearch.value; render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
+  qa('[data-touchwhy]').forEach(b=>b.onclick=()=>{ const w=S.whys.find(x=>x.id===b.dataset.touchwhy); if(!w) return; touchWhy(w); haptic(); render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; });
+  qa('[data-delwhy]').forEach(b=>b.onclick=()=>{ S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); const a=document.getElementById('acc-affirmations'); if(a) a.open=true; });
   const nr=q('#newreward'); const np=q('#newprice');
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
@@ -2794,7 +2819,7 @@ function onboarding(next){
     const sk=g.querySelector('[data-skip0]'); if(sk) sk.onclick=()=>{ line=''; haptic(); step=1; draw(); };
     const ta=g.querySelector('#onbwhy'); if(ta){ const go=g.querySelector('[data-n]'); ta.oninput=()=>{ go.disabled=!ta.value.trim(); }; setTimeout(()=>ta.focus(),50); }
   };
-  const finish=()=>{ if(line) S.whys=[{id:uid(),text:line}]; [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null})); S.flags.onboarded=true; save(); g.remove(); next(); };
+  const finish=()=>{ if(line){ const now=Date.now(); S.whys=[{id:uid(),text:line,createdAt:now,touchedAt:now}]; } [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null})); S.flags.onboarded=true; save(); g.remove(); next(); };
   draw();
 }
 
