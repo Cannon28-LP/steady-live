@@ -373,6 +373,19 @@ function notePreview(n){
   const from = n.title.trim() ? lines : lines.slice(1);
   return from.join(' · ') || 'Empty';
 }
+/* First display line for Plan lists — rest opens in a dropdown. */
+function firstLine(text, max=60){
+  const t=String(text||'').replace(/\r/g,'').trim();
+  const line=(t.split('\n').find(l=>l.trim())||'').trim();
+  if(!line) return '…';
+  return line.length<=max?line:line.slice(0,max-1)+'…';
+}
+function textHasMore(text, max=60){
+  const t=String(text||'').replace(/\r/g,'').trim();
+  if(!t) return false;
+  if(t.includes('\n')) return t.split('\n').filter(l=>l.trim()).length>1 || (t.split('\n')[0]||'').length>max;
+  return t.length>max;
+}
 function addNote(){
   const now=Date.now();
   const n={id:uid(),title:'',body:'',createdAt:now,updatedAt:now};
@@ -2229,7 +2242,7 @@ function pList(){
   const byDay=(()=>{ const g={}; ahead.forEach(t=>(g[t.day]=g[t.day]||[]).push(t)); return g; })();
   return `
   <div class="card" data-tour="listadd">
-    <input type="text" id="newtodo" placeholder="Something to get done…" maxlength="80">
+    <input type="text" id="newtodo" placeholder="Something to get done…" maxlength="400">
     <div class="row" style="margin-top:8px;align-items:center;gap:8px">
       <input type="time" id="newtodoat" value="${planState.at||''}" style="width:126px">
       <span class="tiny muted">optional — a time nudges you</span>
@@ -2243,28 +2256,39 @@ function pList(){
   ${group('Today',tod)}
   ${Object.entries(byDay).map(([k,items])=>group(whenLabel(k),items,fmt(k,{day:'numeric',month:'short'}))).join('')}
   ${group('Someday',bl,'no date yet')}
-  ${dn.length?`<details class="fold"><summary><span>Ticked off today (${dn.length})</span></summary><div class="card" style="margin-top:8px"><ul class="tasks">${dn.map(t=>`<li><div class="todo done"><button class="tick on" data-todo="${t.id}">${ICON.check}</button><span class="name">${esc(t.text)}</span></div></li>`).join('')}</ul></div></details>`:''}
+  ${dn.length?`<details class="fold"><summary><span>Ticked off today (${dn.length})</span></summary><div class="card" style="margin-top:8px"><ul class="tasks">${dn.map(t=>{ const more=textHasMore(t.text); const h=`<button class="tick on" data-todo="${t.id}">${ICON.check}</button><span class="name">${esc(firstLine(t.text))}</span>`; return more?`<li><details class="planfold"><summary class="todo done">${h}</summary><div class="planfold-body">${esc(t.text)}</div></details></li>`:`<li><div class="todo done">${h}</div></li>`; }).join('')}</ul></div></details>`:''}
   ${!overdue.length&&!tod.length&&!ahead.length&&!bl.length&&!dn.length?`<div class="card empty"><b>Nothing planned</b>Add things whenever you think of them — today, a date, or someday.</div>`:''}`;
 }
 function rowTodo(t){
-  return `<li><div class="todo"><button class="tick" data-todo="${t.id}" aria-label="Done">${ICON.check}</button>
-    <span class="name">${esc(t.text)}${t.at?`<span class="tag">${esc(t.at)}</span>`:''}</span>
+  const more=textHasMore(t.text);
+  const head=`<button class="tick" data-todo="${t.id}" aria-label="Done">${ICON.check}</button>
+    <span class="name">${esc(firstLine(t.text))}${t.at?`<span class="tag">${esc(t.at)}</span>`:''}</span>
     <button class="iconbtn ghosty" data-tmove="${t.id}" aria-label="Reschedule">${ICON.cal}</button>
-    <button class="iconbtn ghosty" data-tdrop="${t.id}" aria-label="Remove">${ICON.trash}</button></div></li>`;
+    <button class="iconbtn ghosty" data-tdrop="${t.id}" aria-label="Remove">${ICON.trash}</button>`;
+  if(!more) return `<li><div class="todo">${head}</div></li>`;
+  return `<li><details class="planfold"><summary class="todo">${head}</summary>
+    <div class="planfold-body">${esc(t.text)}</div></details></li>`;
 }
 
 function pNotes(){
   const all=notesSorted(), ns=notesFiltered(), q=planState.noteQ||'';
   return `
   <button class="btn primary block" id="newnote" style="margin-bottom:14px">New note</button>
-  ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>`<button class="noterow" data-note="${n.id}">
-      <div class="grow">
-        <div class="row between" style="gap:10px;align-items:baseline">
-          <b>${esc(noteTitle(n))}</b>
-          <span class="tiny muted" style="flex:none">${fmt(dkey(new Date(n.createdAt)),{day:'numeric',month:'short',year:'2-digit'})}</span>
+  ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>{
+      const title=firstLine(noteTitle(n), 52);
+      const body=(n.body||'').trim();
+      const more=!!body || textHasMore(noteTitle(n),52);
+      return `<details class="planfold noterowfold">
+        <summary class="noterow">
+          <div class="grow"><div class="row between" style="gap:10px;align-items:baseline">
+            <b class="planfold-title">${esc(title)}</b>
+            <span class="tiny muted" style="flex:none">${fmt(dkey(new Date(n.createdAt)),{day:'numeric',month:'short',year:'2-digit'})}</span>
+          </div></div><span class="chev">›</span>
+        </summary>
+        <div class="planfold-body">${body?esc(body):'<span class="muted">No body yet</span>'}
+          <button type="button" class="btn sm primary" style="margin-top:10px" data-note="${n.id}">Open to edit</button>
         </div>
-        <p class="tiny muted">${esc(notePreview(n).slice(0,60))}</p>
-      </div><span class="chev">›</span></button>`).join('')}</div>`:
+      </details>`; }).join('')}</div>`:
     all.length?`<div class="card empty"><b>Nothing matched</b>Try another word from the title.</div>`:
     `<div class="card empty"><b>No notes</b>Somewhere to write things down.</div>`}`;
 }
@@ -2273,10 +2297,21 @@ function pAffirmations(){
   const all=whysSorted(), list=whysFiltered(), q=planState.affQ||'';
   return `
   <div class="card" style="margin-bottom:14px;padding:12px">
-    <div class="row"><input type="text" id="newwhy" placeholder="Add an affirmation…" maxlength="140"><button class="btn primary" id="addwhy">Add</button></div>
-    <p class="tiny muted" style="margin-top:8px">Shown on the morning screen and under page titles. Tap a line to bring it to the top.</p>
+    <textarea id="newwhy" placeholder="Add an affirmation…" maxlength="700" rows="2" style="width:100%;resize:vertical"></textarea>
+    <button class="btn primary block" id="addwhy" style="margin-top:8px">Add</button>
+    <p class="tiny muted" style="margin-top:8px">Shown on the morning screen and under page titles. First line shows in the list — tap to expand. Tap the line again in the open view to bring it to the top.</p>
   </div>
-  ${list.length?`<div class="card" style="padding:4px 12px">${list.map(w=>`<div class="editrow"><button type="button" class="name" style="font-weight:500;text-align:left;background:none;border:0;color:inherit;padding:0;flex:1;cursor:pointer" data-touchwhy="${w.id}">${esc(w.text)}</button><button class="iconbtn" data-delwhy="${w.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')}</div>`:
+  ${list.length?`<div class="card" style="padding:4px 12px">${list.map(w=>{
+      const more=textHasMore(w.text);
+      const line=esc(firstLine(w.text));
+      const del=`<button class="iconbtn" data-delwhy="${w.id}" aria-label="Remove">${ICON.trash}</button>`;
+      if(!more) return `<div class="editrow"><button type="button" class="name planfold-title" data-touchwhy="${w.id}">${line}</button>${del}</div>`;
+      return `<details class="planfold afffold"><summary class="editrow" style="border:0;padding:10px 0">
+        <span class="name planfold-title">${line}</span>${del}
+      </summary>
+      <div class="planfold-body"><button type="button" class="afffull" data-touchwhy="${w.id}">${esc(w.text)}</button></div>
+    </details>`;
+    }).join('')}</div>`:
     all.length?`<div class="card empty"><b>Nothing matched</b>Try another word.</div>`:
     `<div class="card empty"><b>No affirmations yet</b>Add one above — on the days you can’t be bothered, it’s what catches you.</div>`}`;
 }
@@ -2874,16 +2909,16 @@ function bind(){
   const nl=q('#newtodo'); if(nl){ const add=()=>{const v=nl.value.trim(); if(!v) return;
       addTodo(v,whenDay(),document.getElementById('newtodoat')?.value||null); haptic(); render(); document.getElementById('newtodo')?.focus();};
     q('#addtodo').onclick=add; nl.onkeydown=e=>{if(e.key==='Enter')add();}; }
-  qa('[data-todo]').forEach(b=>b.onclick=()=>{ const el=b.closest('.todo'); const id=b.dataset.todo; const t=S.todos.find(x=>x.id===id);
+  qa('[data-todo]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const el=b.closest('.todo')||b.closest('summary'); const id=b.dataset.todo; const t=S.todos.find(x=>x.id===id);
     haptic(); if(!t.done&&S.settings.motion){ el.classList.add('ticking'); setTimeout(()=>{toggleTodo(id);render();},200); } else { toggleTodo(id); render(); } });
-  qa('[data-tmove]').forEach(b=>b.onclick=()=>{ const t=S.todos.find(x=>x.id===b.dataset.tmove);
+  qa('[data-tmove]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tmove);
     moveSheet(t); });
   qa('[data-pull]').forEach(b=>b.onclick=()=>{ setTodoDay(b.dataset.pull,today()); haptic(); render(); toast('Moved to today'); });
-  qa('[data-tdrop]').forEach(b=>b.onclick=()=>{ const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
+  qa('[data-tdrop]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
     toast('Removed','Undo',()=>{ S.todos.push(t); save(); render(); }); });
   // Plan — notes
   const nn=q('#newnote'); if(nn) nn.onclick=()=>{ const n=addNote(); render(); noteEditor(n.id); };
-  qa('[data-note]').forEach(b=>b.onclick=()=>noteEditor(b.dataset.note));
+  qa('[data-note]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); noteEditor(b.dataset.note); });
   const nsearch=q('#notesearch'); if(nsearch){ nsearch.oninput=()=>{ planState.noteQ=nsearch.value; render(); const el=document.getElementById('notesearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
   // Friends  // Friends
   qa('[data-authmode]').forEach(b=>b.onclick=()=>{ authState.mode=b.dataset.authmode; haptic(); render(); });
@@ -3013,10 +3048,10 @@ function bind(){
   // rewards
   qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
   const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); document.getElementById('newwhy')?.focus();};
-    q('#addwhy').onclick=add; nw.onkeydown=e=>{if(e.key==='Enter')add();}; }
+    q('#addwhy').onclick=add; nw.onkeydown=e=>{ if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); add(); } }; }
   const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ planState.affQ=asearch.value; render(); const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
-  qa('[data-touchwhy]').forEach(b=>b.onclick=()=>{ const w=S.whys.find(x=>x.id===b.dataset.touchwhy); if(!w) return; touchWhy(w); haptic(); render(); });
-  qa('[data-delwhy]').forEach(b=>b.onclick=()=>{ S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); });
+  qa('[data-touchwhy]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const w=S.whys.find(x=>x.id===b.dataset.touchwhy); if(!w) return; touchWhy(w); haptic(); render(); });
+  qa('[data-delwhy]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); });
   const nr=q('#newreward'); const np=q('#newprice');
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
@@ -3186,7 +3221,7 @@ function noteEditor(id){
       <button class="iconbtn" data-del aria-label="Delete note">${ICON.trash}</button>
     </div>
     <div class="noteedit-head">
-      <input type="text" id="ntitle" class="ntitle" placeholder="Title" maxlength="80" value="${esc(n.title||'')}">
+      <input type="text" id="ntitle" class="ntitle" placeholder="Title" maxlength="400" value="${esc(n.title||'')}">
       <span class="tiny muted ndate">${fmt(dkey(new Date(n.createdAt)),{weekday:'short',day:'numeric',month:'short',year:'numeric'})}</span>
     </div>
     <textarea id="nbody" class="nbody" placeholder="Write anything…">${esc(n.body||'')}</textarea>`;
@@ -3304,7 +3339,7 @@ function onboarding(next, force){
       <div class="actions"><button class="btn primary block" data-n>Got it</button></div>`;
     if(step===1) g.innerHTML=`${steps}${back}<h1>Why are you doing this?</h1>
       <p>Not the goal — the reason underneath it. What is it you actually want out of keeping your word to yourself?</p>
-      <textarea id="onbwhy" style="margin-top:16px" maxlength="140" placeholder="e.g. I want to be someone who follows through."></textarea>
+      <textarea id="onbwhy" style="margin-top:16px" maxlength="700" placeholder="e.g. I want to be someone who follows through."></textarea>
       <p class="tiny muted" style="margin-top:10px">This is your affirmation. You'll see it on the opening screen every day, and it sits under Plan → Affirmations where you can change it or add more. On the days you can't be bothered, it's the thing that's meant to catch you.</p>
       <div class="actions"><button class="btn primary block" data-n ${line?'':'disabled'}>Next</button>
         <button class="btn ghost block" data-skipwhy style="margin-top:8px">Skip — I'll write one later</button></div>`;

@@ -582,3 +582,22 @@ button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
 
 .questpick.locked{opacity:.45;pointer-events:none}
 .questpick.locked b{text-decoration:line-through}
+
+/* Plan list / notes / affirmations — title line, expand for full */
+.planfold{border-top:1px solid var(--line)}
+.planfold:first-child{border-top:0}
+.planfold>summary{list-style:none;cursor:pointer}
+.planfold>summary::-webkit-details-marker{display:none}
+.planfold .planfold-title,.planfold-title{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;display:block;max-width:100%;
+}
+.planfold-body{
+  padding:0 4px 12px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;
+  font-size:.92rem;line-height:1.45;color:var(--fg);
+}
+.todo .name,.editrow .name{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+.afffull{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;
+  font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:0;cursor:pointer}
+.noterowfold>summary.noterow{width:100%}
+.noterowfold .chev{transition:transform .15s}
+.noterowfold[open] .chev{transform:rotate(90deg)}
