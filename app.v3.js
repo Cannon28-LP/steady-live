@@ -287,7 +287,7 @@ function fresh(){
   return {
     tasks:[], rewards:[], locker:[], customReasons:[],
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
-    clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null,
+    clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null, chalCooldownUntil:null,
     crews:[], msgs:{}, muted:[],
     settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true,
       remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}}},
@@ -970,24 +970,26 @@ const TIERS_C = {
   rare:      {label:'Rare',      colour:'#3b82f6', rolls:[50,70,90]},
   legendary: {label:'Legendary', colour:'#a855f7', rolls:[150,180,200]},
 };
+const CHAL_COOLDOWN_DAYS = 1;
 const CHALLENGES = {
+  /* Same four shapes at every tier — only the bar moves. */
   common:[
-    {id:'c1',name:'Two in a row',       desc:'Everyone on it clears the day, two days running.',        type:'bothClearStreak', need:2},
-    {id:'c2',name:'Three good days',    desc:'Each of you clears three days this week.',               type:'eachClear',       need:3, window:7},
-    {id:'c3',name:'Turn up together',   desc:'Everyone on it opens the app three days running.',       type:'bothOpenStreak',  need:3},
-    {id:'c4',name:'Six between you',    desc:'Six cleared days between everyone on it.',               type:'combined',        need:6, window:7},
+    {id:'c1',name:'Clear streak',     desc:'Everyone clears the day, 3 days running.',           type:'bothClearStreak', need:3},
+    {id:'c2',name:'Coin haul',        desc:'Earn 250 coins between you in 4 days.',              type:'coinsEarned',     need:250, window:4},
+    {id:'c3',name:'Show up',          desc:'Everyone opens the app 7 days running.',             type:'bothOpenStreak',  need:7},
+    {id:'c4',name:'Shop silence',     desc:'Nobody buys a reward for 3 days.',                   type:'noBuys',          need:3},
   ],
   rare:[
-    {id:'r1',name:'Five days standing', desc:'Everyone on it opens the app five days running.',        type:'bothOpenStreak',  need:5},
-    {id:'r2',name:'Four in a row',      desc:'Everyone on it clears the day, four days running.',      type:'bothClearStreak', need:4},
-    {id:'r3',name:'Five each',          desc:'Each of you clears five days in a week.',                type:'eachClear',       need:5, window:7},
-    {id:'r4',name:'Twenty between you', desc:'Twenty cleared days between everyone in a fortnight.',   type:'combined',        need:20,window:14},
+    {id:'r1',name:'Clear streak',     desc:'Everyone clears the day, 7 days running.',           type:'bothClearStreak', need:7},
+    {id:'r2',name:'Coin haul',        desc:'Earn 500 coins between you in 7 days.',              type:'coinsEarned',     need:500, window:7},
+    {id:'r3',name:'Show up',          desc:'Everyone opens the app 14 days running.',            type:'bothOpenStreak',  need:14},
+    {id:'r4',name:'Shop silence',     desc:'Nobody buys a reward for 7 days.',                   type:'noBuys',          need:7},
   ],
   legendary:[
-    {id:'l1',name:'Twelve days',        desc:'Everyone on it clears every task, twelve days running.', type:'bothClearStreak', need:12},
-    {id:'l2',name:'A fortnight of it',  desc:'Everyone on it opens the app fourteen days running.',    type:'bothOpenStreak',  need:14},
-    {id:'l3',name:'Twenty-five each',   desc:'Each of you clears twenty-five days in a month.',        type:'eachClear',       need:25,window:30},
-    {id:'l4',name:'Fifty between you',  desc:'Fifty cleared days between everyone in a month.',        type:'combined',        need:50,window:30},
+    {id:'l1',name:'Clear streak',     desc:'Everyone clears the day, 14 days running.',          type:'bothClearStreak', need:14},
+    {id:'l2',name:'Coin haul',        desc:'Earn 1000 coins between you in 14 days.',            type:'coinsEarned',     need:1000,window:14},
+    {id:'l3',name:'Show up',          desc:'Everyone opens the app 30 days running.',            type:'bothOpenStreak',  need:30},
+    {id:'l4',name:'Shop silence',     desc:'Nobody buys a reward for 14 days.',                  type:'noBuys',          need:14},
   ],
 };
 const findChallenge = id => Object.entries(CHALLENGES).flatMap(([tier,l])=>l.map(c=>({...c,tier}))).find(c=>c.id===id);
@@ -1027,6 +1029,7 @@ function slotOk(draft, list){
   return true;
 }
 function canStartChallenge(){
+  if(chalOnCooldown()) return false;
   const busy=chalBusyPeople();
   return peopleLeft()>0
     && (tierSlotOpen('legendary')||tierSlotOpen('rare')||tierSlotOpen('common'))
@@ -1066,15 +1069,27 @@ function liveDesc(ch){
   const many=(ch.members||[]).length>1;
   const together=many?'all':'both';
   const cap=s=>s?s[0].toUpperCase()+s.slice(1):s;
-  const windowWord=ch.window===7?'week':ch.window===14?'fortnight':ch.window===30?'month':(ch.window?ch.window+' days':'');
-  if(ch.type==='bothClearStreak') return `${cap(who)} ${together} clear the day, ${n} days running.`;
-  if(ch.type==='bothOpenStreak') return `${cap(who)} ${together} open the app ${n} days running.`;
-  if(ch.type==='eachClear') return `Each of ${who} clears ${n} days this ${windowWord||'window'}.`;
-  if(ch.type==='combined') return `${n} cleared days between ${who}${windowWord?' in a '+windowWord:''}.`;
+  const days=ch.window?`${ch.window} days`:'';
+  if(ch.type==='bothClearStreak') return `${cap(who)} ${together} clear the day, ${n} days running. One miss ends it.`;
+  if(ch.type==='bothOpenStreak') return `${cap(who)} ${together} open the app ${n} days running. Miss a day and it ends.`;
+  if(ch.type==='coinsEarned') return `Earn ${n} coins between ${who} in ${days}. Window ends empty = fail.`;
+  if(ch.type==='noBuys') return `Nobody buys a reward for ${n} days. One shop buy ends it.`;
+  if(ch.type==='eachClear') return `Each of ${who} clears ${n} days.`;
+  if(ch.type==='combined') return `${n} cleared days between ${who}.`;
   return ch.desc;
 }
 function allClearedOn(members,k){ return !!S.days[k]?.cleared && members.every(f=>clearedOn(f,k)); }
-function allOpenedOn(members,k){ return !!S.days[k] && members.every(f=>!!f.days?.[k]); }
+function allOpenedOn(members,k){ return members.every(f=>!!f.days?.[k]) && (!!S.days[k] || S.flags.lastOpen===k); }
+function coinsEarnedSince(from,to){
+  let n=0; for(let x=from;x<=to;x=addDays(x,1)) n+=(dayStats(x).points||0); return n;
+}
+function friendCoinsSince(f,from,to){
+  /* Friends sync done/expected only — estimate 10 coins per done task. */
+  let n=0; for(let x=from;x<=to;x=addDays(x,1)){ const d=f.days?.[x]; if(d?.done) n+=10*(d.done||0); } return n;
+}
+function buysSince(from,to){
+  return (S.locker||[]).filter(l=>{ const b=l.boughtAt; return b&&b>=from&&b<=to; }).length;
+}
 function challengeProgress(ch){
   const members=ch.members||(ch.memberIds||[]).map(id=>S.friends[id]).filter(Boolean);
   const from=ch.startedAt||today(), k=today();
@@ -1085,6 +1100,19 @@ function challengeProgress(ch){
     let n=0,x=hit(k)?k:addDays(k,-1);
     while(inRange(x)&&hit(x)){ n++; x=addDays(x,-1); }
     return {have:Math.min(n,need),need};
+  }
+  if(ch.type==='coinsEarned'){
+    const end=ch.window?addDays(from,ch.window-1):k;
+    const to=k<end?k:end;
+    const mine=coinsEarnedSince(from,to);
+    const theirs=members.reduce((a,f)=>a+friendCoinsSince(f,from,to),0);
+    return {have:Math.min(mine+theirs,need),need,mine,theirs:members.map(f=>({id:f.id,name:f.name,n:friendCoinsSince(f,from,to)}))};
+  }
+  if(ch.type==='noBuys'){
+    const buys=buysSince(from,k);
+    /* Progress = clean days so far (streak of no buys from start). */
+    let n=0; for(let x=from;x<=k;x=addDays(x,1)){ if(buysSince(x,x)>0) break; n++; }
+    return {have:Math.min(n,need),need,buys};
   }
   const start=ch.window?(from>addDays(k,-(ch.window-1))?from:addDays(k,-(ch.window-1))):from;
   let mine=0;
@@ -1117,6 +1145,58 @@ function startChallenge(tier,questId,memberIds,crewId){
 function dropChallenge(id){ Sync.removeChallenge(id).catch(()=>{});
   S.challenges=chalList().filter(c=>c.id!==id); save();
 }
+function setChalCooldown(until){
+  S.chalCooldownUntil=until||addDays(today(),CHAL_COOLDOWN_DAYS);
+  save();
+}
+function chalOnCooldown(){ return !!(S.chalCooldownUntil && S.chalCooldownUntil>today()); }
+function failChallenge(id,reason){
+  const c=chalList().find(x=>x.id===id); if(!c) return;
+  dropChallenge(id);
+  setChalCooldown();
+  if(c.crewId){
+    const msg=reason||'Challenge failed';
+    msgsOf(c.crewId).push({id:uid(),from:'me',kind:'system',code:msg,at:Date.now()});
+    Sync.sendMessage(c.crewId,'system',msg).catch(()=>{});
+  }
+  S.flags.pendingToast=reason||'Challenge failed · 1 day cooldown';
+  save();
+}
+function challengeBroken(raw){
+  if(!chalIsActive(raw)||!raw.startedAt) return null;
+  const ch=liveQuest(raw); if(!ch) return null;
+  const members=ch.members||[];
+  const from=raw.startedAt, k=today();
+  /* Past days in the run must stay perfect for streak types. */
+  if(ch.type==='bothClearStreak'||ch.type==='bothOpenStreak'){
+    const hit=ch.type==='bothClearStreak'?(x=>allClearedOn(members,x)):(x=>allOpenedOn(members,x));
+    for(let x=from;x<k;x=addDays(x,1)){
+      if(!hit(x)) return ch.type==='bothClearStreak'?'Clear streak broken — challenge over':'Open streak broken — challenge over';
+    }
+    return null;
+  }
+  if(ch.type==='noBuys'){
+    if(buysSince(from,k)>0) return 'Someone bought a reward — challenge over';
+    return null;
+  }
+  if(ch.type==='coinsEarned'&&ch.window){
+    const end=addDays(from,ch.window-1);
+    if(k>end){
+      const pr=challengeProgress(ch);
+      if(pr.have<pr.need) return 'Coin window closed — challenge over';
+    }
+  }
+  return null;
+}
+function checkChallenges(){
+  let changed=false;
+  for(const c of [...chalList()]){
+    if(!chalIsActive(c)) continue;
+    const why=challengeBroken(c);
+    if(why){ failChallenge(c.id,why); changed=true; }
+  }
+  return changed;
+}
 function pullFriendFromChallenges(fid){
   S.challenges=chalList().map(c=>({...c,memberIds:(c.memberIds||[]).filter(id=>id!==fid)})).filter(c=>c.memberIds.length);
 }
@@ -1134,7 +1214,7 @@ function claimChest(cid){
     p.done.push(ch.questId||ch.id);
     p.chests.push({tier:ch.tier,amount,at:today(),name:ch.name,crew:ch.members.map(x=>x.name)});
   }
-  S.challenges=chalList().filter(c=>c.id!==cid); save();
+  S.challenges=chalList().filter(c=>c.id!==cid); setChalCooldown(); save();
   const mult=crewMultiplier(heads);
   return {tier:ch.tier,amount,name:ch.name,colour:t.colour,heads,
     rolls:t.rolls.map(r=>Math.round(r*mult/5)*5)};
@@ -1770,6 +1850,7 @@ function rollover(){
   if(last && !S.chests[lastMon]){ const w=weekCleared(lastMon); if(w.any){ S.chests[lastMon]=w.cleared>=CHEST_DAYS?'won':'missed'; if(w.cleared>=CHEST_DAYS){ const cc=chestCoins(); S.points.coins+=cc; S.points.xp+=cc; notes.push(`Weekly chest: ${w.cleared} days cleared · +${cc}`); } } }
   if(notes.length) S.flags.pendingToast=notes.join(' · ');
   S.flags.lastOpen=t; S.undo=null; sel.clear(); save();
+  try{ checkChallenges(); }catch(e){}
 }
 function finalize(k){
   const d=day(k); if(d.finalized) return;
@@ -2289,6 +2370,7 @@ function challengeCard(raw){
   </div>`;
 }
 function startChallengeModal(crewId,after){
+  if(chalOnCooldown()){ toast('Cooldown until '+fmt(S.chalCooldownUntil,{day:'numeric',month:'short'})+' — after a finish or a fail'); return; }
   const crew=crewId?crewOf(crewId):null;
   const busy=chalBusyPeople();
   const free=(crew?crewMembers(crew):friendList()).filter(f=>!busy.has(f.id));
@@ -2375,11 +2457,13 @@ function vFriends(){
     <div class="row between"><div><div class="eyebrow">Your code</div><b style="font-size:1.4rem;letter-spacing:.08em">${m.code}</b>
       <p class="tiny muted" style="margin-top:4px">${esc(m.name||'No name')}${live?` · ${esc(S.me?.email||'')}`:''}</p></div>
     <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button></div></div>
-    <div class="row" style="margin-top:12px"><input type="text" id="addcode" placeholder="Add a friend's code" maxlength="12" style="text-transform:uppercase"><button class="btn primary" id="addfriend">Add</button></div>
+    ${live&&inn?`<button class="btn sm ghost block" id="signout" style="margin-top:12px">Sign out</button>`:''}</div>`;
+
+  const addFriendCard=`<div class="card" style="margin-bottom:10px"><div class="row"><input type="text" id="addcode" placeholder="Add a friend's code" maxlength="12" style="text-transform:uppercase"><button class="btn primary" id="addfriend">Add</button></div>
     ${!live?`<p class="tiny muted" style="margin-top:10px">No server configured — adding a code creates a demo friend so you can see how it works.</p>`:
       `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}</div>`;
 
-  const listPane=!fs.length
+  const listPane=addFriendCard+(!fs.length
     ?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`
     :fs.map(f=>{
       const open=openId===f.id;
@@ -2412,7 +2496,7 @@ function vFriends(){
             <button class="btn sm ghost danger" data-unfriend="${f.id}">Remove</button></div>
         </div>`:''}
       </div>`;
-    }).join('<div style="height:10px"></div>');
+    }).join('<div style="height:10px"></div>'));
 
   const chatsPane=`<div class="section" data-tour="crews">
     ${crewList().length?crewList().map(c=>{const u=crewUnread(c),last=msgsOf(c.id).slice(-1)[0];
@@ -2426,8 +2510,8 @@ function vFriends(){
   const active=chalList().filter(chalIsActive);
   const pending=chalList().filter(chalIsPending);
   const chalPane=`<div class="section" data-tour="friend">
-    <p class="tiny muted" style="margin:-4px 0 10px">${slotSummary()}</p>
-    <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':peopleLeft()<1?'Four people already on a challenge':'No slot free'}</button>
+    <p class="tiny muted" style="margin:-4px 0 10px">${slotSummary()}${chalOnCooldown()?` · Cooldown until ${fmt(S.chalCooldownUntil,{day:'numeric',month:'short'})}`:''}</p>
+    <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':chalOnCooldown()?'Cooldown after last challenge':peopleLeft()<1?'Four people already on a challenge':'No slot free'}</button>
     ${pending.length?`<h2 style="margin:8px 0 10px">Waiting <span class="muted">${pending.length}</span></h2>${pending.map(c=>challengeCard(c)).join('')}`:''}
     <h2 style="margin:8px 0 10px">Running <span class="muted">${active.length}</span></h2>
     ${active.map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>Invite someone — the clock starts only after they accept.</div>`}
@@ -2438,14 +2522,7 @@ function vFriends(){
   return head + `
   ${profile}
   ${seg}
-  ${pane}
-
-  ${live&&inn?`<div class="card" style="margin-top:14px"><div class="row between" style="align-items:flex-start"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Last synced ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
-      <p class="tiny muted" style="margin-top:4px">Saves itself a few seconds after changes. Use Restore if another device is ahead.</p></div>
-    <button class="btn sm ghost" id="signout">Sign out</button></div>
-    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
-      <button class="btn primary sm" id="restorevault">Restore from account</button>
-      <button class="btn sm" id="backupnow">Backup now</button></div></div>`:''}`;
+  ${pane}`;
 
 }
 
@@ -2488,7 +2565,7 @@ function buy(id){
     ? `This is one past what you planned. It is allowed once — after this it waits until ${fmt(al.next,{day:'numeric',month:'short'})}.`
     : after>0 ? `${after} more ${al.period} after this.` : `That is your last planned one ${al.period}. You would have one spare after it.`;
   modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. ${note}</p>`,'Buy',()=>{
-    S.points.coins-=cost; S.locker.push({id:uid(),rewardId:id,name:r.name,boughtAt:today()}); save(); haptic('success'); render(); toast('Bought · in your locker'); });
+    S.points.coins-=cost; S.locker.push({id:uid(),rewardId:id,name:r.name,boughtAt:today()}); save(); try{ checkChallenges(); }catch(e){} haptic('success'); render(); toast('Bought · in your locker'); });
 }
 
 /* ---------- Settings ---------- */
@@ -2560,6 +2637,17 @@ function vSettings(){
         <p class="tiny muted" style="margin-top:10px">${PUSH.vapidPublic?'Reminders arrive whether the app is open or not.':'These fire while the app is open. For reminders when it is closed, the server side needs setting up — see push.sql.'}</p>`;
     })()}
   </div></details>
+  ${(()=>{ const live=Sync.live(), inn=Sync.signedIn();
+    if(!live) return `<details class="acc"><summary>Backup</summary><div class="body"><p class="tiny muted">No server configured on this build.</p></div></details>`;
+    if(!inn) return `<details class="acc"><summary>Backup</summary><div class="body"><p class="tiny muted">Sign in on Friends first — backups ride with your account.</p></div></details>`;
+    return `<details class="acc" id="acc-backup"><summary>Backup <span class="muted">${S.vaultAt?'synced':'not yet'}</span></summary><div class="body">
+      <p class="tiny muted">${S.vaultAt?`Last synced ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
+      <p class="tiny muted" style="margin-top:4px">Saves itself a few seconds after changes. Use Restore if another device is ahead.</p>
+      <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn primary sm" id="restorevault">Restore from account</button>
+        <button class="btn sm" id="backupnow">Backup now</button></div>
+    </div></details>`;
+  })()}
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">The idea.</b> Nothing here ever takes points off you. Missing a day costs you what you would have earned, and that is all. The app's job is to notice patterns you would not, and to make keeping your word worth something.</p>
 
@@ -2578,7 +2666,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
-    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot.</p>
+    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Fail a day (or buy during shop silence) and it ends at once. After a finish or a fail you wait one day before starting another.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
@@ -3583,6 +3671,7 @@ function friendsTick(){
     .then(()=>Sync.pull())
     .then(()=>Sync.pullCrews())
     .then(()=>Sync.pullChallenges())
+    .then(()=>{ try{ checkChallenges(); }catch(e){} })
     .then(()=>Sync.pullMessages())
     .then(()=>{ if(tab==='friends'||tab==='shop') render(); })
     .catch(()=>{});
