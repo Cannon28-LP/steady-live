@@ -2845,7 +2845,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
     <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons and your affirmation never leave this device.</p>
     <p class="tiny">Build ${BUILD}</p>
-    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="replayonb">Replay setup</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
   </div></details>`;
 }
 /* ---------- Event binding ---------- */
@@ -3083,6 +3083,7 @@ function bind(){
   const rv=q('#remevening'); if(rv) rv.onchange=()=>{ remindCfg().evening=rv.value; save(); subscribePush().catch(()=>{}); toast('Evening nudge set'); };
   const ii=q('[data-iosinstall]'); if(ii) ii.onclick=()=>iosInstallSheet();
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
+  const ro=q('#replayonb'); if(ro) ro.onclick=()=>{ haptic(); onboarding(()=>{ render(); toast('Setup replayed'); }, true); };
   const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
   const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, points and rewards. This cannot be undone.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
 }
@@ -3288,27 +3289,45 @@ function quoteGate(next){
 }
 
 /* ---------- Onboarding ---------- */
-function onboarding(next){
-  if(S.flags.onboarded){ next(); return; }
+function onboarding(next, force){
+  if(S.flags.onboarded && !force){ next(); return; }
   let step=0; const picks=new Set(); const targets={}; let line='';
   const g=document.createElement('div'); g.className='gate onb'; document.body.appendChild(g);
   const SUG=[['Walk',20],['Read',15],['No phone in bed',0],['Drink 2L water',0],['Tidy up',10],['Stretch',10],['Journal',0],['Study',30]];
+  const LAST=2;
   const draw=()=>{
-    const steps=`<div class="steps">${[0,1].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
-    if(step===0) g.innerHTML=`${steps}<h1>Why are you doing this?</h1>
+    const steps=`<div class="steps">${[0,1,2].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
+    const back=step>0?`<button class="btn ghost sm" data-back style="margin-bottom:10px">‹ Back</button>`:'';
+    if(step===0) g.innerHTML=`${steps}${back}<h1>Nothing is taken from you.</h1>
+      <p>Miss a day and you only lose what you would have earned. No broken streak that punishes you. No debt. No guilt trip from the app.</p>
+      <p style="margin-top:12px">Steady’s job is to notice patterns you would not, and to make keeping your word to yourself worth something.</p>
+      <div class="actions"><button class="btn primary block" data-n>Got it</button></div>`;
+    if(step===1) g.innerHTML=`${steps}${back}<h1>Why are you doing this?</h1>
       <p>Not the goal — the reason underneath it. What is it you actually want out of keeping your word to yourself?</p>
       <textarea id="onbwhy" style="margin-top:16px" maxlength="140" placeholder="e.g. I want to be someone who follows through."></textarea>
       <p class="tiny muted" style="margin-top:10px">This is your affirmation. You'll see it on the opening screen every day, and it sits under Plan → Affirmations where you can change it or add more. On the days you can't be bothered, it's the thing that's meant to catch you.</p>
       <div class="actions"><button class="btn primary block" data-n ${line?'':'disabled'}>Next</button>
-        <button class="btn ghost block" data-skip0 style="margin-top:8px">Skip — I'll write one later</button></div>`;
-    if(step===1) g.innerHTML=`${steps}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions"><button class="btn primary block" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
-    g.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>{ if(step===0) line=(g.querySelector('#onbwhy')?.value||'').trim(); haptic(); if(step<1){step++;draw();} else finish(); });
+        <button class="btn ghost block" data-skipwhy style="margin-top:8px">Skip — I'll write one later</button></div>`;
+    if(step===2) g.innerHTML=`${steps}${back}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions"><button class="btn primary block" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
+    g.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>{
+      if(step===1) line=(g.querySelector('#onbwhy')?.value||'').trim();
+      haptic();
+      if(step<LAST){ step++; draw(); } else finish();
+    });
+    g.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{ if(step===1) line=(g.querySelector('#onbwhy')?.value||'').trim()||line; haptic(); step=Math.max(0,step-1); draw(); });
     g.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{const v=b.dataset.p;if(picks.has(v))picks.delete(v);else{if(picks.size>=MAX_TASKS)return;picks.add(v);targets[v]=Number(b.dataset.mt)||null;}draw();});
     const oa=g.querySelector('#onbadd'); if(oa){ const add=()=>{const v=g.querySelector('#onbtask').value.trim();if(v){if(picks.size>=MAX_TASKS)return;picks.add(v);targets[v]=null;draw();}}; oa.onclick=add; g.querySelector('#onbtask').onkeydown=e=>{if(e.key==='Enter')add();}; }
-    const sk=g.querySelector('[data-skip0]'); if(sk) sk.onclick=()=>{ line=''; haptic(); step=1; draw(); };
-    const ta=g.querySelector('#onbwhy'); if(ta){ const go=g.querySelector('[data-n]'); ta.oninput=()=>{ go.disabled=!ta.value.trim(); }; setTimeout(()=>ta.focus(),50); }
+    const sk=g.querySelector('[data-skipwhy]'); if(sk) sk.onclick=()=>{ line=''; haptic(); step=2; draw(); };
+    const ta=g.querySelector('#onbwhy'); if(ta){ const go=g.querySelector('[data-n]'); ta.value=line||''; go.disabled=!ta.value.trim(); ta.oninput=()=>{ go.disabled=!ta.value.trim(); }; setTimeout(()=>ta.focus(),50); }
   };
-  const finish=()=>{ if(line){ const now=Date.now(); S.whys=[{id:uid(),text:line,createdAt:now,touchedAt:now}]; } [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null})); S.flags.onboarded=true; save(); g.remove(); next(); };
+  const finish=()=>{
+    const replaying=!!S.flags.onboarded;
+    if(!replaying){
+      if(line){ const now=Date.now(); S.whys=[{id:uid(),text:line,createdAt:now,touchedAt:now}]; }
+      [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null}));
+    }
+    S.flags.onboarded=true; save(); g.remove(); next();
+  };
   draw();
 }
 
