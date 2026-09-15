@@ -1101,12 +1101,14 @@ function startChallenge(tier,questId,memberIds,crewId){
   const def=findChallenge(questId);
   if(!def||def.tier!==tier) return null;
   const ids=[...new Set(memberIds||[])].filter(id=>S.friends[id]);
-  const draft={id:uid(),questId,tier,startedAt:today(),memberIds:ids,crewId:crewId||null};
+  const draft={id:uid(),questId,tier,startedAt:null,memberIds:ids,crewId:crewId||null,
+    status:'pending', hostId:S.me.id, accepted:[S.me.id]};
   if(!slotOk(draft,S.challenges)) return null;
   S.challenges=chalList().concat(draft); save();
   if(crewId){
-    msgsOf(crewId).push({id:uid(),from:'me',kind:'system',code:`${TIERS_C[tier].label} challenge started: ${def.name}`,at:Date.now()});
-    Sync.sendMessage(crewId,'system',`${TIERS_C[tier].label} challenge started: ${def.name}`).catch(()=>{});
+    const names=ids.map(id=>S.friends[id]?.name||'friend').join(', ');
+    msgsOf(crewId).push({id:uid(),from:'me',kind:'system',code:`${TIERS_C[tier].label} invite: ${def.name} — waiting on ${names}`,at:Date.now()});
+    Sync.sendMessage(crewId,'system',`${TIERS_C[tier].label} invite: ${def.name} — accept to start`).catch(()=>{});
   }
   save();
   Sync.pushChallenge(draft).catch(()=>{});
@@ -1119,7 +1121,7 @@ function pullFriendFromChallenges(fid){
   S.challenges=chalList().map(c=>({...c,memberIds:(c.memberIds||[]).filter(id=>id!==fid)})).filter(c=>c.memberIds.length);
 }
 function claimChest(cid){
-  const raw=chalList().find(c=>c.id===cid); if(!raw) return null;
+  const raw=chalList().find(c=>c.id===cid); if(!raw||!chalIsActive(raw)) return null;
   const ch=liveQuest(raw); if(!ch) return null;
   const pr=challengeProgress(ch); if(pr.have<pr.need) return null;
   const t=TIERS_C[ch.tier];
@@ -1162,6 +1164,61 @@ function migratePairChallenges(state){
     if(ids.length>cap) return {...c, memberIds:ids.slice(0,cap)};
     return ids.length===c.memberIds.length?c:{...c, memberIds:ids};
   }).filter(c=>(c.memberIds||[]).length);
+}
+
+function normalizeChallenges(){
+  S.challenges=chalList().map(c=>{
+    if(c.status) return c;
+    // Older rows started immediately — keep them active.
+    return {...c, status:'active', accepted:[...(c.memberIds||[])]};
+  });
+}
+function chalStatus(c){ return c?.status||'active'; }
+function chalIsActive(c){ return chalStatus(c)==='active'; }
+function chalIsPending(c){ return chalStatus(c)==='pending'; }
+function chalHost(c){ return c.hostId||c.ownerId||null; }
+function iHostChallenge(c){ return !!(S.me&&chalHost(c)&&chalHost(c)===S.me.id); }
+function iAcceptedChallenge(c){
+  if(!S.me) return false;
+  if(iHostChallenge(c)) return true;
+  return (c.accepted||[]).includes(S.me.id);
+}
+function allAccepted(c){
+  const need=[...(c.memberIds||[])];
+  const acc=new Set(c.accepted||[]);
+  if(chalHost(c)) acc.add(chalHost(c));
+  return need.every(id=>acc.has(id));
+}
+function activateChallenge(c){
+  c.status='active';
+  c.startedAt=today();
+  if(!c.accepted) c.accepted=[];
+  if(S.me&&!c.accepted.includes(S.me.id)) c.accepted.push(S.me.id);
+  (c.memberIds||[]).forEach(id=>{ if(!c.accepted.includes(id)) c.accepted.push(id); });
+  const def=findChallenge(c.questId);
+  if(c.crewId&&def){
+    msgsOf(c.crewId).push({id:uid(),from:'me',kind:'system',code:`${TIERS_C[c.tier].label} challenge started: ${def.name}`,at:Date.now()});
+    Sync.sendMessage(c.crewId,'system',`${TIERS_C[c.tier].label} challenge started: ${def.name}`).catch(()=>{});
+  }
+  save(); Sync.pushChallenge(c).catch(()=>{});
+}
+function acceptChallenge(id){
+  const c=chalList().find(x=>x.id===id); if(!c||!chalIsPending(c)||!S.me) return;
+  c.accepted=c.accepted||[];
+  if(!c.accepted.includes(S.me.id)) c.accepted.push(S.me.id);
+  save();
+  if(allAccepted(c)) activateChallenge(c);
+  else Sync.pushChallenge(c).catch(()=>{});
+  haptic('success'); render(); toast(chalIsActive(c)?'Challenge is on':'Accepted — waiting on the others');
+}
+function declineChallenge(id){
+  const c=chalList().find(x=>x.id===id); if(!c) return;
+  dropChallenge(id);
+  if(c.crewId){
+    msgsOf(c.crewId).push({id:uid(),from:'me',kind:'system',code:'Challenge invite declined',at:Date.now()});
+    Sync.sendMessage(c.crewId,'system','Challenge invite declined').catch(()=>{});
+  }
+  haptic(); render(); toast('Invite declined');
 }
 
 function me(){ if(!S.me){ S.me={id:uid()+uid(),name:'',code:('STDY'+Math.random().toString(36).slice(2,6)).toUpperCase()}; save(); } return S.me; }
@@ -1516,9 +1573,10 @@ const Sync = {
   async pushChallenge(ch){
     if(!this.live()||!this.signedIn()) return;
     try{ await api('/rest/v1/coop?on_conflict=id',{method:'POST',
-      body:{id:ch.id,owner_id:S.me.id,crew_id:ch.crewId||null,tier:ch.tier,
-            quest_id:ch.questId,started_at:ch.startedAt,
-            members:[S.me.id,...(ch.memberIds||[])]},
+      body:{id:ch.id,owner_id:ch.hostId||S.me.id,crew_id:ch.crewId||null,tier:ch.tier,
+            quest_id:ch.questId,started_at:ch.startedAt||null,
+            members:[ch.hostId||S.me.id,...(ch.memberIds||[])].filter((v,i,a)=>a.indexOf(v)===i),
+            status:ch.status||'active', accepted:ch.accepted||[]},
       headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
       S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
@@ -1533,10 +1591,16 @@ const Sync = {
       const rows=await api('/rest/v1/rpc/my_coop',{method:'POST',body:{}});
       const mine=chalList();
       (rows||[]).forEach(r=>{
-        if(mine.some(c=>c.id===r.id)) return;
+        const host=r.owner_id;
         const others=(r.members||[]).filter(id=>id!==S.me.id);
-        mine.push({id:r.id,questId:r.quest_id,tier:r.tier,startedAt:r.started_at,
-          memberIds:others,crewId:r.crew_id||null});
+        const mapped={id:r.id,questId:r.quest_id,tier:r.tier,startedAt:r.started_at,
+          memberIds:others,crewId:r.crew_id||null, status:r.status||'active',
+          hostId:host, accepted:r.accepted||[]};
+        const have=mine.find(c=>c.id===r.id);
+        if(have){
+          have.status=mapped.status; have.accepted=mapped.accepted; have.startedAt=mapped.startedAt;
+          have.hostId=mapped.hostId; have.memberIds=mapped.memberIds; have.crewId=mapped.crewId;
+        } else mine.push(mapped);
       });
       S.challenges=mine; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
@@ -1807,7 +1871,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:''}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:''}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -2187,7 +2251,23 @@ function taskStats(t){
 const chestSVG = tier => ICON.chest(TIERS_C[tier].colour);
 function challengeCard(raw){
   const ch=liveQuest(raw); if(!ch) return '';
-  const pr=challengeProgress(ch), t=TIERS_C[ch.tier], done=pr.have>=pr.need, pc=Math.round(100*pr.have/pr.need);
+  const t=TIERS_C[ch.tier];
+  if(chalIsPending(raw)){
+    const waiting=ch.members.filter(f=>!(raw.accepted||[]).includes(f.id));
+    const needMe=!iAcceptedChallenge(raw);
+    return `<div class="card chal ${ch.tier}" style="--tier:${t.colour}">
+      <div class="row between" style="align-items:flex-start">
+        <div><span class="tierbadge">Invite</span><b style="display:block;margin-top:6px;font-size:1.1rem">${esc(ch.name)}</b>
+          <p class="small muted" style="margin-top:2px">${esc(t.label)} · ${esc(liveDesc(ch))}</p>
+          <p class="tiny muted" style="margin-top:6px">${needMe?'Needs your accept':waiting.length?('Waiting on '+waiting.map(f=>f.name).join(', ')):'Starting…'}</p></div>
+        <div class="chestmini">${chestSVG(ch.tier)}</div></div>
+      ${needMe?`<div class="row" style="gap:8px;margin-top:12px"><button class="btn primary" style="flex:1" data-acceptchal="${raw.id}">Accept</button>
+        <button class="btn ghost" style="flex:1" data-declinechal="${raw.id}">Decline</button></div>`:
+        `<div class="row between" style="margin-top:12px"><p class="tiny muted">Invite sent — clock starts when everyone accepts.</p>
+          <button class="btn sm ghost" data-dropchal="${raw.id}">Cancel</button></div>`}
+    </div>`;
+  }
+  const pr=challengeProgress(ch), done=pr.have>=pr.need, pc=Math.round(100*pr.have/pr.need);
   const mineCleared=!!S.days[today()]?.cleared;
   const pills=[`<span class="pill ${mineCleared?'accent':''}">You ${mineCleared?'✓':'—'}</span>`]
     .concat(ch.members.map(f=>`<span class="pill ${clearedOn(f,today())?'accent':''}">${esc(f.name)} ${clearedOn(f,today())?'✓':'—'}</span>`)).join('');
@@ -2250,7 +2330,7 @@ function startChallengeModal(crewId,after){
     box.querySelector('[data-x]').onclick=()=>close(o);
     const ok=box.querySelector('[data-ok]');
     ok.onclick=()=>{ if(!picks.size) return; const started=startChallenge(tier,qid,[...picks],crewId); close(o);
-      if(started){ haptic('success'); if(after) after(); else render(); toast('Challenge started'); } else toast('Could not start that'); };
+      if(started){ haptic('success'); if(after) after(); else render(); toast(chalIsPending(started)?'Invite sent — waiting for accept':'Challenge started'); } else toast('Could not start that'); };
   };
   draw();
   o.onclick=e=>{ if(e.target===o) close(o); };
@@ -2277,11 +2357,14 @@ function vFriends(){
     <div class="card empty"><b>Why an account?</b>Without one, clearing your browser data loses everything. Your habits stay on the device either way — this is just the safety net.</div>`;
 
   const inbox=(S.inbox||[]).slice(0,3);
-  return head + `
-  ${inbox.length?`<div class="card callout"><b>${inbox.length===1?'New message':`${inbox.length} new messages`}</b>
+  const sub=(['list','chats','challenges'].includes(friendsState.sub)?friendsState.sub:'list');
+  friendsState.sub=sub;
+  const openId=friendsState.open;
+  const seg=`<div class="seg" style="margin-bottom:14px">${[['list','Friend list'],['chats','Chats'],['challenges','Active challenges']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-fsub="${v}">${l}</button>`).join('')}</div>`;
+
+  const profile=`${inbox.length?`<div class="card callout"><b>${inbox.length===1?'New message':`${inbox.length} new messages`}</b>
     <ul class="list" style="margin-top:6px">${inbox.map(x=>`<li><span>${esc(x.text)}</span><span class="small ${x.coins?'':'muted'}" style="${x.coins?'color:var(--accent)':''}">${x.coins?`+${x.coins}`:fmt(x.date,{day:'numeric',month:'short'})}</span></li>`).join('')}</ul>
     <button class="btn sm block" id="clearinbox" style="margin-top:10px">Clear</button></div>`:''}
-
   ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Update app</button>`:''}
   <div class="card" data-tour="code"><div class="row" style="gap:12px;align-items:center;margin-bottom:12px">
       <button class="avatarbtn" id="avpick" aria-label="Change your picture">${avatarHtml(m,'big')}<span class="avedit">${ICON.edit}</span></button>
@@ -2294,55 +2377,76 @@ function vFriends(){
     <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button></div></div>
     <div class="row" style="margin-top:12px"><input type="text" id="addcode" placeholder="Add a friend's code" maxlength="12" style="text-transform:uppercase"><button class="btn primary" id="addfriend">Add</button></div>
     ${!live?`<p class="tiny muted" style="margin-top:10px">No server configured — adding a code creates a demo friend so you can see how it works.</p>`:
-      `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}</div>
+      `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}</div>`;
 
-  ${fs.length?`<div class="section" data-tour="crews"><h2>Chats <span class="muted">${crewList().length}</span></h2>
+  const listPane=!fs.length
+    ?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`
+    :fs.map(f=>{
+      const open=openId===f.id;
+      const ps=pairStreak(f), cleared=clearedOn(f,today()), mineCleared=!!S.days[today()]?.cleared;
+      const on=friendChallenge(f.id); const onQ=on&&chalIsActive(on)?liveQuest(on):null;
+      const others=onQ?onQ.members.filter(x=>x.id!==f.id):[];
+      return `<div class="card friendrow ${open?'open':''}" style="padding:0;overflow:hidden">
+        <button class="friendhead" data-ftog="${f.id}" style="width:100%;text-align:left;padding:14px;background:transparent;border:0;color:inherit;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer">
+          <span class="row" style="gap:12px;align-items:center">${avatarHtml(f)}<b>${esc(f.name)}</b></span>
+          <span class="chev" style="transform:rotate(${open?'90':'0'}deg);transition:transform .15s">›</span>
+        </button>
+        ${open?`<div style="padding:0 14px 14px;border-top:1px solid var(--line)">
+          <button class="card friendcard" data-friend="${f.id}" style="margin-top:12px"><div class="row between" style="width:100%"><div class="row" style="gap:10px">${avatarHtml(f)}
+            <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0} day streak · level ${f.level??1}</p></div></div>
+            <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></button>
+          <div class="card pairstreak" style="margin-top:10px"><div class="row between"><div><div class="eyebrow">Shared streak</div><div class="heroval">${ps}<small>days</small></div>
+            <p class="tiny muted">${ps?'Days you both cleared in a row.':'Starts the first day you both clear.'}</p></div>
+            <div class="pairfire ${ps?'lit':''}">${ICON.flame}</div></div>
+            <div class="row" style="gap:8px;margin-top:12px"><span class="pill ${mineCleared?'accent':''}">You ${mineCleared?'✓':'—'}</span><span class="pill ${cleared?'accent':''}">${esc(f.name)} ${cleared?'✓':'—'}</span></div></div>
+          ${onQ?`<div class="card" style="margin-top:10px;border-color:color-mix(in srgb,${TIERS_C[onQ.tier].colour} 35%,var(--line))"><div class="row between"><div><span class="tierbadge" style="--tier:${TIERS_C[onQ.tier].colour}">${TIERS_C[onQ.tier].label}</span>
+            <b style="display:block;margin-top:6px">On ${esc(onQ.name)}</b>
+            <p class="tiny muted">${others.length?'with '+others.map(x=>esc(x.name)).join(', '):'just the two of you'}</p></div>
+            <div class="chestmini">${chestSVG(onQ.tier)}</div></div></div>`:''}
+          ${(()=>{ const p=pairOf(f); const ch=(p.chests||[]).slice(-6).reverse(); if(!ch.length) return '';
+            return `<details class="fold" style="margin-top:8px"><summary><span>Chests won (${p.chests.length})</span><span class="tiny">${p.chests.reduce((a,c)=>a+c.amount,0)} coins</span></summary>
+              <div class="card" style="margin-top:8px"><ul class="list">${ch.map(c=>`<li><span><i class="dotc" style="background:${TIERS_C[c.tier].colour}"></i>${esc(c.name)}${c.crew?.length?`<span class="tiny muted"> · ${esc(c.crew.join(', '))}</span>`:''}</span><span class="small" style="color:${TIERS_C[c.tier].colour}">+${c.amount}</span></li>`).join('')}</ul></div></details>`; })()}
+          <button class="btn ${canCheer(f)?'primary':''} block" style="margin-top:10px" data-cheer="${f.id}" data-kind="${cleared?'cheer':'nudge'}" ${canCheer(f)?'':'disabled'}>
+            ${!canCheer(f)?'Already sent today':cleared?`Cheer ${esc(f.name)} · +${CHEER_COINS} to them`:`Nudge ${esc(f.name)}`}</button>
+          <div class="row between" style="margin-top:8px"><p class="tiny muted">${cleared?'A cheer sends them coins. One a day.':'A nudge is just a wave — no coins, no guilt trip.'}</p>
+            <button class="btn sm ghost danger" data-unfriend="${f.id}">Remove</button></div>
+        </div>`:''}
+      </div>`;
+    }).join('<div style="height:10px"></div>');
+
+  const chatsPane=`<div class="section" data-tour="crews">
     ${crewList().length?crewList().map(c=>{const u=crewUnread(c),last=msgsOf(c.id).slice(-1)[0];
       return `<button class="card crewrow" data-crew="${c.id}"><div class="grow"><div class="row between"><b>${esc(crewName(c))}</b>${u?`<span class="pill accent tiny">${u}</span>`:''}</div>
         <p class="tiny muted">${crewSize(c)} people${last?` · ${last.kind==='emote'?esc(last.code):esc(PHRASE_MAP[last.code]||'…')}`:' · say something'}</p></div><span class="chev">›</span></button>`;}).join(''):
       `<div class="card empty"><b>No chats yet</b>Start one with a friend, or a group — challenges get set up inside them.</div>`}
-    <button class="btn ${crewList().length?'':'primary'} block" id="newcrew" style="margin-top:10px">New chat</button></div>
-  <div class="section" data-tour="friend"><h2>Challenges <span class="muted">${chalCounts().people} / ${CHAL_PEOPLE_MAX}</span></h2>
+    ${fs.length?`<button class="btn ${crewList().length?'':'primary'} block" id="newcrew" style="margin-top:10px">New chat</button>`:
+      `<div class="card empty"><b>Add a friend first</b>Chats need someone to talk to.</div>`}
+  </div>`;
+
+  const active=chalList().filter(chalIsActive);
+  const pending=chalList().filter(chalIsPending);
+  const chalPane=`<div class="section" data-tour="friend">
     <p class="tiny muted" style="margin:-4px 0 10px">${slotSummary()}</p>
     <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':peopleLeft()<1?'Four people already on a challenge':'No slot free'}</button>
-    ${chalList().map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>One legendary with one friend, plus a rare or two commons (two people each). Grouping on rare or common shares the chest.</div>`}
-  </div>`:''}
+    ${pending.length?`<h2 style="margin:8px 0 10px">Waiting <span class="muted">${pending.length}</span></h2>${pending.map(c=>challengeCard(c)).join('')}`:''}
+    <h2 style="margin:8px 0 10px">Running <span class="muted">${active.length}</span></h2>
+    ${active.map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>Invite someone — the clock starts only after they accept.</div>`}
+  </div>`;
 
-  ${fs.map(f=>{ const ps=pairStreak(f), cleared=clearedOn(f,today()), mineCleared=!!S.days[today()]?.cleared;
-    const on=friendChallenge(f.id); const onQ=on?liveQuest(on):null;
-    const others=onQ?onQ.members.filter(x=>x.id!==f.id):[];
-    return `<div class="section"><h2>${esc(f.name)} <span class="muted">${f.title||''}</span></h2>
-    <button class="card friendcard" data-friend="${f.id}"><div class="row between" style="width:100%"><div class="row" style="gap:10px">${avatarHtml(f)}
-      <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0} day streak · level ${f.level??1}</p></div></div>
-      <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></button>
+  const pane=sub==='chats'?chatsPane:sub==='challenges'?chalPane:listPane;
 
-    <div class="card pairstreak"><div class="row between"><div><div class="eyebrow">Shared streak</div><div class="heroval">${ps}<small>days</small></div>
-      <p class="tiny muted">${ps?'Days you both cleared in a row.':'Starts the first day you both clear.'}</p></div>
-      <div class="pairfire ${ps?'lit':''}">${ICON.flame}</div></div>
-      <div class="row" style="gap:8px;margin-top:12px"><span class="pill ${mineCleared?'accent':''}">You ${mineCleared?'✓':'—'}</span><span class="pill ${cleared?'accent':''}">${esc(f.name)} ${cleared?'✓':'—'}</span></div></div>
+  return head + `
+  ${profile}
+  ${seg}
+  ${pane}
 
-    ${onQ?`<div class="card" style="border-color:color-mix(in srgb,${TIERS_C[onQ.tier].colour} 35%,var(--line))"><div class="row between"><div><span class="tierbadge" style="--tier:${TIERS_C[onQ.tier].colour}">${TIERS_C[onQ.tier].label}</span>
-      <b style="display:block;margin-top:6px">On ${esc(onQ.name)}</b>
-      <p class="tiny muted">${others.length?'with '+others.map(x=>esc(x.name)).join(', '):'just the two of you'}</p></div>
-      <div class="chestmini">${chestSVG(onQ.tier)}</div></div></div>`:''}
-
-    ${(()=>{ const p=pairOf(f); const ch=(p.chests||[]).slice(-6).reverse(); if(!ch.length) return '';
-      return `<details class="fold"><summary><span>Chests won (${p.chests.length})</span><span class="tiny">${p.chests.reduce((a,c)=>a+c.amount,0)} coins</span></summary>
-        <div class="card" style="margin-top:8px"><ul class="list">${ch.map(c=>`<li><span><i class="dotc" style="background:${TIERS_C[c.tier].colour}"></i>${esc(c.name)}${c.crew?.length?`<span class="tiny muted"> · ${esc(c.crew.join(', '))}</span>`:''}</span><span class="small" style="color:${TIERS_C[c.tier].colour}">+${c.amount}</span></li>`).join('')}</ul></div></details>`; })()}
-
-    <button class="btn ${canCheer(f)?'primary':''} block" data-cheer="${f.id}" data-kind="${cleared?'cheer':'nudge'}" ${canCheer(f)?'':'disabled'}>
-      ${!canCheer(f)?'Already sent today':cleared?`Cheer ${esc(f.name)} · +${CHEER_COINS} to them`:`Nudge ${esc(f.name)}`}</button>
-    <div class="row between" style="margin-top:8px"><p class="tiny muted">${cleared?'A cheer sends them coins. One a day.':'A nudge is just a wave — no coins, no guilt trip.'}</p>
-      <button class="btn sm ghost danger" data-unfriend="${f.id}">Remove</button></div>
-    </div>`; }).join('')}
-
-  ${!fs.length?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges. One legendary, one rare and two commons can run at once.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`:''}
-  ${live&&inn?`<div class="card"><div class="row between" style="align-items:flex-start"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Last synced ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
+  ${live&&inn?`<div class="card" style="margin-top:14px"><div class="row between" style="align-items:flex-start"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Last synced ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
       <p class="tiny muted" style="margin-top:4px">Saves itself a few seconds after changes. Use Restore if another device is ahead.</p></div>
     <button class="btn sm ghost" id="signout">Sign out</button></div>
     <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
       <button class="btn primary sm" id="restorevault">Restore from account</button>
       <button class="btn sm" id="backupnow">Backup now</button></div></div>`:''}`;
+
 }
 
 /* ---------- Shop ---------- */
@@ -2474,6 +2578,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
+    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
@@ -2501,6 +2606,10 @@ function bind(){
   // Progress
   // Plan — list
   qa('[data-psub]').forEach(b=>b.onclick=()=>{ planState.sub=b.dataset.psub; haptic(); render(); window.scrollTo({top:0}); });
+  qa('[data-fsub]').forEach(b=>b.onclick=()=>{ friendsState.sub=b.dataset.fsub; friendsState.open=null; haptic(); render(); window.scrollTo({top:0}); });
+  qa('[data-ftog]').forEach(b=>b.onclick=()=>{ const id=b.dataset.ftog; friendsState.open=friendsState.open===id?null:id; haptic(); render(); });
+  qa('[data-acceptchal]').forEach(b=>b.onclick=()=>acceptChallenge(b.dataset.acceptchal));
+  qa('[data-declinechal]').forEach(b=>b.onclick=()=>declineChallenge(b.dataset.declinechal));
   qa('[data-when]').forEach(b=>b.onclick=()=>{ const v=b.dataset.when;
     if(v==='pick'){ promptDate('When?', planState.when&&planState.when.includes('-')?planState.when:addDays(today(),2), d=>{ planState.when=d; render(); }); return; }
     planState.when=v; haptic(); render(); });
@@ -3208,7 +3317,6 @@ function chatView(crewId){
   const nameOf=id=>id==='me'?'You':(S.friends[id]?.name||'Them');
   const draw=()=>{
     const ms=msgsOf(crewId);
-    const ch=chalList().find(x=>x.crewId===crewId);
     g.innerHTML=`
     <div class="chat-bar">
       <button class="btn ghost sm" data-back>‹ Back</button>
@@ -3216,9 +3324,13 @@ function chatView(crewId){
       <button class="iconbtn" data-cinfo aria-label="Chat settings">⋯</button>
     </div>
     <div class="chat-scroll" id="scroll">
-      ${ch?chalCardInChat(ch):`<div class="card chatchal"><b class="small">No challenge running here</b>
-        <p class="tiny muted" style="margin:4px 0 10px">Pick a tier — harder tier, harder goal, bigger chest. With ${crewSize(c)} of you the pot is ×${crewMultiplier(crewSize(c)).toFixed(2).replace(/0$/,'')}.</p>
-        <button class="btn primary sm block" data-startchal>Start a challenge</button></div>`}
+      ${(()=>{ const pending=chalList().find(x=>x.crewId===crewId&&chalIsPending(x));
+        const live=chalList().find(x=>x.crewId===crewId&&chalIsActive(x));
+        if(pending) return challengeCard(pending);
+        if(live) return chalCardInChat(live);
+        return `<div class="card chatchal"><b class="small">No challenge running here</b>
+        <p class="tiny muted" style="margin:4px 0 10px">Invite starts a challenge — the clock only runs after everyone accepts. With ${crewSize(c)} of you the pot is ×${crewMultiplier(crewSize(c)).toFixed(2).replace(/0$/,'')}.</p>
+        <button class="btn primary sm block" data-startchal>Invite to a challenge</button></div>`; })()}
       ${ms.length?ms.map((m,i)=>{
         const mine=m.from==='me';
         const showName=!mine && (i===0 || ms[i-1].from!==m.from);
@@ -3484,7 +3596,7 @@ function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.
 let _booted=false;
 export function bootSteady(){
   $app=document.getElementById('app');
-  try{ migratePairChallenges(S); }catch(e){ console.error(e); }
+  try{ migratePairChallenges(S); normalizeChallenges(); }catch(e){ console.error(e); }
   document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>{haptic();setTab(b.dataset.tab)});
   try{ applyTheme(); }catch(e){ console.error(e); }
 

@@ -45,9 +45,20 @@ drop policy if exists "read crew members" on crew_members;
 drop policy if exists "add crew members"  on crew_members;
 drop policy if exists "drop crew members" on crew_members;
 -- You can only add people you are actually friends with.
-create policy "read crew members" on crew_members for select using (in_crew(crew_id));
-create policy "add crew members"  on crew_members for insert
-  with check (user_id = auth.uid() or is_friend(user_id));
+create policy "read crew members" on crew_members for select
+  using (
+    user_id = auth.uid()
+    or in_crew(crew_id)
+    or exists (select 1 from crews c where c.id = crew_id and c.owner_id = auth.uid())
+  );
+create policy "add crew members" on crew_members for insert
+  with check (
+    user_id = auth.uid()
+    or (
+      exists (select 1 from crews c where c.id = crew_id and c.owner_id = auth.uid())
+      and is_friend(user_id)
+    )
+  );
 create policy "drop crew members" on crew_members for delete
   using (user_id = auth.uid() or exists (select 1 from crews c where c.id = crew_id and c.owner_id = auth.uid()));
 
