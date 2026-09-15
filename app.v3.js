@@ -1492,6 +1492,11 @@ const Sync = {
       S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
   },
+  /* Re-upload crews that only exist on this device (e.g. created while tables were missing). */
+  async pushCrews(){
+    if(!this.live()||!this.signedIn()) return;
+    for(const c of crewList()) await this.upsertCrew(c);
+  },
   /* Chats someone else made you part of. Without this, only the person who
      created the chat ever knew it existed. */
   async pullCrews(){
@@ -3439,7 +3444,8 @@ function scheduleBackup(){ clearTimeout(_bkT); _bkT=setTimeout(()=>Sync.backup()
 function friendsTick(){
   if(Sync.live()&&Sync.signedIn()) scheduleBackup();
   if(!friendList().length && !Sync.signedIn()) return;
-  Sync.pull()
+  Sync.pushCrews().catch(()=>{})
+    .then(()=>Sync.pull())
     .then(()=>Sync.pullCrews())
     .then(()=>Sync.pullChallenges())
     .then(()=>Sync.pullMessages())
