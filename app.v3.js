@@ -1228,6 +1228,15 @@ async function refreshSession(){
   }catch(e){ return false; }
 }
 
+function vaultWeight(s){
+  if(!s) return 0;
+  const days=Object.keys(s.days||{}).length;
+  const tasks=(s.tasks||[]).filter(x=>!x.archived).length;
+  const notes=(s.notes||[]).length;
+  const todos=(s.todos||[]).length;
+  const coins=s.points?.coins||0;
+  return days*3 + tasks*2 + notes + todos + (coins>0?1:0);
+}
 function stripForVault(){
   const {friends,outbox,inbox,syncError,demo,session,...rest}=S;   // never back up the auth token or cached friend data
   return rest;
@@ -1330,26 +1339,59 @@ const Sync = {
     catch(e){ S.syncError=readableSyncError(e); save(); }
   },
 
-  /* ---- full-state backup so a new phone restores everything ---- */
+  /* ---- full-state backup so a new phone restores everything ----
+     Never overwrite a newer cloud vault with thinner local data (that was the
+     cross-device bug: computer sign-in kept empty local state, then backup
+     clobbered the phone). */
+  async fetchVault(){
+    if(!this.live()||!this.signedIn()) return null;
+    try{ const rows=await api(`/rest/v1/vault?user_id=eq.${S.me.id}&select=blob,updated_at`);
+      const row=rows?.[0]; if(!row?.blob) return null;
+      return {blob:row.blob, updatedAt:Date.parse(row.updated_at)||0};
+    }catch(e){ S.syncError=readableSyncError(e); save(); return null; }
+  },
   async backup(){
     if(!this.live()||!this.signedIn()) return;
-    try{ await api('/rest/v1/vault?on_conflict=user_id',{method:'POST',
+    try{
+      const remote=await this.fetchVault();
+      const localAt=S.vaultAt||0;
+      if(remote && remote.updatedAt > localAt+5000 && vaultWeight(remote.blob) > vaultWeight(S)){
+        /* Cloud is newer and richer — pull it instead of wiping it. */
+        this.applyVault(remote.blob, remote.updatedAt);
+        return;
+      }
+      if(remote && remote.updatedAt > localAt+5000 && vaultWeight(remote.blob) >= vaultWeight(S)){
+        /* Same richness but cloud newer: still don't clobber; wait for explicit restore. */
+        return;
+      }
+      await api('/rest/v1/vault?on_conflict=user_id',{method:'POST',
         body:{user_id:S.me.id,blob:stripForVault(),updated_at:new Date().toISOString()},
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
       S.vaultAt=Date.now(); S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
   },
   async restore(){
-    if(!this.live()||!this.signedIn()) return null;
-    try{ const rows=await api(`/rest/v1/vault?user_id=eq.${S.me.id}&select=blob,updated_at`);
-      return rows?.[0]?.blob||null;
-    }catch(e){ S.syncError=readableSyncError(e); save(); return null; }
+    const v=await this.fetchVault();
+    return v?.blob||null;
   },
-  applyVault(blob){
+  applyVault(blob, at){
     const me0=S.me, auth0=S.auth, sess0=S.session;      // the vault never holds the token — keep the live one
     S={...fresh(),...blob,me:me0,auth:auth0,session:sess0,friends:{},inbox:[],settings:{...fresh().settings,...(blob.settings||{})},flags:{...fresh().flags,...(blob.flags||{})}};
+    S.vaultAt=at||Date.now();
     migratePairChallenges(S);
     save();
+  },
+  async pullVaultSmart(){
+    if(!this.live()||!this.signedIn()) return false;
+    const remote=await this.fetchVault();
+    if(!remote) return false;
+    const localAt=S.vaultAt||0;
+    const thin=vaultWeight(S)<3;
+    const newer=remote.updatedAt > localAt+5000;
+    const richer=vaultWeight(remote.blob) > vaultWeight(S);
+    if(thin && remote.blob){ this.applyVault(remote.blob, remote.updatedAt); return true; }
+    if(newer && richer){ this.applyVault(remote.blob, remote.updatedAt); return true; }
+    return false;
   },
 
   /* ---- friends ---- */
@@ -2275,8 +2317,12 @@ function vFriends(){
     </div>`; }).join('')}
 
   ${!fs.length?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges. One legendary, one rare and two commons can run at once.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`:''}
-  ${live&&inn?`<div class="card"><div class="row between"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Saves itself · last ${new Date(S.vaultAt).toLocaleString()}`:'Saves itself a few seconds after anything changes'}</p></div>
-    <button class="btn sm ghost" id="signout">Sign out</button></div></div>`:''}`;
+  ${live&&inn?`<div class="card"><div class="row between" style="align-items:flex-start"><div><b class="small">Backup</b><p class="tiny muted">${S.vaultAt?`Last synced ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
+      <p class="tiny muted" style="margin-top:4px">Saves itself a few seconds after changes. Use Restore if another device is ahead.</p></div>
+    <button class="btn sm ghost" id="signout">Sign out</button></div>
+    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn primary sm" id="restorevault">Restore from account</button>
+      <button class="btn sm" id="backupnow">Backup now</button></div></div>`:''}`;
 }
 
 /* ---------- Shop ---------- */
@@ -2464,15 +2510,36 @@ function bind(){
       if(authState.mode==='up'){ await Sync.signUp(email,pass,name); render(); toast('Account created'); friendsTick(); }
       else{
         const blob=await Sync.signIn(email,pass);
-        if(blob && (S.tasks.length||Object.keys(S.days).length)){
+        const localHeavy=vaultWeight(S)>=3;
+        if(blob && localHeavy && vaultWeight(blob) > 0){
           render();
-          modal('<h2>Restore your backup?</h2><p class="muted">This device already has data on it. Restoring replaces it with what is saved to your account.</p>','Restore',()=>{ Sync.applyVault(blob); render(); toast('Restored'); friendsTick(); });
-        } else { if(blob) Sync.applyVault(blob); render(); toast('Signed in'); friendsTick(); }
+          modal('<h2>Restore your backup?</h2><p class="muted">Your account has a backup (likely from your other device). Restoring replaces what is on <b>this</b> device with that backup. Cancel keeps this device as it is — but will not upload over a newer cloud backup.</p>','Restore',()=>{ Sync.applyVault(blob); render(); toast('Restored from account'); friendsTick(); });
+        } else {
+          if(blob) Sync.applyVault(blob);
+          render(); toast(blob?'Signed in · backup restored':'Signed in'); friendsTick();
+        }
       }
     }catch(e){ ag.disabled=false; ag.textContent=authState.mode==='up'?'Create account':'Sign in'; toast(e.message||'Could not sign in'); }
   };
   const fp=q('#forgotpw'); if(fp) fp.onclick=()=>forgotSheet();
   const so=q('#signout'); if(so) so.onclick=()=>modal('<h2>Sign out?</h2><p class="muted">Your tasks and history stay on this device. Sign back in any time.</p>','Sign out',async()=>{ await Sync.signOut(); render(); toast('Signed out'); });
+  const rv=q('#restorevault'); if(rv) rv.onclick=async()=>{
+    rv.disabled=true; rv.textContent='…';
+    try{
+      const remote=await Sync.fetchVault();
+      if(!remote?.blob){ toast('No backup on the account yet — open the app on your phone for a minute so it can upload.'); }
+      else {
+        modal('<h2>Restore from account?</h2><p class="muted">This replaces what is on <b>this</b> device with the cloud backup (usually your phone). You cannot undo it from here.</p>','Restore',()=>{ Sync.applyVault(remote.blob, remote.updatedAt); render(); toast('Restored from account'); friendsTick(); });
+      }
+    }catch(e){ toast(e.message||'Could not reach backup'); }
+    finally{ rv.disabled=false; rv.textContent='Restore from account'; }
+  };
+  const bn=q('#backupnow'); if(bn) bn.onclick=async()=>{
+    bn.disabled=true; bn.textContent='…';
+    try{ await Sync.backup(); toast(S.syncError||'Backup saved'); render(); }
+    catch(e){ toast(e.message||'Backup failed'); }
+    finally{ bn.disabled=false; bn.textContent='Backup now'; }
+  };
   const rn=q('#renameme'); if(rn) rn.onclick=()=>prompt$('Your name',me().name||'',async v=>{ await Sync.rename(v); render(); });
   const ci=q('#clearinbox'); if(ci) ci.onclick=()=>{ S.inbox=[]; save(); render(); };
   const avp=q('#avpick'), avf=q('#avfile');
@@ -3402,7 +3469,16 @@ export function bootSteady(){
     Sync.claimRecovery().then(rec=>{
       if(rec){ document.querySelectorAll('.gate').forEach(g=>g.remove()); newPasswordGate(); return null; }
       return Sync.session();
-    }).catch(()=>{}).then(()=>{ if(tab==='friends') render(); });
+    }).catch(()=>null).then(async()=>{
+      try{
+        if(Sync.signedIn()){
+          const pulled=await Sync.pullVaultSmart();
+          if(pulled){ render(); toast('Restored newer backup from your account'); }
+        }
+      }catch(e){}
+      if(tab==='friends') render();
+      friendsTick();
+    });
   }
 }
 
