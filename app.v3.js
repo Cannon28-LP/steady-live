@@ -2422,10 +2422,10 @@ function vFriends(){
   const live=Sync.live(), inn=Sync.signedIn();
   const banner=S.syncError?`<div class="card syncerr"><div class="row between"><div><b>Not syncing right now</b><p class="small muted">${esc(S.syncError)}</p></div><div class="stack" style="gap:6px"><button class="btn sm" id="retrysync">Retry</button><button class="btn sm ghost" id="conncheck2">Diagnose</button></div></div>
     <p class="tiny muted" style="margin-top:8px">Everything else works as normal — your tasks and history are on this device.</p></div>`:'';
-  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div></div>${affirmationLine()}${banner}`;
+  const meChip=inn?`<button class="mechip" id="avpick" aria-label="Change your picture"><span class="mechip-name">${esc(m.name||'You')}</span>${avatarHtml(m)}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`:'';
+  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${meChip}</div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `
-    ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Update app</button>`:''}
   <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
       <div class="stack">
         ${authState.mode==='up'?`<input type="text" id="auname" placeholder="Your name" maxlength="24" value="${esc(m.name||'')}">`:''}
@@ -2444,24 +2444,16 @@ function vFriends(){
   const openId=friendsState.open;
   const seg=`<div class="seg" style="margin-bottom:14px">${[['list','Friend list'],['chats','Chats'],['challenges','Active challenges']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-fsub="${v}">${l}</button>`).join('')}</div>`;
 
-  const profile=`${inbox.length?`<div class="card callout"><b>${inbox.length===1?'New message':`${inbox.length} new messages`}</b>
+  const inboxCard=inbox.length?`<div class="card callout" style="margin-bottom:10px"><b>${inbox.length===1?'New message':`${inbox.length} new messages`}</b>
     <ul class="list" style="margin-top:6px">${inbox.map(x=>`<li><span>${esc(x.text)}</span><span class="small ${x.coins?'':'muted'}" style="${x.coins?'color:var(--accent)':''}">${x.coins?`+${x.coins}`:fmt(x.date,{day:'numeric',month:'short'})}</span></li>`).join('')}</ul>
-    <button class="btn sm block" id="clearinbox" style="margin-top:10px">Clear</button></div>`:''}
-  ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Update app</button>`:''}
-  <div class="card" data-tour="code"><div class="row" style="gap:12px;align-items:center;margin-bottom:12px">
-      <button class="avatarbtn" id="avpick" aria-label="Change your picture">${avatarHtml(m,'big')}<span class="avedit">${ICON.edit}</span></button>
-      <div class="grow"><b>${esc(m.name||'No name')}</b><p class="tiny muted">${avatarOf(m)?'Tap to change it':'Tap to build a character or add an image'}</p></div>
-      ${avatarOf(m)?`<button class="btn sm ghost" id="avclear">Remove</button>`:''}
-    </div>
-    <input type="file" id="avfile" accept="image/*" hidden>
-    <div class="row between"><div><div class="eyebrow">Your code</div><b style="font-size:1.4rem;letter-spacing:.08em">${m.code}</b>
-      <p class="tiny muted" style="margin-top:4px">${esc(m.name||'No name')}${live?` · ${esc(S.me?.email||'')}`:''}</p></div>
-    <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button></div></div>
-    ${live&&inn?`<button class="btn sm ghost block" id="signout" style="margin-top:12px">Sign out</button>`:''}</div>`;
+    <button class="btn sm block" id="clearinbox" style="margin-top:10px">Clear</button></div>`:'';
 
-  const addFriendCard=`<div class="card" style="margin-bottom:10px"><div class="row"><input type="text" id="addcode" placeholder="Add a friend's code" maxlength="12" style="text-transform:uppercase"><button class="btn primary" id="addfriend">Add</button></div>
+  const addFriendCard=`<div class="card" style="margin-bottom:10px" data-tour="code"><div class="row"><input type="text" id="addcode" placeholder="Add a friend's code" maxlength="12" style="text-transform:uppercase"><button class="btn primary" id="addfriend">Add</button></div>
     ${!live?`<p class="tiny muted" style="margin-top:10px">No server configured — adding a code creates a demo friend so you can see how it works.</p>`:
-      `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}</div>`;
+      `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}
+    <div class="row between" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div><div class="eyebrow">Your code</div><b style="font-size:1.25rem;letter-spacing:.08em">${m.code}</b>
+      <p class="tiny muted" style="margin-top:4px">${live?esc(S.me?.email||''):''}</p></div>
+    <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button>${avatarOf(m)?`<button class="btn sm ghost" id="avclear">Remove pic</button>`:''}</div></div></div>`;
 
   const listPane=addFriendCard+(!fs.length
     ?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`
@@ -2520,7 +2512,7 @@ function vFriends(){
   const pane=sub==='chats'?chatsPane:sub==='challenges'?chalPane:listPane;
 
   return head + `
-  ${profile}
+  ${inboxCard}
   ${seg}
   ${pane}`;
 
@@ -2638,14 +2630,19 @@ function vSettings(){
     })()}
   </div></details>
   ${(()=>{ const live=Sync.live(), inn=Sync.signedIn();
-    if(!live) return `<details class="acc"><summary>Backup</summary><div class="body"><p class="tiny muted">No server configured on this build.</p></div></details>`;
-    if(!inn) return `<details class="acc"><summary>Backup</summary><div class="body"><p class="tiny muted">Sign in on Friends first — backups ride with your account.</p></div></details>`;
-    return `<details class="acc" id="acc-backup"><summary>Backup <span class="muted">${S.vaultAt?'synced':'not yet'}</span></summary><div class="body">
-      <p class="tiny muted">${S.vaultAt?`Last synced ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
+    if(!live) return `<details class="acc"><summary>Account</summary><div class="body"><p class="tiny muted">No server configured on this build.</p>
+      <button class="btn sm block" id="syncnow" style="margin-top:10px">Update app</button></div></details>`;
+    if(!inn) return `<details class="acc" id="acc-account"><summary>Account</summary><div class="body"><p class="tiny muted">Sign in on Friends first — backups ride with your account.</p>
+      <button class="btn sm block" id="syncnow" style="margin-top:10px">Update app</button></div></details>`;
+    return `<details class="acc" id="acc-account"><summary>Account <span class="muted">${S.vaultAt?'synced':'not yet'}</span></summary><div class="body">
+      <p class="tiny muted">${esc(S.me?.email||me().name||'')}</p>
+      <p class="tiny muted" style="margin-top:8px">${S.vaultAt?`Last backup ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
       <p class="tiny muted" style="margin-top:4px">Saves itself a few seconds after changes. Use Restore if another device is ahead.</p>
       <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
         <button class="btn primary sm" id="restorevault">Restore from account</button>
-        <button class="btn sm" id="backupnow">Backup now</button></div>
+        <button class="btn sm" id="backupnow">Backup now</button>
+        <button class="btn sm" id="syncnow">Update app</button></div>
+      <button class="btn sm ghost danger block" id="signout" style="margin-top:14px">Sign out</button>
     </div></details>`;
   })()}
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
@@ -2675,7 +2672,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only, so there is nothing to moderate and no way to be unpleasant. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
     <p><b style="color:var(--fg)">Accounts.</b> The account exists only to back things up and to pair with people — everything works without one. Backing up happens by itself a few seconds after anything changes. Forgotten your password? Use the link on the sign-in screen and it emails you a reset. Lost the email as well? Your tasks, history and coins are still on this phone; sign up again with another email and this device carries on. You would lose the old backup and any pairing, nothing else.</p>
     <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture on Friends. Eight faces, six skin tones and eight hair colours are yours from the start, and they're separate choices — so any face can be any tone with any hair, including ginger. Cosmetics cost coins: hair styles, outfits, eyewear, headwear and backdrops. Nothing is limited to one kind of character; any item works on any of them.</p>
-    <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap the circle at the top of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to the initial.</p>
+    <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to the initial.</p>
     <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
     <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons and your affirmation never leave this device.</p>
