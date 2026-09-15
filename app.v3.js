@@ -911,6 +911,18 @@ const PHRASES = [
     {id:'p21', t:"Need a nudge?"},
     {id:'p22', t:"Thanks for the push."},
   ]},
+  {g:'Between us', items:[
+    {id:'p23', t:"I love you."},
+    {id:'p24', t:"I'm sorry."},
+    {id:'p25', t:"I'm good, thank you."},
+    {id:'p26', t:"Having a rough day."},
+    {id:'p27', t:"You're the best."},
+    {id:'p28', t:"Don't give up."},
+    {id:'p29', t:"Well done."},
+    {id:'p30', t:"It's ok, let's try again."},
+    {id:'p31', t:"Look at our streak."},
+    {id:'p32', t:"You suck."},
+  ]},
 ];
 const EMOTES = ['💪','🔥','👏','🙌','❤️','🙏','😅','😴','☕','🎯'];
 const PHRASE_MAP = Object.fromEntries(PHRASES.flatMap(g=>g.items.map(i=>[i.id,i.t])));
@@ -2825,7 +2837,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
 
-    <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only, so there is nothing to moderate and no way to be unpleasant. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
+    <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only — nothing free-typed, so there is nothing to moderate. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
     <p><b style="color:var(--fg)">Accounts.</b> The account exists only to back things up and to pair with people — everything works without one. Backing up happens by itself a few seconds after anything changes. Forgotten your password? Use the link on the sign-in screen and it emails you a reset. Lost the email as well? Your tasks, history and coins are still on this phone; sign up again with another email and this device carries on. You would lose the old backup and any pairing, nothing else.</p>
     <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture on Friends. Eight faces, six skin tones and eight hair colours are yours from the start, and they're separate choices — so any face can be any tone with any hair, including ginger. Cosmetics cost coins: hair styles, outfits, eyewear, headwear and backdrops. Nothing is limited to one kind of character; any item works on any of them.</p>
     <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to the initial.</p>
