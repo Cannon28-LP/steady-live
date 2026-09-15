@@ -2263,7 +2263,7 @@ function vFriends(){
   const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div></div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `
-    ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Check for updates</button>`:''}
+    ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Update app</button>`:''}
   <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
       <div class="stack">
         ${authState.mode==='up'?`<input type="text" id="auname" placeholder="Your name" maxlength="24" value="${esc(m.name||'')}">`:''}
@@ -2282,7 +2282,7 @@ function vFriends(){
     <ul class="list" style="margin-top:6px">${inbox.map(x=>`<li><span>${esc(x.text)}</span><span class="small ${x.coins?'':'muted'}" style="${x.coins?'color:var(--accent)':''}">${x.coins?`+${x.coins}`:fmt(x.date,{day:'numeric',month:'short'})}</span></li>`).join('')}</ul>
     <button class="btn sm block" id="clearinbox" style="margin-top:10px">Clear</button></div>`:''}
 
-  ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Check for updates</button>`:''}
+  ${live&&inn?`<button class="btn sm ghost block" id="syncnow" style="margin-bottom:10px">Update app</button>`:''}
   <div class="card" data-tour="code"><div class="row" style="gap:12px;align-items:center;margin-bottom:12px">
       <button class="avatarbtn" id="avpick" aria-label="Change your picture">${avatarHtml(m,'big')}<span class="avedit">${ICON.edit}</span></button>
       <div class="grow"><b>${esc(m.name||'No name')}</b><p class="tiny muted">${avatarOf(m)?'Tap to change it':'Tap to build a character or add an image'}</p></div>
@@ -2593,8 +2593,20 @@ function bind(){
   const sc=q('#startchal'); if(sc) sc.onclick=()=>startChallengeModal();
   qa('[data-friend]').forEach(b=>b.onclick=()=>{ const f=S.friends[b.dataset.friend]; if(f) friendSheet(f); });
   const sn2=q('#syncnow'); if(sn2) sn2.onclick=async()=>{ sn2.textContent='…';
-    await Sync.pull(); await Sync.pullCrews(); await Sync.pullChallenges(); await Sync.pullMessages();
-    render(); toast(S.syncError?S.syncError:'Up to date'); };
+    try{
+      await Sync.pushCrews().catch(()=>{});
+      await Sync.pull(); await Sync.pullCrews(); await Sync.pullChallenges(); await Sync.pullMessages();
+    }catch(e){}
+    try{
+      if(navigator.serviceWorker){
+        const regs=await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.update()));
+        if(window.caches){ const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
+      }
+    }catch(e){}
+    toast(S.syncError?S.syncError:`Friends synced · build ${BUILD}`);
+    setTimeout(()=>location.reload(),600);
+  };
   const ol=q('#openlooks'); if(ol) ol.onclick=()=>charSheet();
   qa('[data-crew]').forEach(b=>b.onclick=()=>chatView(b.dataset.crew));
   const nc=q('#newcrew'); if(nc) nc.onclick=()=>crewSheet(null);
