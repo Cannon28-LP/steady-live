@@ -1862,6 +1862,8 @@ function dayStats(k){
 function strengthOf(t,k=today()){ let s=0; for(let x=t.createdAt;x<=k;x=addDays(x,1)){ const st=statusOf(x,t.id); if(x===k&&st==='open') break; s=s*0.95+(st==='done'?5:0); } return clamp(Math.round(s),0,100); }
 function avgStrength(k=today()){ const ts=activeTasks(k); if(!ts.length) return 0; return Math.round(ts.reduce((a,t)=>a+strengthOf(t,k),0)/ts.length); }
 function taskValue(t){ return Math.round(TASK_BASE*(1+0.5*strengthOf(t,addDays(today(),-1))/100)); }
+function taskValueAt(t,k){ return Math.round(TASK_BASE*(1+0.5*strengthOf(t,addDays(k,-1))/100)); }
+function paidValueAt(t,mins,k){ return Math.max(1, Math.round(taskValueAt(t,k)*timeScale(t,mins))); }
 /* Overtime pays coins only — never XP — so long sessions can't buy levels or titles. Consistency does that. */
 function overtimeFor(t,mins){ if(!t.target||!mins) return 0; return clamp(Math.floor((mins-t.target)/OT_PER),0,OT_TASK_CAP); }
 /* Scale a task's pay by how much of its target was done. No target or no time logged = full pay. */
@@ -1972,6 +1974,51 @@ function payClearStreak(){
     return {amount,block,days:block*7,capped:amount>=CLEAR_WEEK_CAP};
   }
   save(); return null;
+}
+function clearedStreakAt(end){ let n=0,k=end; while(S.days[k]?.cleared){ n++; k=addDays(k,-1); } return n; }
+function payClearStreakAt(end){
+  const n=clearedStreakAt(end), block=Math.floor(n/7);
+  if(block < (S.clearPaidBlock||0)) S.clearPaidBlock=block;
+  if(block>=1 && (S.clearPaidBlock||0)<block){
+    const amount=clearWeekBonus(block);
+    S.clearPaidBlock=block; S.points.coins+=amount; S.points.xp+=amount;
+    const d=day(end);
+    d.clearStreakPay=(d.clearStreakPay||0)+amount; d.clearStreakBlock=block;
+    save();
+    return {amount,block,days:block*7,capped:amount>=CLEAR_WEEK_CAP};
+  }
+  save(); return null;
+}
+/* Mark a task done on a past day (yesterday catch-up). Same economy as same-day; no double award. */
+function completeOnDate(k,id){
+  const d=day(k);
+  if(d.tasks[id]?.status==='done') return {coins:0,already:true};
+  const tasks=activeTasks(k);
+  const t=tasks.find(x=>x.id===id)||S.tasks.find(x=>x.id===id);
+  if(!t) return null;
+  const v=paidValueAt(t,null,k);
+  d.tasks[id]={status:'done',doneAt:Date.now(),value:v,bonus:0,minutes:null,full:true,catchUp:true};
+  let coins=v, xp=v;
+  const n=tasks.length;
+  const allDone=tasks.filter(x=>d.tasks[x.id]?.status==='done').length;
+  let cleared=false;
+  if(n && allDone===n && !d.cleared){ d.cleared=true; d.clearBonus=CLEAR_PER_TASK*n; coins+=d.clearBonus; xp+=d.clearBonus; cleared=true; }
+  d.points=(d.points||0)+coins; S.points.coins+=coins; S.points.xp+=xp; d.perfect=!!d.cleared;
+  let streakWin=null;
+  if(cleared){ streakWin=payClearStreakAt(k); if(streakWin){ coins+=streakWin.amount; } }
+  S.pendingMisses=(S.pendingMisses||[]).filter(p=>!(p.date===k && p.taskId===id));
+  save();
+  return {coins,cleared,streakWin,name:t.name};
+}
+function dropPending(date,taskId){
+  S.pendingMisses=(S.pendingMisses||[]).filter(p=>!(p.date===date && p.taskId===taskId));
+}
+function saveMissReason(date,taskId,reason){
+  const e=day(date).tasks[taskId];
+  if(!e) return;
+  e.status='missed'; e.reason=reason;
+  if(reason && !DEFAULT_REASONS.includes(reason) && !S.customReasons.includes(reason)) S.customReasons.push(reason);
+  dropPending(date,taskId);
 }
 
 /* ---------- Completing ---------- */
@@ -3379,9 +3426,112 @@ function promptNum(titleTxt,val,fn){
   o.querySelector('[data-ok]').onclick=ok; i.onkeydown=e=>{if(e.key==='Enter')ok();};
 }
 
-/* ---------- Miss-why gate ---------- */
+/* ---------- Yesterday catch-up + miss-why ---------- */
+/* Session snooze: Ask me later once per open; cleared when the app is shown again. */
+let catchUpSnooze=false;
+function yesterdayKey(){ return addDays(today(),-1); }
+function yesterdayPending(){ const y=yesterdayKey(); return (S.pendingMisses||[]).filter(p=>p.date===y); }
+function olderPending(){ const y=yesterdayKey(); return (S.pendingMisses||[]).filter(p=>p.date<y); }
+
+function catchUpGate(){
+  if(document.querySelector('.gate,.overlay')) return false;
+  if(catchUpSnooze) return false;
+  const y=yesterdayKey();
+  let pend=yesterdayPending();
+  if(!pend.length) return false;
+
+  const reasons=[...DEFAULT_REASONS,...S.customReasons];
+  const cardHtml=p=>{
+    const t=S.tasks.find(x=>x.id===p.taskId);
+    return `<div class="card catchup-card" style="padding:12px" data-tid="${esc(p.taskId)}" data-date="${esc(p.date)}">
+      <div class="row between"><b>${esc(t?.name||'Task')}</b><span class="tiny muted">${fmt(p.date)}</span></div>
+      <div class="catchup-acts" data-acts>
+        <button class="btn primary" data-did>I did it</button>
+        <button class="btn" data-missed>Missed</button>
+      </div>
+      <div class="catchup-why" data-why hidden>
+        <p class="tiny muted" style="margin:10px 0 8px">What got in the way?</p>
+        <div class="chips">${reasons.map(r=>`<button class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-custom>+ Other</button></div>
+        <input type="text" placeholder="Or type your own reason" style="margin-top:10px;padding:9px 12px;width:100%" data-c maxlength="120">
+        <button class="btn primary block" data-save-miss style="margin-top:10px" disabled>Save</button>
+      </div>
+    </div>`;
+  };
+
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <h2>Yesterday — anything you forgot to tick?</h2>
+    <p class="muted small" style="margin-bottom:14px">No stress. Mark what you did, or note a miss. Only yesterday — nothing further back.</p>
+    <div class="stack" data-list>${pend.map(cardHtml).join('')}</div>
+    <div class="foot"><button class="btn ghost" data-later>Ask me later</button></div>
+  </div>`);
+
+  const list=o.querySelector('[data-list]');
+  const removeCard=(card, note)=>{
+    card.remove();
+    if(list.querySelectorAll('.catchup-card').length) return;
+    close(o); haptic(note?.cleared?'success':'light'); render();
+    toast(note?.msg || 'Yesterday sorted.');
+    if(note?.cleared && typeof friendsTick==='function') friendsTick();
+    if(note?.streakWin) setTimeout(()=>streakScene(note.streakWin),600);
+    setTimeout(maybeGates,280);
+  };
+
+  list.querySelectorAll('.catchup-card').forEach(card=>{
+    const tid=card.dataset.tid, date=card.dataset.date;
+    card.querySelector('[data-did]').onclick=()=>{
+      const res=completeOnDate(date,tid);
+      if(!res){ removeCard(card); return; }
+      if(res.already){ dropPending(date,tid); save(); removeCard(card); return; }
+      haptic(res.cleared?'success':'light');
+      const msg=res.cleared?`Yesterday cleared · +${res.coins}`:`${res.name} · +${res.coins}`;
+      if(list.querySelectorAll('.catchup-card').length>1){
+        card.remove();
+        toast(msg);
+        if(res.cleared && typeof friendsTick==='function') friendsTick();
+        if(res.streakWin) setTimeout(()=>streakScene(res.streakWin),600);
+      } else {
+        removeCard(card, {msg, cleared:res.cleared, streakWin:res.streakWin});
+      }
+    };
+    card.querySelector('[data-missed]').onclick=()=>{
+      card.querySelector('[data-acts]').hidden=true;
+      const why=card.querySelector('[data-why]'); why.hidden=false;
+      const picked={}; const saveBtn=card.querySelector('[data-save-miss]');
+      const reasonOf=()=>{ const typed=card.querySelector('[data-c]')?.value.trim()||''; return (picked.r||typed||'').trim(); };
+      const check=()=>{ saveBtn.disabled=!reasonOf(); };
+      card.querySelectorAll('[data-r]').forEach(c=>c.onclick=()=>{
+        card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); c.classList.add('on');
+        picked.r=c.dataset.r; const inp=card.querySelector('[data-c]'); if(inp) inp.value=''; haptic(); check();
+      });
+      const inp=card.querySelector('[data-c]');
+      if(inp) inp.oninput=()=>{ if(inp.value.trim()){ card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); delete picked.r; } check(); };
+      card.querySelector('[data-custom]').onclick=()=>prompt$('What got in the way?','',v=>{
+        if(!v) return;
+        if(!S.customReasons.includes(v)){ S.customReasons.push(v); save(); }
+        const b=document.createElement('button'); b.className='chip on'; b.textContent=v; b.dataset.r=v;
+        b.onclick=()=>{ card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); b.classList.add('on'); picked.r=v; if(inp) inp.value=''; check(); };
+        card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
+        card.querySelector('[data-custom]').before(b); picked.r=v; if(inp) inp.value=''; check();
+      });
+      saveBtn.onclick=()=>{
+        const reason=reasonOf(); if(!reason) return;
+        saveMissReason(date,tid,reason); save(); haptic(); removeCard(card);
+      };
+    };
+  });
+
+  o.querySelector('[data-later]').onclick=()=>{
+    catchUpSnooze=true; close(o); haptic();
+    toast('OK — ask again later today.');
+    setTimeout(maybeGates,280); // older miss reasons can still show
+  };
+  return true;
+}
+
 function missGate(){
-  const pend=S.pendingMisses; if(!pend.length) return false;
+  if(document.querySelector('.gate,.overlay')) return false;
+  /* Older-than-yesterday only — yesterday goes through catchUpGate (I did it | Missed). */
+  const pend=olderPending(); if(!pend.length) return false;
   const reasons=[...DEFAULT_REASONS,...S.customReasons]; const picked={};
   const item=(p,i)=>{const t=S.tasks.find(x=>x.id===p.taskId); return `<div class="card" style="padding:12px" data-miss="${i}"><div class="row between"><b>${esc(t?.name||'Task')}</b><span class="tiny muted">${fmt(p.date)}</span></div><div class="chips" style="margin-top:10px">${reasons.map(r=>`<button class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-custom>+ Other</button></div><input type="text" placeholder="Or type your own reason" style="margin-top:10px;padding:9px 12px" data-c maxlength="120"></div>`;};
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${pend.length===1?'One thing slipped':pend.length+' things slipped'}</h2><p class="muted small" style="margin-bottom:14px">No points lost. Pick a chip or type your own — patterns show up in Progress.</p>${pend.length>1?`<div class="chips" style="margin-bottom:12px"><span class="tiny muted" style="align-self:center">Same for all:</span>${reasons.map(r=>`<button class="chip" data-all="${esc(r)}">${esc(r)}</button>`).join('')}</div>`:''}<div class="stack">${pend.map(item).join('')}</div><div class="foot"><button class="btn primary" data-ok disabled>Save</button></div></div>`);
@@ -3394,7 +3544,15 @@ function missGate(){
     card.querySelector('[data-custom]').onclick=()=>prompt$('What got in the way?','',v=>{ if(!v) return; if(!S.customReasons.includes(v)){S.customReasons.push(v);save();} const b=document.createElement('button');b.className='chip on';b.textContent=v;b.dataset.r=v;b.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));b.classList.add('on');picked[i]=v; if(inp) inp.value=''; check();}; card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); card.querySelector('[data-custom]').before(b); picked[i]=v; if(inp) inp.value=''; check(); });
   });
   o.querySelectorAll('[data-all]').forEach(a=>a.onclick=()=>{ o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on')); a.classList.add('on'); o.querySelectorAll('[data-miss]').forEach(card=>{ card.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x.dataset.r===a.dataset.all)); picked[card.dataset.miss]=a.dataset.all; const inp=card.querySelector('[data-c]'); if(inp) inp.value=''; }); haptic(); check(); });
-  okb.onclick=()=>{ o.querySelectorAll('[data-miss]').forEach(card=>{const i=card.dataset.miss;const p=pend[i];const e=day(p.date).tasks[p.taskId]; if(e){ const reason=reasonOf(card); e.reason=reason; if(reason && !DEFAULT_REASONS.includes(reason) && !S.customReasons.includes(reason)){ S.customReasons.push(reason); } }}); S.pendingMisses=[]; save(); close(o); haptic(); render(); toast('Noted. Fresh day.'); };
+  okb.onclick=()=>{
+    const answered=new Set();
+    o.querySelectorAll('[data-miss]').forEach(card=>{
+      const i=card.dataset.miss; const p=pend[i]; if(!p) return;
+      const reason=reasonOf(card); saveMissReason(p.date,p.taskId,reason); answered.add(p.date+'|'+p.taskId);
+    });
+    S.pendingMisses=(S.pendingMisses||[]).filter(p=>!answered.has(p.date+'|'+p.taskId));
+    save(); close(o); haptic(); render(); toast('Noted. Fresh day.');
+  };
   return true;
 }
 
@@ -3984,7 +4142,8 @@ function friendsTick(){
   Sync.push().catch(()=>{});
 }
 function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); }
-  if(missGate()) return;                 // reasons first, then advice, then recap
+  if(catchUpGate()) return;              // yesterday: I did it | Missed
+  if(missGate()) return;                 // older slips → reasons, then advice, then recap
   const st=stuckTask(); if(st){ adviceSheet(st); return; }
   if(maybeRecap()) return;
   tour(tab); }
@@ -4025,7 +4184,13 @@ export function bootSteady(){
     }catch(e){}
     setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } try{ reminderTick(); }catch(e){} },30000);
     setTimeout(()=>{ try{ reminderTick(); }catch(e){} },4000);
-    document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } });
+    document.addEventListener('visibilitychange',()=>{ if(document.hidden) return;
+      const rolled=S.flags.lastOpen!==today();
+      if(rolled){ rollover(); render(); }
+      const wasSnoozed=catchUpSnooze;
+      catchUpSnooze=false;               // Ask me later only lasts until next show
+      if(rolled || wasSnoozed) maybeGates();
+    });
     /* Arriving back from a password-reset email takes priority over everything. */
     Sync.claimRecovery().then(rec=>{
       if(rec){ document.querySelectorAll('.gate').forEach(g=>g.remove()); newPasswordGate(); return null; }

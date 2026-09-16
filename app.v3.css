@@ -150,6 +150,9 @@ details.fold[open] summary::after{transform:rotate(90deg)}
 .sheet h2{font-size:1.3rem;margin-bottom:6px}
 .sheet .foot{display:flex;gap:10px;margin-top:18px}
 .sheet .foot .btn{flex:1}
+.catchup-acts{display:flex;gap:8px;margin-top:12px}
+.catchup-acts .btn{flex:1;padding:11px 12px;font-size:.92rem}
+.catchup-card .catchup-why{margin-top:4px}
 .modal{width:min(92vw,400px);background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:22px;margin-bottom:40vh;transform:scale(.96);transition:transform var(--dur) var(--ease)}
 .overlay.center{align-items:center}
 .overlay.show .modal{transform:none}
