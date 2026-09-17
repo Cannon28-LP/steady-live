@@ -2066,7 +2066,7 @@ function undoLast(){
   let refund=dayPts;
   if(u.cleared){ d.cleared=false; d.clearBonus=0; refund+=clawClearStreak(d); }
   d.points-=dayPts; S.points.coins-=refund; S.points.xp-=refund; d.perfect=false;
-  if(S.points.coins<0) S.points.coins=0;
+  /* Coins may go negative: if you spent the reward then undid the tick, you owe the refund. */
   if(S.points.xp<0) S.points.xp=0;
   if(d.points<0) d.points=0;
   S.undo=null; save(); haptic(); render(); toast(`Undone · −${refund} coins`);
@@ -2084,7 +2084,7 @@ function unmarkDone(id){
     wallet+=clawClearStreak(d);
   }
   d.points-=dayPts; S.points.coins-=wallet; S.points.xp-=xp;
-  if(S.points.coins<0) S.points.coins=0;
+  /* Coins may go negative after a spend-then-undo — debt until you earn it back. */
   if(S.points.xp<0) S.points.xp=0;
   if(d.points<0) d.points=0;
   if(S.undo&&S.undo.ids?.includes(id)){
