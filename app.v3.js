@@ -1260,7 +1260,9 @@ function startChallenge(tier,questId,memberIds,crewId){
     Sync.sendMessage(crewId,'system',`${TIERS_C[tier].label} invite: ${def.name} — accept to start`).catch(()=>{});
   }
   save();
-  Sync.pushChallenge(draft).catch(()=>{});
+  Sync.pushChallenge(draft).then(()=>{
+    if(S.syncError) toast(S.syncError);
+  }).catch(()=>{});
   return draft;
 }
 function dropChallenge(id){ Sync.removeChallenge(id).catch(()=>{});
@@ -3161,6 +3163,7 @@ function bind(){
   const sn2=q('#syncnow'); if(sn2) sn2.onclick=async()=>{ sn2.textContent='…';
     try{
       await Sync.pushCrews().catch(()=>{});
+      await Promise.all(chalList().map(c=>Sync.pushChallenge(c).catch(()=>{})));
       await Sync.pull(); await Sync.pullCrews(); await Sync.pullChallenges(); await Sync.pullMessages();
     }catch(e){}
     try{
@@ -4236,7 +4239,9 @@ function scheduleBackup(){ clearTimeout(_bkT); _bkT=setTimeout(()=>Sync.backup()
 function friendsTick(){
   if(Sync.live()&&Sync.signedIn()) scheduleBackup();
   if(!friendList().length && !Sync.signedIn()) return;
+  const pushLocalChals=()=>Promise.all(chalList().map(c=>Sync.pushChallenge(c).catch(()=>{})));
   Sync.pushCrews().catch(()=>{})
+    .then(()=>pushLocalChals())
     .then(()=>Sync.pull())
     .then(()=>Sync.pullCrews())
     .then(()=>Sync.pullChallenges())
