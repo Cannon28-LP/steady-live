@@ -24,6 +24,8 @@ const CREW_MAX = 8;              // past this a chat stops being a conversation
 const CHAL_PARTY_MAX = 6;
 const CREW_BONUS_PER_HEAD = 0.10, CREW_BONUS_CAP = 2.0;
 const CHAL_PARTY = {legendary:CHAL_PARTY_MAX, rare:CHAL_PARTY_MAX, common:CHAL_PARTY_MAX};
+/* Rare challenge chests: chance of +1 shop allowance for the week. Legendary always gets 2. */
+const RARE_EXTRA_CHANCE = 0.4;
 /* Rewards are priced in coins you set. Week/fortnight chips suggest your real earn rate. */
 const OT_PER = 5, OT_TASK_CAP = 10, OT_DAY_CAP = 20; // 1 coin per 5 min over target, capped per task and per day
 /* Turning up earns most of the value; the rest scales with the time you actually did.
@@ -140,15 +142,50 @@ function nextAvailable(r){
   if(m>12){ m=1; y++; }
   return `${y}-${pad(m)}-01`;
 }
-/* One spare beyond what you planned, then it stops. Life happens once; twice is a pattern. */
+/* Challenge-chest shop extras: +1 buy for a chosen reward, keyed to the week they were won.
+   Unused extras expire when the week rolls — they do not carry. */
+function pruneRewardExtras(){
+  S.rewardExtras=Array.isArray(S.rewardExtras)?S.rewardExtras:[];
+  const wk=weekOf(today());
+  const next=S.rewardExtras.filter(e=>e&&e.weekStart===wk);
+  const changed=next.length!==S.rewardExtras.length;
+  S.rewardExtras=next;
+  return changed;
+}
+function extrasForReward(r){
+  pruneRewardExtras();
+  return S.rewardExtras.filter(e=>e.rewardId===r.id).length;
+}
+function pendingExtras(){
+  pruneRewardExtras();
+  return S.rewardExtras.filter(e=>!e.rewardId);
+}
+function grantChestExtras(n, tier){
+  if(!(n>0)) return [];
+  pruneRewardExtras();
+  const wk=weekOf(today()), added=[];
+  for(let i=0;i<n;i++){
+    const ex={id:uid(), rewardId:null, weekStart:wk, source:'chal', tier:tier||null, at:today()};
+    S.rewardExtras.push(ex); added.push(ex);
+  }
+  return added;
+}
+function assignExtra(extraId, rewardId){
+  pruneRewardExtras();
+  const ex=S.rewardExtras.find(e=>e.id===extraId); if(!ex||ex.rewardId) return false;
+  if(!(S.rewards||[]).some(r=>r.id===rewardId&&r.active)) return false;
+  ex.rewardId=rewardId; save(); return true;
+}
+/* One spare beyond what you planned, then it stops — unless a challenge chest granted extras. */
 function allowanceState(r){
-  const used=boughtInWindow(r), limit=allowanceOf(r), hard=limit+SPARES;
+  const used=boughtInWindow(r), limit=allowanceOf(r), extras=extrasForReward(r), hard=limit+SPARES+extras;
   const f=rewardFreq(r);
   const period = f==='weekly'?'this week' : f==='fortnight'?'this fortnight' : 'this month';
   const sparesLeft=Math.max(0, hard-Math.max(used,limit));
-  return {used, limit, hard, left:Math.max(0,limit-used), sparesLeft,
+  return {used, limit, hard, extras, left:Math.max(0,limit-used), sparesLeft,
     period, over:used>=limit && used<hard, maxed:used>=hard,
     amber:used>=limit && used<hard-1, red:used===hard-1,
+    intoExtra:used>=limit+SPARES && used<hard,
     next:nextAvailable(r), monthUsed:boughtThisMonth(r)};
 }
 /* Plain count for the month, whatever the window is — for the counter on each reward. */
@@ -287,7 +324,7 @@ const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 
 function fresh(){
   return {
-    tasks:[], rewards:[], locker:[], customReasons:[],
+    tasks:[], rewards:[], locker:[], rewardExtras:[], customReasons:[],
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
     clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null, chalCooldownUntil:null, chalLocks:{},
     crews:[], msgs:{}, muted:[],
@@ -1292,17 +1329,22 @@ function claimChest(cid){
   const heads=(ch.memberIds||[]).length+1;
   const amount=Math.round(t.rolls[Math.floor(Math.random()*t.rolls.length)]*crewMultiplier(heads)/5)*5;
   S.points.coins+=amount; S.points.xp+=amount;
+  /* Rare: chance of one shop extra. Legendary: two guaranteed. Common: coins only. */
+  let extras=0;
+  if(ch.tier==='legendary') extras=2;
+  else if(ch.tier==='rare' && Math.random()<RARE_EXTRA_CHANCE) extras=1;
+  if(extras) grantChestExtras(extras, ch.tier);
   const qid=ch.questId||ch.id;
   for(const f of ch.members){
     const p=pairOf(f);
     p.done=p.done||[]; p.chests=p.chests||[];
     p.done.push(qid);
-    p.chests.push({tier:ch.tier,questId:qid,amount,at:today(),name:ch.name,crew:ch.members.map(x=>x.name)});
+    p.chests.push({tier:ch.tier,questId:qid,amount,at:today(),name:ch.name,crew:ch.members.map(x=>x.name),extras:extras||undefined});
   }
   lockQuestUntil(qid, nextMonth());
   S.challenges=chalList().filter(c=>c.id!==cid); save();
   const mult=crewMultiplier(heads);
-  return {tier:ch.tier,amount,name:ch.name,colour:t.colour,heads,
+  return {tier:ch.tier,amount,name:ch.name,colour:t.colour,heads,extras,
     rolls:t.rolls.map(r=>Math.round(r*mult/5)*5)};
 }
 function migratePairChallenges(state){
@@ -2646,7 +2688,7 @@ function challengeCard(raw){
       <div class="chestmini ${done?'shake':''}">${chestSVG(ch.tier)}</div></div>
     <div class="faces" style="margin-top:12px">${ch.members.map(f=>`<span class="avatar" title="${esc(f.name)}">${esc((f.name||'?')[0]).toUpperCase()}</span>`).join('')}</div>
     <div class="row between" style="margin-top:12px"><span class="tiny muted">${pr.have} of ${pr.need}</span>
-      <span class="tiny muted">${t.rolls[0]}–${t.rolls[t.rolls.length-1]} coins</span></div>
+      <span class="tiny muted">${t.rolls[0]}–${t.rolls[t.rolls.length-1]} coins${ch.tier==='legendary'?' · 2 shop extras':ch.tier==='rare'?' · chance of shop extra':''}</span></div>
     <div class="bar quest chal-bar"><i style="width:${clamp(pc,0,100)}%"></i></div>
     ${counts}
     <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${pills}</div>
@@ -2825,17 +2867,25 @@ function vShop(){
     <div class="titlebar"><i style="width:${clamp(100*L.into/L.need,0,100)}%"></i></div>
     <p class="tiny muted" style="margin-top:8px">${T.next?`${T.next.name} at level ${T.next.at}. `:'Top title. '}XP is never spent — only coins are.</p></div>
   <div class="section"><h2>Rewards <span class="muted">you set the price</span></h2>
+    ${(()=>{const p=pendingExtras(); if(!p.length) return '';
+      return `<div class="card" style="margin-bottom:12px;border-color:color-mix(in srgb,var(--accent) 35%,var(--line))">
+        <b class="small">${p.length} chest extra${p.length===1?'':'s'} to place</b>
+        <p class="tiny muted" style="margin-top:4px">${active.length?'Pick which reward gets +1 buy this week.':'Add a reward first — they will wait.'}</p>
+        ${active.length?`<button class="btn primary sm" style="margin-top:10px" id="placeextras">Choose</button>`:
+          `<button class="btn primary sm" style="margin-top:10px" data-go="settings" data-open="rewards">Add a reward</button>`}</div>`;})()}
     ${active.length?active.map(x=>{const cost=rewardPrice(x); const afford=S.points.coins>=cost; const ok=afford&&canRate; return `<div class="card reward ${ok?'':'locked'}"><div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">${earnEta(cost)}</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
       ${(()=>{const al=allowanceState(x); const can=ok&&!al.maxed; const mp=monthlyPlanned(x);
         return `<div class="row between" style="margin:8px 0 2px">
           <span class="tiny ${al.monthUsed>mp?'':'muted'}" style="${al.monthUsed>mp?'color:#f59e0b':''}">${al.monthUsed} of ${mp} this month</span>
           <span class="tiny muted">${al.maxed?`back ${fmt(al.next,{day:'numeric',month:'short'})}`
+            :al.intoExtra?'chest extra left'
             :al.over?'one spare left'
             :rewardFreq(x)==='custom'?''
             :`${al.used} of ${al.limit} ${al.period}`}</span></div>
+        ${al.extras?`<p class="tiny muted" style="margin:0 0 4px">+${al.extras} chest extra${al.extras===1?'':'s'} this week</p>`:''}
         <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
         <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
-          al.maxed?`That is it ${al.period}` : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+          al.maxed?`That is it ${al.period}` : al.intoExtra?'Buy with a chest extra' : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
   <div class="section"><h2>Looks <span class="muted">${looks().owned.length} of ${LOOK_ITEMS.length}</span></h2>
     <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
       <span class="avatar big img">${charSVG(myChar())}</span>
@@ -2849,8 +2899,13 @@ function buy(id){
   const al=allowanceState(r);
   if(al.maxed){ toast(`That is it ${al.period} — back ${fmt(al.next,{day:'numeric',month:'short'})}`); return; }
   const after=al.left-1;
-  const note = al.over
-    ? `This is one past what you planned. It is allowed once — after this it waits until ${fmt(al.next,{day:'numeric',month:'short'})}.`
+  const leftAfter=al.hard-(al.used+1);
+  const note = al.intoExtra
+    ? `This uses a chest extra.${leftAfter?` ${leftAfter} still left after.`:` That is the last one ${al.period}.`}`
+    : al.over
+    ? (al.extras
+      ? `This is your spare. After it you still have ${al.extras} chest extra${al.extras===1?'':'s'} this week.`
+      : `This is one past what you planned. It is allowed once — after this it waits until ${fmt(al.next,{day:'numeric',month:'short'})}.`)
     : after>0 ? `${after} more ${al.period} after this.` : `That is your last planned one ${al.period}. You would have one spare after it.`;
   modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. ${note}</p>`,'Buy',()=>{
     S.points.coins-=cost; S.locker.push({id:uid(),rewardId:id,name:r.name,boughtAt:today()}); save(); try{ checkChallenges(); }catch(e){} haptic('success'); render(); toast('Bought · in your locker'); });
@@ -2953,19 +3008,19 @@ function vSettings(){
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
     <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn over the last four weeks. Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
-    <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
+    <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Misses.</b> Anything untouched at local midnight becomes a miss on next open, and you are asked why. Those answers are the most useful thing in the app: they feed <i>Why you miss</i> in Progress, the breakdown on each task, the day detail in a task's history, and every recap.</p>
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
-    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
+    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Chests pay coins; Rare has a chance of +1 shop buy for the week, Legendary gives two — you pick which rewards. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
 
-    <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only — nothing free-typed, so there is nothing to moderate. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
+    <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only — nothing free-typed, so there is nothing to moderate. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest — Rare and Legendary can also unlock an extra Shop buy for the week. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
     <p><b style="color:var(--fg)">Accounts.</b> The account exists only to back things up and to pair with people — everything works without one. Backing up happens by itself a few seconds after anything changes. Forgotten your password? Use the link on the sign-in screen and it emails you a reset. Lost the email as well? Your tasks, history and coins are still on this phone; sign up again with another email and this device carries on. You would lose the old backup and any pairing, nothing else.</p>
     <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture on Friends. Eight faces, six skin tones and eight hair colours are yours from the start, and they're separate choices — so any face can be any tone with any hair, including ginger. Cosmetics cost coins: hair styles, outfits, eyewear, headwear and backdrops. Nothing is limited to one kind of character; any item works on any of them.</p>
     <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to the initial.</p>
@@ -3147,6 +3202,7 @@ function bind(){
   const dn=q('#daynote'); if(dn) dn.oninput=()=>{ const k=dn.dataset.noteday||today(); day(k).note=dn.value; save(); };
   // Shop
   qa('[data-buy]').forEach(b=>b.onclick=()=>buy(b.dataset.buy));
+  const pe=q('#placeextras'); if(pe) pe.onclick=()=>offerChestExtras();
   qa('[data-use]').forEach(b=>b.onclick=()=>{const x=S.locker.find(l=>l.id===b.dataset.use); x.usedAt=today(); save(); haptic(); render(); toast('Enjoy it.');});
   // Settings — tasks
   const nt=q('#newtask'); const addT=()=>{ const v=nt.value.trim(); if(!v) return;
@@ -3210,7 +3266,8 @@ function bind(){
     if(newRewardFreq==='custom') rec.perMonth=clamp(Math.round(Number(q('#newper')?.value)||newRewardPer),1,MAX_PER_MONTH);
     S.rewards.push(rec); save(); haptic(); rewOpen=true; render();
     const b=budgetState();
-    if(b.level==='over') toast('Over budget — tap Balance these for me','Balance',()=>rebalanceSheet());
+    if(pendingExtras().length){ toast('Reward added · place your chest extra'); queueMicrotask(()=>offerChestExtras()); }
+    else if(b.level==='over') toast('Over budget — tap Balance these for me','Balance',()=>rebalanceSheet());
     else toast('Reward added'); };
   if(nr){ q('#addreward').onclick=addR; nr.onkeydown=e=>{if(e.key==='Enter')addR();}; if(np) np.onkeydown=e=>{if(e.key==='Enter')addR();}; }
   qa('[data-editreward]').forEach(b=>b.onclick=()=>{ const r=S.rewards.find(x=>x.id===b.dataset.editreward); if(r) editReward(r); });
@@ -4076,7 +4133,50 @@ function chestScene(win){
       requestAnimationFrame(tick);
     }, 1900);
   };
-  claim.onclick=()=>{ g.remove(); render(); toast(`+${amount} coins`); };
+  claim.onclick=()=>{
+    g.remove(); render();
+    const ex=win.extras||0;
+    toast(ex?`+${amount} coins · ${ex} shop extra${ex===1?'':'s'}`:`+${amount} coins`);
+    if(ex) queueMicrotask(()=>offerChestExtras());
+  };
+}
+/* After a rare/legendary challenge chest: pick which shop reward each extra lands on. */
+function offerChestExtras(){
+  pruneRewardExtras();
+  const pend=pendingExtras();
+  if(!pend.length) return;
+  const active=(S.rewards||[]).filter(r=>r.active);
+  if(!active.length){
+    toast('Add a Shop reward to claim your chest extra', 'Shop', ()=>setTab('shop'));
+    return;
+  }
+  /* How many of this week's chal extras are already assigned — drives first/second copy. */
+  const assignedThis=S.rewardExtras.filter(e=>e.rewardId&&e.source==='chal'&&e.weekStart===weekOf(today())).length;
+  const still=pend.length;
+  const ordinal = still===1 && assignedThis===0 ? 'Pick a reward for your extra'
+    : assignedThis===0 ? 'Pick a reward for your first extra'
+    : 'Pick for your second extra';
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <h2>${esc(ordinal)}</h2>
+    <p class="muted small" style="margin-bottom:14px">+1 buy this week for the one you choose. Stacks with what you planned and your spare.${still>1?' You will pick again for the next one.':''}</p>
+    <div class="stack">${active.map(r=>{
+      const al=allowanceState(r);
+      const already=extrasForReward(r);
+      return `<button class="btn block" data-pick="${r.id}" style="text-align:left;justify-content:space-between;display:flex;gap:10px">
+        <span><b>${esc(r.name)}</b>${already?`<span class="tiny muted" style="display:block;font-weight:400">already +${already} this week</span>`:''}</span>
+        <span class="tiny muted" style="align-self:center">${al.used}/${al.hard}</span>
+      </button>`;
+    }).join('')}</div>
+    <div class="foot"><button class="btn ghost block" data-later>Later</button></div></div>`);
+  o.querySelector('[data-later]').onclick=()=>{ close(o); toast('Extras waiting in the Shop'); };
+  o.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{
+    const ex=pendingExtras()[0]; if(!ex){ close(o); return; }
+    if(!assignExtra(ex.id, b.dataset.pick)){ toast('Could not assign that'); return; }
+    haptic('success'); close(o); render();
+    const r=(S.rewards||[]).find(x=>x.id===b.dataset.pick);
+    toast(r?`+1 buy on ${r.name} this week`:'Extra assigned');
+    if(pendingExtras().length) queueMicrotask(()=>offerChestExtras());
+  });
 }
 function burst(colour){
   if(!motionOK()) return;
