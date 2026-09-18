@@ -16,6 +16,8 @@ const SYNC = {
   anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
 };
 const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
+/* Days of slip before weak-habit pay rises — one miss must not bump the badge. */
+const STRENGTH_PAY_LAG = 3;
 const MAX_TASKS = 10, MIN_REWARD_PRICE = 10;
 const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
 const CREW_MAX = 8;              // past this a chat stops being a conversation
@@ -1861,9 +1863,11 @@ function dayStats(k){
 /* Loop-style habit strength: 0–100, climbs ~5/day, decays 5%/day. Never resets to zero on a miss. */
 function strengthOf(t,k=today()){ let s=0; for(let x=t.createdAt;x<=k;x=addDays(x,1)){ const st=statusOf(x,t.id); if(x===k&&st==='open') break; s=s*0.95+(st==='done'?5:0); } return clamp(Math.round(s),0,100); }
 function avgStrength(k=today()){ const ts=activeTasks(k); if(!ts.length) return 0; return Math.round(ts.reduce((a,t)=>a+strengthOf(t,k),0)/ts.length); }
-/* Weak habits pay more (up to ×1.5); strong ones settle toward base — incentive to do the ones slipping. */
-function taskValue(t){ return Math.round(TASK_BASE*(1.5-0.5*strengthOf(t,addDays(today(),-1))/100)); }
-function taskValueAt(t,k){ return Math.round(TASK_BASE*(1.5-0.5*strengthOf(t,addDays(k,-1))/100)); }
+/* Weak habits pay more (up to ×1.5); strong ones settle toward base.
+   Pay uses lagged strength so 1 miss does not raise the badge — needs ~STRENGTH_PAY_LAG days of slip. */
+function payStrengthOf(t,k=today()){ return strengthOf(t, addDays(k, -(1+STRENGTH_PAY_LAG))); }
+function taskValue(t){ return Math.round(TASK_BASE*(1.5-0.5*payStrengthOf(t)/100)); }
+function taskValueAt(t,k){ return Math.round(TASK_BASE*(1.5-0.5*payStrengthOf(t,k)/100)); }
 function paidValueAt(t,mins,k){ return Math.max(1, Math.round(taskValueAt(t,k)*timeScale(t,mins))); }
 /* Overtime pays coins only — never XP — so long sessions can't buy levels or titles. Consistency does that. */
 function overtimeFor(t,mins){ if(!t.target||!mins) return 0; return clamp(Math.floor((mins-t.target)/OT_PER),0,OT_TASK_CAP); }
@@ -2940,7 +2944,7 @@ function vSettings(){
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">The idea.</b> Nothing here ever takes points off you. Missing a day costs you what you would have earned, and that is all. The app's job is to notice patterns you would not, and to make keeping your word worth something.</p>
 
-    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays around ${TASK_BASE} coins and XP — more when that habit is weak (up to ×1.5), less when it is already solid. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
+    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays around ${TASK_BASE} coins and XP — more when that habit has been slipping for a few days (up to ×1.5), less when it is already solid. One miss does not raise the pay. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
     <p><b style="color:var(--fg)">Day cleared.</b> Tick everything and you get +${CLEAR_PER_TASK} per task on top.</p>
     <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
@@ -3612,7 +3616,7 @@ function onboarding(next, force){
 
 /* ---------- Spotlight tour ---------- */
 const TOURS={
-  today:[['ring','Coins earned today. Each task pays around 10 — more if that habit is weak, less if it is already solid.'],['tasks','Tap to pick, confirm below. Timed ones ask how long — and Done today lets you Undo anytime (coins come back) or Edit the minutes.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
+  today:[['ring','Coins earned today. Each task pays around 10 — more after a few days of slipping, less when that habit is solid.'],['tasks','Tap to pick, confirm below. Timed ones ask how long — and Done today lets you Undo anytime (coins come back) or Edit the minutes.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
   plan:[['listadd','List, Notes and Affirmations. Add anything for today, a date, or someday — nothing here can be failed.']],
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
   shop:[['balance','Coins to spend. XP fills the level bar and is never spent. The shop stays open — allowances on each reward do the limiting.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
