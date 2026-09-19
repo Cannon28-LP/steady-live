@@ -1056,19 +1056,19 @@ const CHALLENGES = {
   /* Same four shapes at every tier — only the bar moves. */
   common:[
     {id:'c1',name:'Clear streak',     desc:'Everyone clears the day, 3 days running.',           type:'bothClearStreak', need:3},
-    {id:'c2',name:'Coin haul',        desc:'Earn 250 coins between you in 4 days.',              type:'coinsEarned',     need:250, window:4},
+    {id:'c2',name:'Coin haul',        desc:'Earn 250 coins each in 4 days.',                     type:'coinsEarned',     need:250, window:4},
     {id:'c3',name:'Show up',          desc:'Everyone opens the app 7 days running.',             type:'bothOpenStreak',  need:7},
     {id:'c4',name:'Shop silence',     desc:'Nobody buys a reward for 3 days.',                   type:'noBuys',          need:3},
   ],
   rare:[
     {id:'r1',name:'Clear streak',     desc:'Everyone clears the day, 7 days running.',           type:'bothClearStreak', need:7},
-    {id:'r2',name:'Coin haul',        desc:'Earn 500 coins between you in 7 days.',              type:'coinsEarned',     need:500, window:7},
+    {id:'r2',name:'Coin haul',        desc:'Earn 500 coins each in 7 days.',                     type:'coinsEarned',     need:500, window:7},
     {id:'r3',name:'Show up',          desc:'Everyone opens the app 14 days running.',            type:'bothOpenStreak',  need:14},
     {id:'r4',name:'Shop silence',     desc:'Nobody buys a reward for 7 days.',                   type:'noBuys',          need:7},
   ],
   legendary:[
     {id:'l1',name:'Clear streak',     desc:'Everyone clears the day, 14 days running.',          type:'bothClearStreak', need:14},
-    {id:'l2',name:'Coin haul',        desc:'Earn 1000 coins between you in 14 days.',            type:'coinsEarned',     need:1000,window:14},
+    {id:'l2',name:'Coin haul',        desc:'Earn 1000 coins each in 14 days.',                   type:'coinsEarned',     need:1000,window:14},
     {id:'l3',name:'Show up',          desc:'Everyone opens the app 30 days running.',            type:'bothOpenStreak',  need:30},
     {id:'l4',name:'Shop silence',     desc:'Nobody buys a reward for 14 days.',                  type:'noBuys',          need:14},
   ],
@@ -1180,6 +1180,8 @@ function partyNames(members){
 function questNeed(ch){
   const party=1+((ch.members||ch.memberIds||[]).length);
   if(ch.type==='combined') return Math.max(ch.need, Math.round(ch.need*party/2));
+  /* Coin haul need is per person — pair of 2 with need 500 → 1000 together. */
+  if(ch.type==='coinsEarned') return ch.need*Math.max(1,party);
   return ch.need;
 }
 function liveDesc(ch){
@@ -1191,7 +1193,13 @@ function liveDesc(ch){
   const days=ch.window?`${ch.window} days`:'';
   if(ch.type==='bothClearStreak') return `${cap(who)} ${together} clear the day, ${n} days running. One miss ends it.`;
   if(ch.type==='bothOpenStreak') return `${cap(who)} ${together} open the app ${n} days running. Miss a day and it ends.`;
-  if(ch.type==='coinsEarned') return `Earn ${n} coins between ${who} in ${days}. Window ends empty = fail.`;
+  if(ch.type==='coinsEarned'){
+    const party=1+((ch.members||ch.memberIds||[]).length);
+    const each=ch.need;
+    return party>1
+      ? `Earn ${each} coins each (${n} together) in ${days}. Window ends empty = fail.`
+      : `Earn ${n} coins in ${days}. Window ends empty = fail.`;
+  }
   if(ch.type==='noBuys') return `Nobody buys a reward for ${n} days. One shop buy ends it.`;
   if(ch.type==='eachClear') return `Each of ${who} clears ${n} days.`;
   if(ch.type==='combined') return `${n} cleared days between ${who}.`;
