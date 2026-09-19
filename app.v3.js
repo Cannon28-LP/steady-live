@@ -2,7 +2,7 @@
 /* ============ Steady — local-first consistency tracker ============ */
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-15'; }catch(e){ return '2026-09-15'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-19'; }catch(e){ return '2026-09-19'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -318,6 +318,7 @@ const dkey = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}
 const today = () => dkey(new Date());
 const parse = k => { const [y,m,d]=k.split('-').map(Number); return new Date(y,m-1,d); };
 const addDays = (k,n) => { const d=parse(k); d.setDate(d.getDate()+n); return dkey(d); };
+const daysBetween = (a,b) => Math.round((parse(b)-parse(a))/86400000);
 const fmt = (k,o={weekday:'short',day:'numeric',month:'short'}) => parse(k).toLocaleDateString(undefined,o);
 const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
@@ -1243,13 +1244,14 @@ function challengeProgress(ch){
   const combined=mine+theirs.reduce((a,t)=>a+t.n,0);
   return {have:Math.min(combined,need),need,mine,theirs};
 }
-function startChallenge(tier,questId,memberIds,crewId){
+async function startChallenge(tier,questId,memberIds,crewId){
   if(chalOnCooldown()) return null;
   const ids0=[...(memberIds||[])];
   if(!questAvailable(questId, ids0)) return null;
   const def=findChallenge(questId);
   if(!def||def.tier!==tier) return null;
   const ids=[...new Set(memberIds||[])].filter(id=>S.friends[id]);
+  // Prefer the chat's crewId when inviting from a chat (caller passes it).
   const draft={id:uid(),questId,tier,startedAt:null,memberIds:ids,crewId:crewId||null,
     status:'pending', hostId:S.me.id, accepted:[S.me.id]};
   if(!slotOk(draft,S.challenges)) return null;
@@ -1260,9 +1262,8 @@ function startChallenge(tier,questId,memberIds,crewId){
     Sync.sendMessage(crewId,'system',`${TIERS_C[tier].label} invite: ${def.name} — accept to start`).catch(()=>{});
   }
   save();
-  Sync.pushChallenge(draft).then(()=>{
-    if(S.syncError) toast(S.syncError);
-  }).catch(()=>{});
+  await Sync.pushChallenge(draft);
+  if(S.syncError) toast(S.syncError);
   return draft;
 }
 function dropChallenge(id){ Sync.removeChallenge(id).catch(()=>{});
@@ -1455,6 +1456,7 @@ function readableSyncError(e){
   if(/Password should be|at least 6/i.test(m)) return 'Password needs to be at least 6 characters.';
   if(/Email not confirmed/i.test(m)) return 'Confirm the email first, or switch off email confirmation in Supabase.';
   if(/function .*add_friend|add_friend.*does not exist|PGRST202/i.test(m)) return "The database functions aren't there. Re-run supabase.sql — it has changed.";
+  if(/Could not find the '(status|accepted)' column|column .*\b(status|accepted)\b.*coop|coop.*\b(status|accepted)\b/i.test(m)) return "Challenge invites need a DB update — paste coop-accept.sql in the Supabase SQL editor.";
   if(/relation .* does not exist|schema cache|PGRST20[0-9]/i.test(m)) return "The database tables aren't there. Run supabase.sql in the SQL editor.";
   if(/row-level security|violates row-level/i.test(m)) return 'Blocked by row-level security. Check the policies in supabase.sql ran.';
   if(/Invalid API key|JWT|apikey/i.test(m)) return 'That publishable key was rejected. Check it matches the project URL.';
@@ -1713,8 +1715,15 @@ const Sync = {
         (rows||[]).forEach(r=>{ if(S.friends[r.id]) S.friends[r.id].chalLocks=r.chal_locks||{}; });
       }catch(e){ /* column may not exist yet — local locks still work */ }
     }
-    // drop challenge members we no longer know, now that the friend list is current
-    S.challenges=chalList().map(c=>({...c,memberIds:(c.memberIds||[]).filter(id=>S.friends[id])})).filter(c=>c.memberIds.length);
+    // Prune challenge members we no longer know — but never wipe pending invites
+    // (friend cache can be briefly empty mid-sync) or challenges you're on.
+    S.challenges=chalList().map(c=>{
+      const mine=S.me&&(chalHost(c)===S.me.id||(c.accepted||[]).includes(S.me.id)||(c.memberIds||[]).includes(S.me.id));
+      if(chalIsPending(c)) return c; // pending invites keep members even if friends[] is empty
+      const ids=(c.memberIds||[]).filter(id=>S.friends[id]);
+      if(mine && !ids.length && (c.memberIds||[]).length) return c;
+      return {...c, memberIds:ids};
+    }).filter(c=>chalIsPending(c)||(c.memberIds||[]).length||(S.me&&chalHost(c)===S.me.id));
     // 2. their daily stats
     if(ids.length){
       const since=addDays(today(),-30);
@@ -1892,11 +1901,20 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 const activeOn = (t,k) => t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k));
 const activeTasks = (k=today()) => S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order);
+/* Cadence: daily (default) or everyOther (due when daysBetween(anchor,k)%2===0). */
+function taskCadence(t){ return t.cadence==='everyOther'?'everyOther':'daily'; }
+function taskExpectedOn(t,k){
+  if(!activeOn(t,k)) return false;
+  if(taskCadence(t)!=='everyOther') return true;
+  const anchor=t.cadenceAnchor||t.createdAt||k;
+  return daysBetween(anchor,k)%2===0;
+}
+const dueTasks = (k=today()) => activeTasks(k).filter(t=>taskExpectedOn(t,k));
 function day(k){ return S.days[k] || (S.days[k]={tasks:{},points:0,bonus:0,note:'',perfect:false}); }
 function statusOf(k,tid){ return S.days[k]?.tasks?.[tid]?.status || 'open'; }
 function expectedOn(k){ // task ids expected that day
   const d=S.days[k]; if(d && d.finalized) return Object.keys(d.tasks);
-  return activeTasks(k).map(t=>t.id);
+  return dueTasks(k).map(t=>t.id);
 }
 function dayStats(k){
   const ids=expectedOn(k); const done=ids.filter(id=>statusOf(k,id)==='done').length;
@@ -1904,8 +1922,12 @@ function dayStats(k){
     points:(S.days[k]?.points||0)+(S.days[k]?.bonus||0),
     perfect:ids.length>0&&ids.every(id=>statusOf(k,id)==='done')};
 }
-/* Loop-style habit strength: 0–100, climbs ~5/day, decays 5%/day. Never resets to zero on a miss. */
-function strengthOf(t,k=today()){ let s=0; for(let x=t.createdAt;x<=k;x=addDays(x,1)){ const st=statusOf(x,t.id); if(x===k&&st==='open') break; s=s*0.95+(st==='done'?5:0); } return clamp(Math.round(s),0,100); }
+/* Loop-style habit strength: 0–100, climbs ~5/day, decays 5%/day. Never resets to zero on a miss.
+   Off-cadence days are skipped entirely — no decay, not treated as a miss. */
+function strengthOf(t,k=today()){ let s=0; for(let x=t.createdAt;x<=k;x=addDays(x,1)){
+  if(!taskExpectedOn(t,x)) continue;
+  const st=statusOf(x,t.id); if(x===k&&st==='open') break; s=s*0.95+(st==='done'?5:0);
+} return clamp(Math.round(s),0,100); }
 function avgStrength(k=today()){ const ts=activeTasks(k); if(!ts.length) return 0; return Math.round(ts.reduce((a,t)=>a+strengthOf(t,k),0)/ts.length); }
 /* Weak habits pay more (up to ×1.5); strong ones settle toward base.
    Pay uses lagged strength so 1 miss does not raise the badge — needs ~STRENGTH_PAY_LAG days of slip. */
@@ -2000,7 +2022,7 @@ function rollover(){
 }
 function finalize(k){
   const d=day(k); if(d.finalized) return;
-  for(const t of activeTasks(k)){
+  for(const t of dueTasks(k)){
     if(!d.tasks[t.id]) d.tasks[t.id]={status:'missed'};
     if(d.tasks[t.id].status==='missed' && !d.tasks[t.id].reason) S.pendingMisses.push({date:k,taskId:t.id});
   }
@@ -2042,9 +2064,9 @@ function payClearStreakAt(end){
 function completeOnDate(k,id){
   const d=day(k);
   if(d.tasks[id]?.status==='done') return {coins:0,already:true};
-  const tasks=activeTasks(k);
+  const tasks=dueTasks(k);
   const t=tasks.find(x=>x.id===id)||S.tasks.find(x=>x.id===id);
-  if(!t) return null;
+  if(!t||!taskExpectedOn(t,k)) return null;
   const v=paidValueAt(t,null,k);
   d.tasks[id]={status:'done',doneAt:Date.now(),value:v,bonus:0,minutes:null,full:true,catchUp:true};
   let coins=v, xp=v;
@@ -2074,7 +2096,7 @@ function saveMissReason(date,taskId,reason){
 const sel=new Set();
 function completeSelected(mins){
   const k=today(), ids=[...sel]; if(!ids.length) return;
-  const d=day(k), tasks=activeTasks(k), n=tasks.length;
+  const d=day(k), tasks=dueTasks(k), n=tasks.length;
   let coins=0, xp=0; const changed=[]; let otRoom=OT_DAY_CAP-overtimeToday(k);
   for(const id of ids){
     if(d.tasks[id]?.status==='done') continue;
@@ -2255,9 +2277,9 @@ function render(){
 
 /* ---------- Today ---------- */
 function vToday(){
-  const k=today(), tasks=activeTasks(k), d=S.days[k]||{}, st=dayStats(k);
+  const k=today(), tasks=dueTasks(k), d=S.days[k]||{}, st=dayStats(k);
   const open=tasks.filter(t=>statusOf(k,t.id)!=='done'), done=tasks.filter(t=>statusOf(k,t.id)==='done');
-  const row=t=>{const s=strengthOf(t);return `<li><button class="task ${sel.has(t.id)?'selected':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${taskValue(t)}</span></button></li>`;};
+  const row=t=>{const s=strengthOf(t);return `<li><button class="task ${sel.has(t.id)?'selected':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${taskCadence(t)==='everyOther'?`<span class="tag">every other</span>`:''}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${taskValue(t)}</span></button></li>`;};
   const a=affirmationToday(); const n=tasks.length;
   const circ=2*Math.PI*52, pct=n?st.done/n:0;
   const mon=weekOf(k); const wk=Array.from({length:7},(_,i)=>{const dk=addDays(mon,i);const s=dayStats(dk);return {dk,cleared:s.perfect,fut:dk>k||!s.expected,frozen:S.days[dk]?.frozen}});
@@ -2648,10 +2670,17 @@ function records(){
 }
 function taskStats(t){
   const k=today(); let streak=0,best=0,run=0,done=0,misses=0; const reasons={},comments=[];
-  for(let x=t.createdAt;x<=k;x=addDays(x,1)){ const s=statusOf(x,t.id); if(s==='done'){run++;best=Math.max(best,run);done++;} else if(s==='missed'){run=0;misses++;const r=S.days[x].tasks[t.id];if(r.reason)reasons[r.reason]=(reasons[r.reason]||0)+1;if(r.comment)comments.push({date:x,comment:r.comment});} }
-  // current streak: consecutive done ending today or yesterday
-  let x=statusOf(k,t.id)==='done'?k:addDays(k,-1); while(x>=t.createdAt&&statusOf(x,t.id)==='done'){streak++;x=addDays(x,-1);}
-  const recent=Array.from({length:14},(_,i)=>statusOf(addDays(k,i-13),t.id));
+  for(let x=t.createdAt;x<=k;x=addDays(x,1)){
+    if(!taskExpectedOn(t,x)) continue;
+    const s=statusOf(x,t.id); if(s==='done'){run++;best=Math.max(best,run);done++;} else if(s==='missed'){run=0;misses++;const r=S.days[x].tasks[t.id];if(r.reason)reasons[r.reason]=(reasons[r.reason]||0)+1;if(r.comment)comments.push({date:x,comment:r.comment});}
+  }
+  // current streak: consecutive due-days done ending today or yesterday
+  let x=statusOf(k,t.id)==='done'?k:addDays(k,-1);
+  while(x>=t.createdAt){
+    if(!taskExpectedOn(t,x)){ x=addDays(x,-1); continue; }
+    if(statusOf(x,t.id)==='done'){ streak++; x=addDays(x,-1); } else break;
+  }
+  const recent=Array.from({length:14},(_,i)=>{ const dk=addDays(k,i-13); return taskExpectedOn(t,dk)?statusOf(dk,t.id):'off'; });
   const mins=[]; for(const d of Object.values(S.days)){ const e=d.tasks?.[t.id]; if(e?.minutes) mins.push(e.minutes); }
   const total=mins.reduce((a,b)=>a+b,0);
   return {streak,best,done,misses,reasons:Object.entries(reasons).sort((a,b)=>b[1]-a[1]),comments:comments.slice(-5).reverse(),recent,
@@ -2751,8 +2780,11 @@ function startChallengeModal(crewId,after){
     box.querySelectorAll('[data-qid]').forEach(b=>b.onclick=()=>{ if(b.disabled) return; qid=b.dataset.qid; haptic(); draw(); });
     box.querySelector('[data-x]').onclick=()=>close(o);
     const ok=box.querySelector('[data-ok]');
-    ok.onclick=()=>{ if(!picks.size||!questAvailable(qid,[...picks])) return; const started=startChallenge(tier,qid,[...picks],crewId); close(o);
-      if(started){ haptic('success'); if(after) after(); else render(); toast(chalIsPending(started)?'Invite sent — waiting for accept':'Challenge started'); } else toast('Could not start that'); };
+    ok.onclick=async()=>{ if(!picks.size||!questAvailable(qid,[...picks])) return; ok.disabled=true;
+      const started=await startChallenge(tier,qid,[...picks],crewId); close(o);
+      if(started){ haptic('success'); if(after) after(); else render();
+        toast(S.syncError?S.syncError:(chalIsPending(started)?'Invite sent — waiting for accept':'Challenge started')); }
+      else toast('Could not start that'); };
   };
   draw();
   o.onclick=e=>{ if(e.target===o) close(o); };
@@ -2846,7 +2878,7 @@ function vFriends(){
     <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':chalOnCooldown()?'Cooldown after last challenge':peopleLeft()<1?'Four people already on a challenge':'No slot free'}</button>
     ${pending.length?`<h2 style="margin:8px 0 10px">Waiting <span class="muted">${pending.length}</span></h2>${pending.map(c=>challengeCard(c)).join('')}`:''}
     <h2 style="margin:8px 0 10px">Running <span class="muted">${active.length}</span></h2>
-    ${active.map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>Invite someone — the clock starts only after they accept.</div>`}
+    ${active.map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>Invite someone — the clock starts only after they accept.<br><span class="tiny muted" style="display:block;margin-top:10px">Invites show under Active challenges → Waiting, and at the top of the chat.</span></div>`}
   </div>`;
 
   const pane=sub==='chats'?chatsPane:sub==='challenges'?chalPane:listPane;
@@ -2925,8 +2957,8 @@ function vSettings(){
     <div class="stack" style="margin-bottom:10px"><div class="row"><input type="text" id="newtask" placeholder="${full?'Task cap reached':'e.g. Walk the dog'}" maxlength="60"${full?' disabled':''}><input type="number" id="newtarget" placeholder="min" min="1" max="600" style="width:74px;padding:12px 8px;text-align:center"${full?' disabled':''}></div>
       <button class="btn primary block" id="addtask"${full?' disabled':''}>Add</button></div>
     <p class="tiny muted" style="margin:-4px 0 10px">${n} / ${MAX_TASKS} tasks${full?'':'. Minutes optional — every '+OT_PER+' minutes past a target pays +1 coin.'}</p>
-    ${n?live.slice().sort((a,b)=>a.order-b.order).map(t=>`<div class="editrow"><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}</span><button class="iconbtn" data-rename="${t.id}" aria-label="Rename">${ICON.edit}</button><button class="iconbtn" data-deltask="${t.id}" aria-label="Remove">${ICON.trash}</button></div>`).join(''):'<p class="muted small">Add the things you want to keep doing daily.</p>'}`;})()}
-    <p class="tiny muted" style="margin-top:10px">Finish every task to clear the day. Removing one takes it off the list; past days stay in Progress.</p></div></details>
+    ${n?live.slice().sort((a,b)=>a.order-b.order).map(t=>`<div class="editrow"><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${taskCadence(t)==='everyOther'?`<span class="tag">every other</span>`:''}</span><button class="iconbtn" data-rename="${t.id}" aria-label="Rename">${ICON.edit}</button><button class="iconbtn" data-deltask="${t.id}" aria-label="Remove">${ICON.trash}</button></div>`).join(''):'<p class="muted small">Add the things you want to keep doing daily.</p>'}`;})()}
+    <p class="tiny muted" style="margin-top:10px">Finish every due task to clear the day. Removing one takes it off the list; past days stay in Progress.</p></div></details>
   <details class="acc" id="acc-rewards" ${rewOpen?'open':''}><summary>Rewards <span class="muted">${S.rewards.filter(x=>x.active).length} / ${MAX_REWARDS}</span></summary><div class="body">
     ${budgetCard()}
     <div class="stack" style="margin:12px 0 10px">
@@ -3012,7 +3044,8 @@ function vSettings(){
     <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn over the last four weeks. Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
-    <p><b style="color:var(--fg)">Misses.</b> Anything untouched at local midnight becomes a miss on next open, and you are asked why. Those answers are the most useful thing in the app: they feed <i>Why you miss</i> in Progress, the breakdown on each task, the day detail in a task's history, and every recap.</p>
+    <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
+    <p><b style="color:var(--fg)">Misses.</b> Anything due and untouched at local midnight becomes a miss on next open, and you are asked why. Those answers are the most useful thing in the app: they feed <i>Why you miss</i> in Progress, the breakdown on each task, the day detail in a task's history, and every recap.</p>
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
@@ -3339,13 +3372,33 @@ function prompt$(titleTxt,val,fn){
 }
 
 function editTask(t){
+  let cad=taskCadence(t);
   const o=overlay(`<div class="modal"><h2>Edit task</h2><div class="stack" style="margin-top:12px"><input type="text" id="en" value="${esc(t.name)}" maxlength="60">
     <div class="row"><input type="number" id="et" value="${t.target||''}" placeholder="Target minutes (optional)" min="1" max="600" style="flex:1;padding:12px 14px"><button class="btn sm" id="eclear">Clear</button></div>
-    <p class="tiny muted">With a target set, you'll be asked how long it took each time you tick it off.</p></div>
+    <p class="tiny muted">With a target set, you'll be asked how long it took each time you tick it off.</p>
+    <div><span class="plabel">How often</span>
+      <div class="chips" id="ecad" style="margin-top:8px">
+        <button type="button" class="chip ${cad==='daily'?'on':''}" data-cad="daily">Daily</button>
+        <button type="button" class="chip ${cad==='everyOther'?'on':''}" data-cad="everyOther">Every other day</button>
+      </div>
+      <p class="tiny muted" style="margin-top:8px" id="ecadhint">${cad==='everyOther'?'Due today, then every other day. Off days skip the list and do not count as misses.':'Shows up every day.'}</p>
+    </div></div>
     <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
   o.querySelector('#eclear').onclick=()=>{o.querySelector('#et').value='';};
+  o.querySelectorAll('[data-cad]').forEach(b=>b.onclick=()=>{
+    cad=b.dataset.cad; haptic();
+    o.querySelectorAll('[data-cad]').forEach(x=>x.classList.toggle('on',x===b));
+    const h=o.querySelector('#ecadhint');
+    if(h) h.textContent=cad==='everyOther'?'Due today, then every other day. Off days skip the list and do not count as misses.':'Shows up every day.';
+  });
   o.querySelector('[data-x]').onclick=()=>close(o);
-  o.querySelector('[data-ok]').onclick=()=>{ const n=o.querySelector('#en').value.trim(); if(!n) return; t.name=n; const tg=clamp(Math.round(Number(o.querySelector('#et').value)||0),0,600); t.target=tg||null; save(); close(o); render(); document.getElementById('acc-tasks').open=true; };
+  o.querySelector('[data-ok]').onclick=()=>{ const n=o.querySelector('#en').value.trim(); if(!n) return; t.name=n;
+    const tg=clamp(Math.round(Number(o.querySelector('#et').value)||0),0,600); t.target=tg||null;
+    const prev=taskCadence(t);
+    t.cadence=cad;
+    if(cad==='everyOther' && (prev!=='everyOther' || !t.cadenceAnchor)) t.cadenceAnchor=today();
+    if(cad==='daily') delete t.cadenceAnchor;
+    save(); close(o); render(); document.getElementById('acc-tasks').open=true; };
 }
 
 
@@ -3926,6 +3979,15 @@ function crewSheet(existing){
   };
 }
 
+function chalMatchesCrew(x,crewId){
+  if(x.crewId===crewId) return true;
+  const crew=crewOf(crewId); if(!crew) return false;
+  const party=new Set([...(x.memberIds||[])]);
+  if(chalHost(x)) party.add(chalHost(x));
+  const others=crew.memberIds||[];
+  // Fallback: invite covers this chat's members even if crewId was missing/mismatched
+  return others.length>0 && others.every(id=>party.has(id));
+}
 function chatView(crewId){
   const c=crewOf(crewId); if(!c) return;
   markCrewSeen(c);
@@ -3941,8 +4003,8 @@ function chatView(crewId){
       <button class="iconbtn" data-cinfo aria-label="Chat settings">⋯</button>
     </div>
     <div class="chat-scroll" id="scroll">
-      ${(()=>{ const pending=chalList().find(x=>x.crewId===crewId&&chalIsPending(x));
-        const live=chalList().find(x=>x.crewId===crewId&&chalIsActive(x));
+      ${(()=>{ const pending=chalList().find(x=>chalIsPending(x)&&chalMatchesCrew(x,crewId));
+        const live=chalList().find(x=>chalIsActive(x)&&chalMatchesCrew(x,crewId));
         if(pending) return challengeCard(pending);
         if(live) return chalCardInChat(live);
         return `<div class="card chatchal"><b class="small">No challenge running here</b>
@@ -3973,15 +4035,23 @@ function chatView(crewId){
     g.querySelectorAll('[data-emote]').forEach(b=>b.onclick=()=>{
       if(sendMsg(crewId,'emote',b.dataset.emote)){ haptic(); draw(); } else toast('Give it a second'); });
     const sb=g.querySelector('[data-startchal]'); if(sb) sb.onclick=()=>startChallengeModal(crewId,()=>draw());
+    g.querySelectorAll('[data-acceptchal]').forEach(b=>b.onclick=()=>{ acceptChallenge(b.dataset.acceptchal); draw(); });
+    g.querySelectorAll('[data-declinechal]').forEach(b=>b.onclick=()=>{ declineChallenge(b.dataset.declinechal); draw(); });
     const cb=g.querySelector('[data-chest]'); if(cb) cb.onclick=()=>{ const win=claimChest(cb.dataset.chest); if(win){ g.remove(); render(); chestScene(win); } else toast('Not ready yet'); };
     const db=g.querySelector('[data-dropchal]'); if(db) db.onclick=()=>modal('<h2>Drop this challenge?</h2><p class="muted">The slot frees up, but progress starts again if you retry.</p>','Drop',()=>{ dropChallenge(db.dataset.dropchal); draw(); },true);
   };
+  // Force challenge + message pull on open so invites appear without a full Update.
+  (async()=>{ try{ await Sync.pullChallenges(); await Sync.pullMessages(); }catch(e){} if(document.body.contains(g)) draw(); })();
   draw();
+  const chalSig=()=>chalList().filter(x=>chalMatchesCrew(x,crewId)).map(x=>x.id+':'+(x.status||'')+':'+(x.accepted||[]).join(',')).join('|');
+  let lastSig=chalSig();
   const poll=setInterval(async()=>{
     if(!document.body.contains(g)){ clearInterval(poll); return; }
     const n=msgsOf(crewId).length;
-    try{ await Sync.pullMessages(); }catch(e){}
-    if(msgsOf(crewId).length!==n) draw();
+    const sig=lastSig;
+    try{ await Sync.pullChallenges(); await Sync.pullMessages(); }catch(e){}
+    const next=chalSig();
+    if(msgsOf(crewId).length!==n || next!==sig){ lastSig=next; draw(); }
   }, 2500);
   const _back=()=>{ clearInterval(poll); };
   const origDraw=draw;
@@ -4047,7 +4117,10 @@ function streakScene(win){
    pair it with something you enjoy, cut the friction. */
 function consecutiveMisses(t){
   let n=0,k=addDays(today(),-1);
-  while(k>=t.createdAt){ const st=statusOf(k,t.id); if(st==='missed'){n++;k=addDays(k,-1);} else break; }
+  while(k>=t.createdAt){
+    if(!taskExpectedOn(t,k)){ k=addDays(k,-1); continue; }
+    const st=statusOf(k,t.id); if(st==='missed'){n++;k=addDays(k,-1);} else break;
+  }
   return n;
 }
 function stuckTask(){
