@@ -1901,13 +1901,45 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 const activeOn = (t,k) => t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k));
 const activeTasks = (k=today()) => S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order);
-/* Cadence: daily (default) or everyOther (due when daysBetween(anchor,k)%2===0). */
-function taskCadence(t){ return t.cadence==='everyOther'?'everyOther':'daily'; }
+/* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
+   or weekdays (due when date's getDay() is in t.weekdays).
+   weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
+   UI lists Mon–Sun; weekOf() stays Monday-start independently. */
+const WD_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; // index = getDay()
+const WD_ORDER = [1,2,3,4,5,6,0]; // Mon-first for chips / tags
+function taskCadence(t){
+  if(t.cadence==='everyOther') return 'everyOther';
+  if(t.cadence==='weekdays') return 'weekdays';
+  return 'daily';
+}
+function taskWeekdays(t){
+  const raw=Array.isArray(t.weekdays)?t.weekdays:[];
+  return [...new Set(raw.filter(d=>Number.isInteger(d)&&d>=0&&d<=6))].sort((a,b)=>a-b);
+}
 function taskExpectedOn(t,k){
   if(!activeOn(t,k)) return false;
-  if(taskCadence(t)!=='everyOther') return true;
-  const anchor=t.cadenceAnchor||t.createdAt||k;
-  return daysBetween(anchor,k)%2===0;
+  const c=taskCadence(t);
+  if(c==='everyOther'){
+    const anchor=t.cadenceAnchor||t.createdAt||k;
+    return daysBetween(anchor,k)%2===0;
+  }
+  if(c==='weekdays'){
+    const days=taskWeekdays(t);
+    if(!days.length) return true; // empty = treat as daily
+    return days.includes(parse(k).getDay());
+  }
+  return true;
+}
+function cadenceTagHtml(t){
+  const c=taskCadence(t);
+  if(c==='everyOther') return `<span class="tag">every other</span>`;
+  if(c==='weekdays'){
+    const days=taskWeekdays(t);
+    if(!days.length) return '';
+    const label=WD_ORDER.filter(d=>days.includes(d)).map(d=>WD_SHORT[d]).join(' · ');
+    return `<span class="tag">${label}</span>`;
+  }
+  return '';
 }
 const dueTasks = (k=today()) => activeTasks(k).filter(t=>taskExpectedOn(t,k));
 function day(k){ return S.days[k] || (S.days[k]={tasks:{},points:0,bonus:0,note:'',perfect:false}); }
@@ -2279,7 +2311,7 @@ function render(){
 function vToday(){
   const k=today(), tasks=dueTasks(k), d=S.days[k]||{}, st=dayStats(k);
   const open=tasks.filter(t=>statusOf(k,t.id)!=='done'), done=tasks.filter(t=>statusOf(k,t.id)==='done');
-  const row=t=>{const s=strengthOf(t);return `<li><button class="task ${sel.has(t.id)?'selected':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${taskCadence(t)==='everyOther'?`<span class="tag">every other</span>`:''}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${taskValue(t)}</span></button></li>`;};
+  const row=t=>{const s=strengthOf(t);return `<li><button class="task ${sel.has(t.id)?'selected':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${cadenceTagHtml(t)}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${taskValue(t)}</span></button></li>`;};
   const a=affirmationToday(); const n=tasks.length;
   const circ=2*Math.PI*52, pct=n?st.done/n:0;
   const mon=weekOf(k); const wk=Array.from({length:7},(_,i)=>{const dk=addDays(mon,i);const s=dayStats(dk);return {dk,cleared:s.perfect,fut:dk>k||!s.expected,frozen:S.days[dk]?.frozen}});
@@ -2957,7 +2989,7 @@ function vSettings(){
     <div class="stack" style="margin-bottom:10px"><div class="row"><input type="text" id="newtask" placeholder="${full?'Task cap reached':'e.g. Walk the dog'}" maxlength="60"${full?' disabled':''}><input type="number" id="newtarget" placeholder="min" min="1" max="600" style="width:74px;padding:12px 8px;text-align:center"${full?' disabled':''}></div>
       <button class="btn primary block" id="addtask"${full?' disabled':''}>Add</button></div>
     <p class="tiny muted" style="margin:-4px 0 10px">${n} / ${MAX_TASKS} tasks${full?'':'. Minutes optional — every '+OT_PER+' minutes past a target pays +1 coin.'}</p>
-    ${n?live.slice().sort((a,b)=>a.order-b.order).map(t=>`<div class="editrow"><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${taskCadence(t)==='everyOther'?`<span class="tag">every other</span>`:''}</span><button class="iconbtn" data-rename="${t.id}" aria-label="Rename">${ICON.edit}</button><button class="iconbtn" data-deltask="${t.id}" aria-label="Remove">${ICON.trash}</button></div>`).join(''):'<p class="muted small">Add the things you want to keep doing daily.</p>'}`;})()}
+    ${n?live.slice().sort((a,b)=>a.order-b.order).map(t=>`<div class="editrow"><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${cadenceTagHtml(t)}</span><button class="iconbtn" data-rename="${t.id}" aria-label="Rename">${ICON.edit}</button><button class="iconbtn" data-deltask="${t.id}" aria-label="Remove">${ICON.trash}</button></div>`).join(''):'<p class="muted small">Add the things you want to keep doing daily.</p>'}`;})()}
     <p class="tiny muted" style="margin-top:10px">Finish every due task to clear the day. Removing one takes it off the list; past days stay in Progress.</p></div></details>
   <details class="acc" id="acc-rewards" ${rewOpen?'open':''}><summary>Rewards <span class="muted">${S.rewards.filter(x=>x.active).length} / ${MAX_REWARDS}</span></summary><div class="body">
     ${budgetCard()}
@@ -3045,6 +3077,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
+    <p><b style="color:var(--fg)">Days of the week.</b> Same edit screen — pick Days of week and tap Mon–Sun chips (e.g. Mon/Wed/Fri workout). Only those days are due; other days skip the list like every-other off days.</p>
     <p><b style="color:var(--fg)">Misses.</b> Anything due and untouched at local midnight becomes a miss on next open, and you are asked why. Those answers are the most useful thing in the app: they feed <i>Why you miss</i> in Progress, the breakdown on each task, the day detail in a task's history, and every recap.</p>
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
@@ -3373,6 +3406,11 @@ function prompt$(titleTxt,val,fn){
 
 function editTask(t){
   let cad=taskCadence(t);
+  let wdays=taskWeekdays(t).length?taskWeekdays(t):[parse(today()).getDay()];
+  const cadHint=()=>cad==='everyOther'?'Due today, then every other day. Off days skip the list and do not count as misses.'
+    :cad==='weekdays'?'Only on the days you pick. Other days skip the list and do not count as misses.'
+    :'Shows up every day.';
+  const wdChips=()=>WD_ORDER.map(d=>`<button type="button" class="chip ${wdays.includes(d)?'on':''}" data-wd="${d}">${WD_SHORT[d]}</button>`).join('');
   const o=overlay(`<div class="modal"><h2>Edit task</h2><div class="stack" style="margin-top:12px"><input type="text" id="en" value="${esc(t.name)}" maxlength="60">
     <div class="row"><input type="number" id="et" value="${t.target||''}" placeholder="Target minutes (optional)" min="1" max="600" style="flex:1;padding:12px 14px"><button class="btn sm" id="eclear">Clear</button></div>
     <p class="tiny muted">With a target set, you'll be asked how long it took each time you tick it off.</p>
@@ -3380,24 +3418,47 @@ function editTask(t){
       <div class="chips" id="ecad" style="margin-top:8px">
         <button type="button" class="chip ${cad==='daily'?'on':''}" data-cad="daily">Daily</button>
         <button type="button" class="chip ${cad==='everyOther'?'on':''}" data-cad="everyOther">Every other day</button>
+        <button type="button" class="chip ${cad==='weekdays'?'on':''}" data-cad="weekdays">Days of week</button>
       </div>
-      <p class="tiny muted" style="margin-top:8px" id="ecadhint">${cad==='everyOther'?'Due today, then every other day. Off days skip the list and do not count as misses.':'Shows up every day.'}</p>
+      <div class="chips" id="ewdays" style="margin-top:8px;${cad==='weekdays'?'':'display:none'}">${wdChips()}</div>
+      <p class="tiny muted" style="margin-top:8px" id="ecadhint">${cadHint()}</p>
     </div></div>
     <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
+  const refreshWd=()=>{ const box=o.querySelector('#ewdays'); if(box) box.innerHTML=wdChips(); bindWd(); };
+  const bindWd=()=>{
+    o.querySelectorAll('[data-wd]').forEach(b=>b.onclick=()=>{
+      const d=+b.dataset.wd; haptic();
+      if(wdays.includes(d)){
+        if(wdays.length<=1){ toast('Pick at least one day'); return; }
+        wdays=wdays.filter(x=>x!==d);
+      } else {
+        wdays=[...wdays,d].sort((a,b)=>a-b);
+      }
+      refreshWd();
+    });
+  };
   o.querySelector('#eclear').onclick=()=>{o.querySelector('#et').value='';};
   o.querySelectorAll('[data-cad]').forEach(b=>b.onclick=()=>{
     cad=b.dataset.cad; haptic();
-    o.querySelectorAll('[data-cad]').forEach(x=>x.classList.toggle('on',x===b));
+    o.querySelectorAll('[data-cad]').forEach(x=>x.classList.toggle('on',x.dataset.cad===cad));
+    const box=o.querySelector('#ewdays');
+    if(box) box.style.display=cad==='weekdays'?'':'none';
+    if(cad==='weekdays' && !wdays.length) wdays=[parse(today()).getDay()];
+    if(cad==='weekdays') refreshWd();
     const h=o.querySelector('#ecadhint');
-    if(h) h.textContent=cad==='everyOther'?'Due today, then every other day. Off days skip the list and do not count as misses.':'Shows up every day.';
+    if(h) h.textContent=cadHint();
   });
+  bindWd();
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelector('[data-ok]').onclick=()=>{ const n=o.querySelector('#en').value.trim(); if(!n) return; t.name=n;
     const tg=clamp(Math.round(Number(o.querySelector('#et').value)||0),0,600); t.target=tg||null;
     const prev=taskCadence(t);
+    if(cad==='weekdays' && !wdays.length){ toast('Pick at least one day'); return; }
     t.cadence=cad;
     if(cad==='everyOther' && (prev!=='everyOther' || !t.cadenceAnchor)) t.cadenceAnchor=today();
-    if(cad==='daily') delete t.cadenceAnchor;
+    if(cad!=='everyOther') delete t.cadenceAnchor;
+    if(cad==='weekdays') t.weekdays=[...wdays].sort((a,b)=>a-b);
+    else delete t.weekdays;
     save(); close(o); render(); document.getElementById('acc-tasks').open=true; };
 }
 
