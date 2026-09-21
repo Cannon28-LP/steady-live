@@ -47,9 +47,10 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.v3.js?b=53"/>
-<link rel="preload" href="./app.v3.css?b=53" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.v3.css?b=53"/></noscript>
+<link rel="modulepreload" href="./app.v3.js?b=54"/>
+<link rel="modulepreload" href="./food-data.js?b=54"/>
+<link rel="preload" href="./app.v3.css?b=54" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v3.css?b=54"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
@@ -65,6 +66,7 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
     <button data-tab="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Today</button>
     <button data-tab="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4a2 2 0 0 1 2-2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 2v6h6"/><path d="M8 13h6M8 17h4"/></svg>Plan</button>
     <button data-tab="progress"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>Progress</button>
+    <button data-tab="food"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></svg>Food</button>
     <button data-tab="friends"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Friends</button>
     <button data-tab="shop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Shop</button>
     <button data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></svg>Settings</button>
@@ -90,7 +92,7 @@ window.__steadyBootTimer = setTimeout(function(){
 }, 20000);
 </script>
 <script type="module">
-const src = '/steady-live/app.v3.js?b=53';
+const src = '/steady-live/app.v3.js?b=54';
 const clear = () => { const boot=document.getElementById('boot');
   if(boot){ boot.classList.add('gone'); setTimeout(()=>boot.remove(),350); } };
 const fail = (e) => {

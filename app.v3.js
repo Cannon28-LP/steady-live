@@ -1,8 +1,9 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
+import { FOOD_PROFILES, FOOD_HEURISTICS, FOOD_DISCLAIMER } from './food-data.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-19'; }catch(e){ return '2026-09-19'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-21'; }catch(e){ return '2026-09-21'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -332,6 +333,7 @@ function fresh(){
       remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}}},
     flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
     pendingMisses:[], undo:null,
+    foodLog:[],
   };
 }
 let S = load();
@@ -358,6 +360,7 @@ function load(){
     if(!m.whys.length && m.flags.why) m.whys=[{id:uid(),text:m.flags.why}];
     m.quotes=(m.quotes||[]).filter(q=>q.custom);
     migratePairChallenges(m);
+    if(!Array.isArray(m.foodLog)) m.foodLog=[];
     return m;
   }catch(e){ return fresh(); }
 }
@@ -1655,6 +1658,7 @@ const Sync = {
     S={...fresh(),...blob,me:me0,auth:auth0,session:sess0,friends:{},inbox:[],settings:{...fresh().settings,...(blob.settings||{})},flags:{...fresh().flags,...(blob.flags||{})}};
     S.vaultAt=at||Date.now();
     migratePairChallenges(S);
+    if(!Array.isArray(S.foodLog)) S.foodLog=[];
     save();
   },
   async pullVaultSmart(){
@@ -2271,9 +2275,247 @@ function celebrate(){
   const P=Array.from({length:90},()=>({x:innerWidth/2,y:innerHeight*.35,vx:(Math.random()-.5)*14,vy:-Math.random()*14-4,r:Math.random()*5+3,c:Math.random()<.6?acc:'#fff',a:Math.random()*6,s:Math.random()*.2-.1}));
   let f=0; (function step(){ x.clearRect(0,0,c.width,c.height); P.forEach(p=>{p.vy+=.45;p.x+=p.vx;p.y+=p.vy;p.a+=p.s;x.save();x.translate(p.x,p.y);x.rotate(p.a);x.globalAlpha=Math.max(0,1-f/70);x.fillStyle=p.c;x.fillRect(-p.r/2,-p.r/2,p.r,p.r*1.6);x.restore();}); if(++f<80) requestAnimationFrame(step); else x.clearRect(0,0,c.width,c.height); })();
 }
+
+/* ---------- Food (outside the economy) ----------
+   Client-side analyser: parse free text → match curated FOOD_PROFILES →
+   scale language by quantity → expand card. No nutrition APIs. */
+function parseFoodText(raw){
+  const text=String(raw||'').trim().replace(/\s+/g,' ');
+  if(!text) return {qty:1, name:'', raw:''};
+  let qty=1, name=text;
+  const m=text.match(/^(\d+(?:[.,]\d+)?)\s*(x|×|pcs?|pieces?|slices?|portions?|servings?|cups?|bowls?|plates?|bags?|cans?|bottles?|pints?|glasses?|shots?)?\s+(.+)$/i);
+  if(m){ qty=parseFloat(m[1].replace(',','.'))||1; name=(m[3]||'').trim(); }
+  else {
+    const m2=text.match(/^(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(.+)$/i);
+    if(m2){
+      const words={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12};
+      qty=words[m2[1].toLowerCase()]||1; name=m2[2].trim();
+    }
+  }
+  name=name.replace(/^(of|more)\s+/i,'').trim();
+  return {qty:Math.max(0.25, Math.min(99, qty)), name:name||text, raw:text};
+}
+function normFood(s){
+  return String(s||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/&/g,' and ').replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+}
+function foodTokens(s){ return normFood(s).split(' ').filter(Boolean); }
+function matchFoodProfile(name){
+  const n=normFood(name); if(!n) return null;
+  const stop=new Set(['a','an','the','of','and','with','food','meal','snack','drink']);
+  let best=null, score=0;
+  for(const p of FOOD_PROFILES){
+    for(const alias of p.names){
+      const a=normFood(alias);
+      if(!a) continue;
+      let sc=0;
+      if(n===a) sc=100;
+      else if(n.includes(a) || a.includes(n)) sc=80 + Math.min(a.length, 15);
+      else {
+        const nt=[...new Set(foodTokens(n))].filter(t=>!stop.has(t) && t.length>2);
+        const at=[...new Set(foodTokens(a))].filter(t=>!stop.has(t) && t.length>2);
+        if(!nt.length || !at.length) sc=0;
+        else {
+          const hit=at.filter(t=>nt.includes(t)).length;
+          // Need real overlap — a lone shared filler word must not match a long alias.
+          if(hit>=2 || (hit===1 && at.length===1 && nt.length<=2))
+            sc=40 + hit*15 + (hit===at.length?25:0);
+        }
+      }
+      if(sc>score){ score=sc; best=p; }
+    }
+  }
+  return score>=55 ? best : null;
+}
+function heuristicFood(name){
+  const n=normFood(name);
+  const flags=new Set();
+  let label='unmatched';
+  for(const h of FOOD_HEURISTICS){
+    if(h.keys.some(k=>n.includes(normFood(k)))){ h.flags.forEach(f=>flags.add(f)); label=h.label; }
+  }
+  const sugary=flags.has('sugar')||flags.has('liquid-sugar');
+  const fried=flags.has('fried');
+  const alc=flags.has('alcohol');
+  const plants=flags.has('plants')||flags.has('whole-food');
+  const protein=flags.has('protein');
+  const ingredients=[{n:'Not in the local library yet', role:'be more specific for a fuller card'}];
+  let feel, body, good, bad, longevity;
+  if(alc){
+    feel=['Looser then flatter — sleep and next-day mood often take a hit.'];
+    body=['Your liver clears ethanol first; recovery and deep sleep suffer.'];
+    good=['Social ease for some — not a nutritional need.'];
+    bad=['Sleep quality, mood rebound, and empty calories.'];
+    longevity='Less alcohol is almost always the kinder long-term pattern.';
+  } else if(sugary){
+    feel=['Quick lift, then a dip and a pull toward more sweet.'];
+    body=['Refined sugar raises blood glucose fast; insulin follows; energy can crash.'];
+    good=['Pleasure. Little lasting fuel unless there is protein or fibre with it.'];
+    bad=['Spike-crash, cravings, and easy overeating.'];
+    longevity='Frequent high-sugar patterns strain metabolic health over years; one-offs are different.';
+  } else if(fried){
+    feel=['Satisfying crunch, then heavy and thirsty.'];
+    body=['Frying oils + starch make a dense calorie load with little fibre brake.'];
+    good=['Taste and texture — not micronutrient density.'];
+    bad=['Heaviness, salt thirst, easy portion blindness.'];
+    longevity='Occasional fried food differs from making it the weekly default.';
+  } else if(plants){
+    feel=['Lighter, steadier energy when portions are real food.'];
+    body=['Fibre and plant volume support fullness and gut rhythm.'];
+    good=['Usually a strong everyday direction.'];
+    bad=['Watch sugary dressings or juice versions that strip the fibre.'];
+    longevity='More whole plants across the week is one of the clearer longevity levers.';
+  } else if(protein){
+    feel=['More settled hunger for longer.'];
+    body=['Protein supports satiety and recovery.'];
+    good=['Useful building block for meals.'];
+    bad=['Depends on cooking — fried/breaded versions change the story.'];
+    longevity='Adequate protein from varied sources supports muscle as you age.';
+  } else {
+    feel=['Hard to say without a clearer match — how you feel depends on what it actually was.'];
+    body=['General meals mix carbs, fats, and protein in different ratios.'];
+    good=['Logging itself is useful — patterns show up over days.'];
+    bad=['Without a match, Steady will not invent brand-specific claims.'];
+    longevity='Overall pattern across weeks matters more than one mystery item.';
+  }
+  return {
+    id:null, names:[name], category:label,
+    ingredients, feel, body, good, bad, longevity,
+    flags:[...flags], unmatched:true,
+  };
+}
+function qtyPhrase(qty){
+  if(qty===1) return 'one';
+  if(Number.isInteger(qty) && qty<=12){
+    return ['','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'][qty];
+  }
+  return String(qty);
+}
+function scaleFoodLines(lines, qty, flags){
+  const out=[...(lines||[])];
+  if(qty>=4 && (flags.includes('sugar')||flags.includes('liquid-sugar')||flags.includes('refined'))){
+    out.unshift(`${qtyPhrase(qty)} is a larger sugar/refined load in one go — expect a sharper spike and a hungrier rebound.`);
+  } else if(qty>=3 && (flags.includes('fried')||flags.includes('ultraprocessed'))){
+    out.unshift(`${qtyPhrase(qty)} portions stacks oil, salt, and calories fast.`);
+  } else if(qty>=3 && flags.includes('alcohol')){
+    out.unshift(`${qtyPhrase(qty)} drinks is a heavier night for sleep and next-day clarity.`);
+  } else if(qty>=5){
+    out.unshift(`${qtyPhrase(qty)} is a sizeable amount — the short-term effects scale up.`);
+  }
+  return out;
+}
+function analyseFood(text){
+  const parsed=parseFoodText(text);
+  const profile=matchFoodProfile(parsed.name) || heuristicFood(parsed.name);
+  const flags=profile.flags||[];
+  return {
+    qty:parsed.qty,
+    name:parsed.name,
+    profileId:profile.id||null,
+    unmatched:!!profile.unmatched,
+    category:profile.category,
+    ingredients:profile.ingredients||[],
+    feel:scaleFoodLines(profile.feel, parsed.qty, flags),
+    body:scaleFoodLines(profile.body, parsed.qty, flags),
+    good:profile.good||[],
+    bad:scaleFoodLines(profile.bad, parsed.qty, flags),
+    longevity:profile.longevity||'',
+    flags,
+  };
+}
+function foodLogToday(){
+  const k=today();
+  return (S.foodLog||[]).filter(e=>e.date===k).sort((a,b)=>(b.at||0)-(a.at||0));
+}
+function addFoodLog(text){
+  const a=analyseFood(text);
+  const entry={id:uid(), date:today(), text:String(text).trim(), qty:a.qty, profileId:a.profileId, at:Date.now()};
+  if(!S.foodLog) S.foodLog=[];
+  S.foodLog.unshift(entry);
+  save();
+  return entry;
+}
+function dropFoodLog(id){
+  S.foodLog=(S.foodLog||[]).filter(e=>e.id!==id);
+  if(foodState.open===id) foodState.open=null;
+  save();
+}
+function foodDaySummary(entries){
+  const flags=new Set();
+  entries.forEach(e=>{
+    const a=analyseFood(e.text);
+    (a.flags||[]).forEach(f=>flags.add(f));
+  });
+  const bits=[];
+  const sugar=entries.filter(e=>(analyseFood(e.text).flags||[]).some(f=>f==='sugar'||f==='liquid-sugar')).length;
+  const up=entries.filter(e=>(analyseFood(e.text).flags||[]).includes('ultraprocessed')).length;
+  const alc=entries.filter(e=>(analyseFood(e.text).flags||[]).includes('alcohol')).length;
+  const plants=entries.filter(e=>(analyseFood(e.text).flags||[]).some(f=>f==='plants'||f==='whole-food'||f==='fibre')).length;
+  if(sugar) bits.push(`${sugar} high-sugar log${sugar===1?'':'s'}`);
+  if(up) bits.push(`${up} ultraprocessed`);
+  if(alc) bits.push(`${alc} alcohol`);
+  if(plants && !sugar && !up) bits.push(`${plants} whole-food leaning`);
+  if(!bits.length && entries.length) bits.push(`${entries.length} logged`);
+  return bits.join(' · ');
+}
+function foodCardHtml(analysis){
+  const li=arr=>`<ul class="food-bullets">${(arr||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`;
+  const ings=`<ul class="food-ings">${(analysis.ingredients||[]).map(x=>`<li><b>${esc(x.n)}</b><span class="muted"> — ${esc(x.role)}</span></li>`).join('')}</ul>`;
+  const flagHtml=(analysis.flags||[]).length?`<div class="food-flags">${analysis.flags.map(f=>`<span class="tag">${esc(f)}</span>`).join('')}</div>`:'';
+  return `
+    ${flagHtml}
+    ${analysis.unmatched?`<p class="tiny muted" style="margin-bottom:8px">No exact match — rough read from keywords. Try a plainer name (e.g. “cookies”, “pizza”, “banana”).</p>`:''}
+    <div class="food-sec"><div class="food-lab">Likely in it</div>${ings}</div>
+    <div class="food-sec"><div class="food-lab">How you may feel</div>${li(analysis.feel)}</div>
+    <div class="food-sec"><div class="food-lab">In the body</div>${li(analysis.body)}</div>
+    <div class="food-sec good"><div class="food-lab">Good (honest)</div>${li(analysis.good)}</div>
+    <div class="food-sec bad"><div class="food-lab">The cost</div>${li(analysis.bad)}</div>
+    <div class="food-sec"><div class="food-lab">Longer term</div><p class="small">${esc(analysis.longevity)}</p></div>
+    <p class="tiny muted" style="margin-top:10px">${esc(FOOD_DISCLAIMER)}</p>`;
+}
+function vFood(){
+  const k=today();
+  const entries=foodLogToday();
+  const summary=entries.length?foodDaySummary(entries):'';
+  return `
+  <div class="head"><div><div class="eyebrow">${fmt(k,{weekday:'long',day:'numeric',month:'long'})}</div><h1>Food</h1></div></div>
+  <p class="whisper" style="margin-bottom:12px">Outside the points — warm and direct, not a shame spiral.</p>
+  <div class="card" data-tour="foodlog">
+    <input type="text" id="newfood" placeholder="e.g. 5 chocolate cookies" maxlength="120" autocomplete="off">
+    <div class="row" style="margin-top:10px;gap:8px;align-items:center">
+      <button class="btn primary grow" id="addfood">Log</button>
+    </div>
+    <p class="tiny muted" style="margin-top:8px">Amount + food name. Matched offline from a curated list — nothing leaves this device.</p>
+  </div>
+  ${summary?`<div class="card callout" style="margin-top:12px"><b class="small">Today</b><p class="tiny muted" style="margin-top:4px">${esc(summary)}</p></div>`:''}
+  ${entries.length?`<div class="card" style="padding:0;overflow:hidden;margin-top:12px">${entries.map(e=>{
+    const open=foodState.open===e.id;
+    const a=analyseFood(e.text);
+    const title=e.qty && e.qty!==1 ? `${qtyPhrase(e.qty)} ${a.name}` : (a.name||e.text);
+    return `<div class="planfold foodrow ${open?'open':''}" data-foodrow="${e.id}">
+      <button type="button" class="noterow" data-foodtog="${e.id}">
+        <div class="grow"><div class="row between" style="gap:10px;align-items:baseline">
+          <b class="planfold-title">${esc(title)}</b>
+          <span class="tiny muted" style="flex:none">${a.unmatched?'rough':esc(a.category||'')}</span>
+        </div>
+        ${(a.flags||[]).length?`<div class="food-flags" style="margin-top:4px">${a.flags.slice(0,4).map(f=>`<span class="tag">${esc(f)}</span>`).join('')}</div>`:''}
+        </div><span class="chev">${open?'‹':'›'}</span>
+      </button>
+      ${open?`<div class="planfold-body" data-foodbody="${e.id}">
+        ${foodCardHtml(a)}
+        <div class="row" style="margin-top:12px">
+          <button type="button" class="btn sm ghost danger" data-fooddel="${e.id}">Delete</button>
+        </div>
+      </div>`:''}
+    </div>`;
+  }).join('')}</div>`:
+  `<div class="card empty" style="margin-top:12px"><b>Nothing logged today</b>Try “5 chocolate cookies”, “a pint”, or “oats”.</div>`}
+  <p class="tiny muted" style="margin-top:14px">${esc(FOOD_DISCLAIMER)}</p>`;
+}
+
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null,openNote:null,editNote:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null,openNote:null,editNote:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null}, foodState={open:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -2326,7 +2568,7 @@ function render(){
   if(!$app) return;
   const ind=document.getElementById('tabind');
   document.querySelectorAll('.tabbar button').forEach((b,i)=>{ const on=b.dataset.tab===tab; b.classList.toggle('active',on); if(on && ind) ind.style.transform=`translateX(${i*100}%)`; });
-  $app.innerHTML=`<div class="page">${({today:vToday,plan:vPlan,progress:vProgress,friends:vFriends,shop:vShop,settings:vSettings})[tab]()}</div>`;
+  $app.innerHTML=`<div class="page">${({today:vToday,plan:vPlan,progress:vProgress,food:vFood,friends:vFriends,shop:vShop,settings:vSettings})[tab]()}</div>`;
   bind();
 }
 
@@ -3117,6 +3359,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to the initial.</p>
     <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
+    <p><b style="color:var(--fg)">Food.</b> Outside the economy — no coins. Type what you ate; Steady matches a local library and shows likely ingredients, how it can make you feel, what’s happening in the body, any honest upsides, the clear downsides, and a plain-language longevity note. Educational only, not medical advice.</p>
     <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons and your affirmation never leave this device.</p>
     <p class="tiny">Build ${BUILD}</p>
     <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="replayonb">Replay setup</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
@@ -3132,6 +3375,22 @@ function bind(){
   qa('[data-undone]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); unmarkDone(b.dataset.undone); });
   qa('[data-edittime]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); const t=S.tasks.find(x=>x.id===b.dataset.edittime); if(t?.target) timeSheet([t], true); });
   updateConfirm();
+  // Food
+  const nf=q('#newfood'); if(nf){ const add=()=>{ const v=nf.value.trim(); if(!v) return;
+      addFoodLog(v); foodState.open=S.foodLog[0]?.id||null; haptic('success'); render();
+      const el=document.getElementById('newfood'); if(el){ el.value=''; el.focus(); } toast('Logged'); };
+    q('#addfood').onclick=add; nf.onkeydown=e=>{ if(e.key==='Enter') add(); }; }
+  qa('[data-foodtog]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const id=b.dataset.foodtog; foodState.open=foodState.open===id?null:id; haptic(); render(); });
+  qa('[data-foodbody]').forEach(b=>b.onclick=e=>{
+    if(e.target.closest('button,input,textarea,a')) return;
+    foodState.open=null; haptic(); render();
+  });
+  qa('[data-fooddel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const id=b.dataset.fooddel; const entry=(S.foodLog||[]).find(x=>x.id===id);
+    dropFoodLog(id); haptic(); render();
+    toast('Removed','Undo',()=>{ if(entry){ S.foodLog.unshift(entry); save(); render(); } });
+  });
   // Progress
   // Plan — list
   qa('[data-psub]').forEach(b=>b.onclick=()=>{ planState.sub=b.dataset.psub; planState.openAff=planState.editAff=planState.openNote=planState.editNote=null; haptic(); render(); window.scrollTo({top:0}); });
@@ -3819,6 +4078,7 @@ const TOURS={
   shop:[['balance','Coins to spend. XP fills the level bar and is never spent. The shop stays open — allowances on each reward do the limiting.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
   settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, designs, font, type size.'],['remind','Optional nudges: morning, evening if anything’s open, and your own affirmations.'],['account','Update app, backup/restore, and sign out live here.']],
   friends:[['fsubs','Three tabs: Friend list, Chats, and Active challenges.'],['code','Add a friend’s code here — pairs both ways. Your code sits underneath to share. Only totals sync, never task names or notes.']],
+  food:[['foodlog','Type what you ate. Steady matches a curated library and shows ingredients, how it may feel, what’s going on in the body, and a longer-term note — no shame spiral, no paid AI.']],
 };
 let tourLive=null;
 function endTour(markSeen){
