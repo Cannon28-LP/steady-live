@@ -134,8 +134,8 @@ details.fold[open] summary::after{transform:rotate(90deg)}
 
 /* Tab bar */
 .tabbar{position:fixed;bottom:0;left:0;right:0;z-index:30;padding:8px 12px calc(env(safe-area-inset-bottom) + 8px);display:flex;justify-content:center;pointer-events:none}
-.tabbar nav{pointer-events:auto;display:grid;grid-template-columns:repeat(7,1fr);width:min(100%,480px);background:color-mix(in srgb,var(--surface) 78%,transparent);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid var(--line);border-radius:26px;padding:6px;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.18)}
-.tabbar .ind{position:absolute;top:6px;bottom:6px;width:calc(14.2857% - 2px);left:6px;border-radius:20px;background:var(--accent-soft);transition:transform .28s var(--ease)}
+.tabbar nav{pointer-events:auto;display:grid;grid-template-columns:repeat(6,1fr);width:min(100%,480px);background:color-mix(in srgb,var(--surface) 78%,transparent);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid var(--line);border-radius:26px;padding:6px;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.tabbar .ind{position:absolute;top:6px;bottom:6px;width:calc(16.6667% - 2px);left:6px;border-radius:20px;background:var(--accent-soft);transition:transform .28s var(--ease)}
 .tabbar button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:20px;color:var(--fg2);font-size:.7rem;font-weight:600;transition:color var(--dur)}
 .tabbar button svg{width:20px;height:20px}
 .tabbar button{font-size:.6rem;padding:8px 2px;gap:2px}
@@ -608,16 +608,3 @@ button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
 .planfold.open>.noterow .chev,.planfold.open .chev{transform:rotate(90deg)}
 .planfold[data-affrow] .editrow[data-afftog],.planfold[data-noterow]>.noterow{cursor:pointer;width:100%;text-align:left;background:none;border:0;color:inherit}
 .planfold-body [data-affedit],.planfold-body [data-note-body]{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
-
-
-/* Food tab */
-.food-flags{display:flex;flex-wrap:wrap;gap:6px}
-.food-sec{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
-.food-sec:first-child{margin-top:0;padding-top:0;border-top:0}
-.food-lab{font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--fg2);margin-bottom:6px}
-.food-sec.good .food-lab{color:var(--accent)}
-.food-sec.bad .food-lab{color:var(--danger)}
-.food-bullets,.food-ings{margin:0;padding-left:1.1em}
-.food-bullets li,.food-ings li{margin:4px 0;font-size:.9rem;line-height:1.45}
-.foodrow .noterow{cursor:pointer;width:100%;text-align:left;background:none;border:0;color:inherit;display:flex;gap:10px;align-items:center;padding:12px 14px}
-.foodrow.open>.noterow .chev{transform:rotate(90deg)}
