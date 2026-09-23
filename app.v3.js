@@ -40,10 +40,10 @@ const TIER_LABEL = {week:'Week', fortnight:'Fortnight'};
 const round10 = n => Math.round(n/10)*10;
 const dayRate = () => Math.max(1, activeTasks().length) * (TASK_BASE*1.3 + CLEAR_PER_TASK); // a cleared day at healthy strength
 const tierCost = t => {
-  const rate = clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
-  /* Band B: a buy ≈ 5.5 clear days; fortnight ≈ 11. */
-  const days = t==='fortnight' ? 11 : 5.5;
-  return Math.max(MIN_REWARD_PRICE, round10(rate*days));
+  /* Fallback when a reward has no price yet — same unit model as suggestFromFreq. */
+  const list = (typeof S!=='undefined' && S && S.rewards) ? S.rewards.filter(x=>x.active) : [];
+  const freq = t==='fortnight' ? 'fortnight' : 'weekly';
+  return pricedUnit(list, buysPerWeekFor(freq));
 };
 const chestCoins = () => round10(dayRate());
 /* A clear day: each task pays base coins plus the clear bonus. Strength and overtime are extra, not assumed. */
@@ -111,24 +111,27 @@ function monthlyIncome(){
 }
 function rewardFreq(r){ return r.freq || 'monthly'; }
 function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
-/* What each reward should cost if the active set is to fit the budget. */
-function freqPriceFloor(freqId, perMonth){
-  const rate = clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
-  /* Target: ~5.5 clear days per buy; fortnight ≈ 11; monthly ≈ 22. */
-  if(freqId==='weekly') return round10(rate*5.5);
-  if(freqId==='fortnight') return round10(rate*11);
-  if(freqId==='monthly') return round10(rate*22);
-  /* custom: keep price×perMonth from undercutting a ~month of clear-day pay */
-  const monthlyFloor = round10(rate*22);
-  const per = perFor('custom', perMonth);
-  return Math.max(MIN_REWARD_PRICE, round10(monthlyFloor / Math.max(per, 0.25)));
+/* Unified treat budget: ~6 clear days of coins each week, shared across ALL active rewards
+   (weeklies, fortnights, monthly, custom) by expected buy-events. Per-buy floor ≈ 2½ clear days. */
+const WEEKS_PER_MONTH = 4.33;
+const BUY_FLOOR_DAYS = 2.5;
+function rewardDayRate(){ return clearDayPay() || (TASK_BASE + CLEAR_PER_TASK); }
+function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * 6)); }
+function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * 6 * WEEKS_PER_MONTH)); }
+function buyFloor(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * BUY_FLOOR_DAYS)); }
+function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
+function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
+/* Pool ÷ total expected buys/week across the set (optional draft buy-weight). */
+function unitFromList(list, extraBuysPerWeek){
+  const total = (list||[]).reduce((a,r)=>a+buysPerWeekOf(r), 0) + (Number(extraBuysPerWeek)||0);
+  return Math.max(MIN_REWARD_PRICE, round10(weekRewardPool() / Math.max(total, 0.25)));
+}
+function pricedUnit(list, extraBuysPerWeek){
+  return Math.max(buyFloor(), unitFromList(list, extraBuysPerWeek));
 }
 function suggestFromFreq(freqId, others, perMonth){
-  const inc=monthlyIncome().coins*BUDGET_SHARE;
-  const list=(others||S.rewards.filter(x=>x.active));
-  const share=inc/(list.length+1);                // this one plus the rest
-  const budget = Math.max(MIN_REWARD_PRICE, round10(share/perFor(freqId, perMonth)));
-  return Math.max(budget, freqPriceFloor(freqId, perMonth));
+  const list = others || S.rewards.filter(x=>x.active);
+  return pricedUnit(list, buysPerWeekFor(freqId, perMonth));
 }
 /* ---------- Allowances ----------
    The frequency you chose is a real limit, not just a pricing assumption.
@@ -214,22 +217,23 @@ function monthlyPlanned(r){ return Math.max(1, Math.round(perMonthOf(r))); }
 
 function budgetState(){
   const inc=monthlyIncome();
+  const pot=monthlyRewardBudget();
   const active=S.rewards.filter(x=>x.active);
   const spend=active.reduce((a,r)=>a+monthlyCostOf(r),0);
-  const pct=inc.coins?Math.round(100*spend/inc.coins):0;
+  /* Shop fit vs the six-clear-day/week treat pot (not full monthly income). */
+  const pct=pot?Math.round(100*spend/pot):0;
   const redemptions=active.reduce((a,r)=>a+perMonthOf(r),0);
-  return {income:inc.coins, real:inc.real, spend:Math.round(spend), pct,
+  return {income:inc.coins, pot, real:inc.real, spend:Math.round(spend), pct,
     redemptions:Math.round(redemptions*10)/10, active,
     level: pct>100?'over' : pct>90?'tight' : 'ok'};
 }
-/* Prices that would make the current wishes fit, keeping every frequency as chosen. */
+/* Reprice every active reward to the shared week-pool unit (with 2½-day floor). */
 function rebalancePlan(){
   const b=budgetState(); if(!b.active.length) return [];
-  const inc=b.income*BUDGET_SHARE;
-  const share=inc/b.active.length;
+  const unit=pricedUnit(b.active, 0);
   return b.active.map(r=>{
     const from=rewardPrice(r);
-    const to=Math.max(MIN_REWARD_PRICE, round10(share/perMonthOf(r)));
+    const to=unit;
     const progress=Math.min(1,(S.points.coins||0)/from);
     return {r,from,to,freq:rewardFreq(r),label:freqLabel(r),per:perMonthOf(r),raises:to>from,halfway:progress>=0.5};
   }).filter(x=>x.to!==x.from);
@@ -237,10 +241,11 @@ function rebalancePlan(){
 function applyRebalance(plan){ plan.forEach(x=>{ x.r.price=x.to; }); save(); }
 
 function suggestedPrices(){
-  const rate=clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
+  const list=S.rewards.filter(x=>x.active);
+  /* Chips = price as if adding one more of that cadence into the current set. */
   return {
-    week: Math.max(MIN_REWARD_PRICE, round10(rate*5.5)),
-    fortnight: Math.max(MIN_REWARD_PRICE, round10(rate*11)),
+    week: pricedUnit(list, buysPerWeekFor('weekly')),
+    fortnight: pricedUnit(list, buysPerWeekFor('fortnight')),
   };
 }
 const TITLES = [['Drifter',1],['Steady',5],['Committed',12],['Relentless',20]]; // by level
@@ -374,8 +379,20 @@ function migratePriceFloors(){
   S._priceFloorB60 = 1;
   save(); // persist flag once so we never re-bump
 }
+/* b61: unified week pool across ALL actives + 2½-day buy floor (overrides b60 per-item 5.5×). */
+function migratePriceFloorsB61(){
+  if(S._priceFloorB61) return;
+  const active = (S.rewards||[]).filter(r => r && r.active);
+  if(active.length){
+    const unit = pricedUnit(active, 0);
+    active.forEach(r => { r.price = unit; });
+  }
+  S._priceFloorB61 = 1;
+  save();
+}
 let S = load();
 migratePriceFloors();
+migratePriceFloorsB61();
 function load(){
   try{
     if(typeof localStorage==='undefined') return fresh();
@@ -3453,7 +3470,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn over the last four weeks, never below about 5.5 clear days of pay for a weekly treat, ~11 for fortnightly, or ~22 for monthly. Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn. Rewards share about six clear days of coins a week across everything you’re saving for; each buy at least ~2½ days. Type over it if you disagree. The budget line shows what all your rewards want per month against that treat pot; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
