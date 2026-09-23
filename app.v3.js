@@ -15,7 +15,7 @@ const SYNC = {
   url:    'https://rjytcvajeysfnfmtgakm.supabase.co',
   anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
 };
-const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 10, CLEAR_PER_TASK = 5, CHEST_DAYS = 6;
+const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 10, CLEAR_PER_TASK = 0, CHEST_DAYS = 6;
 /* Days of slip before weak-habit pay rises — one miss must not bump the badge. */
 const MAX_TASKS = 10, MIN_REWARD_PRICE = 10;
 const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
@@ -757,42 +757,42 @@ const LOOK_ITEMS = [
   {id:'h-side',    slot:'hair', name:'Side part',    cost:0},
   {id:'h-long',    slot:'hair', name:'Long',         cost:0},
   {id:'h-bob',     slot:'hair', name:'Bob',          cost:0},
-  {id:'h-buzz',    slot:'hair', name:'Buzzed',       cost:50},
-  {id:'h-quiff',   slot:'hair', name:'Quiff',        cost:80},
-  {id:'h-undercut',slot:'hair', name:'Undercut',     cost:90},
-  {id:'h-fringe',  slot:'hair', name:'Fringe',       cost:80},
-  {id:'h-wavy',    slot:'hair', name:'Wavy',         cost:100},
-  {id:'h-pony',    slot:'hair', name:'Ponytail',     cost:90},
-  {id:'h-bun',     slot:'hair', name:'Top bun',      cost:90},
-  {id:'h-braids',  slot:'hair', name:'Braids',       cost:110},
-  {id:'h-space',   slot:'hair', name:'Space buns',   cost:110},
-  {id:'h-curls',   slot:'hair', name:'Curls',        cost:110},
-  {id:'h-afro',    slot:'hair', name:'Afro',         cost:110},
+  {id:'h-buzz',    slot:'hair', name:'Buzzed',       cost:80},
+  {id:'h-quiff',   slot:'hair', name:'Quiff',        cost:100},
+  {id:'h-undercut',slot:'hair', name:'Undercut',     cost:110},
+  {id:'h-fringe',  slot:'hair', name:'Fringe',       cost:100},
+  {id:'h-wavy',    slot:'hair', name:'Wavy',         cost:120},
+  {id:'h-pony',    slot:'hair', name:'Ponytail',     cost:110},
+  {id:'h-bun',     slot:'hair', name:'Top bun',      cost:110},
+  {id:'h-braids',  slot:'hair', name:'Braids',       cost:200},
+  {id:'h-space',   slot:'hair', name:'Space buns',   cost:200},
+  {id:'h-curls',   slot:'hair', name:'Curls',        cost:200},
+  {id:'h-afro',    slot:'hair', name:'Afro',         cost:200},
   // outfits
   {id:'o-tee',    slot:'outfit', name:'T-shirt',      cost:0,   col:'#3f8f83'},
   {id:'o-hoodie', slot:'outfit', name:'Hoodie',       cost:0,   col:'#4a5568'},
-  {id:'o-shirt',  slot:'outfit', name:'Collared shirt',cost:90, col:'#dfe6ef'},
-  {id:'o-stripe', slot:'outfit', name:'Striped top',  cost:110, col:'#e4e9f0'},
-  {id:'o-dress',  slot:'outfit', name:'Dress',        cost:140, col:'#c2466f'},
-  {id:'o-jacket', slot:'outfit', name:'Denim jacket', cost:160, col:'#3f6796'},
-  {id:'o-hivis',  slot:'outfit', name:'Hi-vis',       cost:120, col:'#e4d43a'},
-  {id:'o-jumper', slot:'outfit', name:'Knit jumper',  cost:130, col:'#8a6b4f'},
+  {id:'o-shirt',  slot:'outfit', name:'Collared shirt',cost:180, col:'#dfe6ef'},
+  {id:'o-stripe', slot:'outfit', name:'Striped top',  cost:200, col:'#e4e9f0'},
+  {id:'o-dress',  slot:'outfit', name:'Dress',        cost:280, col:'#c2466f'},
+  {id:'o-jacket', slot:'outfit', name:'Denim jacket', cost:400, col:'#3f6796'},
+  {id:'o-hivis',  slot:'outfit', name:'Hi-vis',       cost:220, col:'#e4d43a'},
+  {id:'o-jumper', slot:'outfit', name:'Knit jumper',  cost:240, col:'#8a6b4f'},
   // eyewear
-  {id:'g-round',  slot:'glasses', name:'Round specs', cost:70},
-  {id:'g-square', slot:'glasses', name:'Square specs',cost:70},
-  {id:'g-shades', slot:'glasses', name:'Sunglasses',  cost:120},
-  {id:'g-cats',   slot:'glasses', name:'Cat-eye',     cost:130},
+  {id:'g-round',  slot:'glasses', name:'Round specs', cost:100},
+  {id:'g-square', slot:'glasses', name:'Square specs',cost:100},
+  {id:'g-shades', slot:'glasses', name:'Sunglasses',  cost:220},
+  {id:'g-cats',   slot:'glasses', name:'Cat-eye',     cost:250},
   // headwear
-  {id:'a-cap',    slot:'hat', name:'Cap',             cost:100},
-  {id:'a-beanie', slot:'hat', name:'Beanie',          cost:100},
-  {id:'a-bow',    slot:'hat', name:'Hair bow',        cost:90},
-  {id:'a-band',   slot:'hat', name:'Headband',        cost:80},
+  {id:'a-cap',    slot:'hat', name:'Cap',             cost:180},
+  {id:'a-beanie', slot:'hat', name:'Beanie',          cost:180},
+  {id:'a-bow',    slot:'hat', name:'Hair bow',        cost:110},
+  {id:'a-band',   slot:'hat', name:'Headband',        cost:100},
   // backdrops
   {id:'bg-plain', slot:'backdrop', name:'Plain',      cost:0,  col:null},
-  {id:'bg-sun',   slot:'backdrop', name:'Sunrise',    cost:60, col:'#f0a05a'},
-  {id:'bg-mint',  slot:'backdrop', name:'Mint',       cost:60, col:'#6fd6bd'},
-  {id:'bg-night', slot:'backdrop', name:'Night',      cost:80, col:'#2c3358'},
-  {id:'bg-rose',  slot:'backdrop', name:'Rose',       cost:80, col:'#dd7ea4'},
+  {id:'bg-sun',   slot:'backdrop', name:'Sunrise',    cost:80, col:'#f0a05a'},
+  {id:'bg-mint',  slot:'backdrop', name:'Mint',       cost:80, col:'#6fd6bd'},
+  {id:'bg-night', slot:'backdrop', name:'Night',      cost:100, col:'#2c3358'},
+  {id:'bg-rose',  slot:'backdrop', name:'Rose',       cost:100, col:'#dd7ea4'},
 ];
 const SLOTS = [['hair','Hair'],['outfit','Outfit'],['glasses','Eyewear'],['hat','Headwear'],['backdrop','Backdrop']];
 const lookItem = id => LOOK_ITEMS.find(i=>i.id===id);
@@ -2567,7 +2567,7 @@ function vToday(){
       <div class="center"><div><b>+${d.points||0}</b><span>today</span></div></div></div>
     <div class="ring-meta">
       <h3>${n===0?'Nothing set yet':d.cleared?'Day cleared':`${st.done} of ${n}`}</h3>
-      <p class="muted small">${n===0?'Add tasks in Settings to start earning.':d.cleared?`Clear bonus +${d.clearBonus} banked.`:`${open.length} left · finish them for +${CLEAR_PER_TASK*n}`}</p>
+      <p class="muted small">${n===0?'Add tasks in Settings to start earning.':d.cleared?(CLEAR_PER_TASK>0?`Clear bonus +${d.clearBonus} banked.`:''):(CLEAR_PER_TASK>0?`${open.length} left · finish them for +${CLEAR_PER_TASK*n}`:`${open.length} left`)}</p>
       ${d.bonus?`<p class="small" style="margin-top:6px;color:var(--accent)">+${d.bonus} streak bonus today</p>`:`<p class="tiny muted" style="margin-top:6px">Tomorrow's streak bonus: +${lb}</p>`}
     </div>
   </div>
@@ -3333,7 +3333,7 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and XP. Miss two expected days in a row and the next tick pays 11, then +1 per further miss day up to 15. One miss alone does not raise pay. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
-    <p><b style="color:var(--fg)">Day cleared.</b> Tick everything and you get +${CLEAR_PER_TASK} per task on top.</p>
+    <p><b style="color:var(--fg)">Day cleared.</b> Tick everything to mark the day clear — that feeds your full-clear streak and the weekly chest. There is no extra per-task clear coin bonus; each task already paid when you ticked it.</p>
     <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
     <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
