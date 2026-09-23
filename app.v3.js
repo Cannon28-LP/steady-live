@@ -2,7 +2,7 @@
 /* ============ Steady — local-first consistency tracker ============ */
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-19'; }catch(e){ return '2026-09-19'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-23'; }catch(e){ return '2026-09-23'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -2179,8 +2179,8 @@ function completeSelected(mins){
     toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`); if(cleared) celebrate(); }, motionOK()?220:0);
 }
 function clawClearStreak(d){
+  /* Clear day streak fields + rewind block. Return pay — callers subtract once from wallet/XP. */
   const pay=d.clearStreakPay||0; if(!pay) return 0;
-  S.points.coins-=pay; S.points.xp-=pay;
   if(d.clearStreakBlock) S.clearPaidBlock=Math.max(0,d.clearStreakBlock-1);
   d.clearStreakPay=0; d.clearStreakBlock=null;
   return pay;
@@ -2191,7 +2191,9 @@ function undoLast(){
   const dayPts=u.coins-(u.streakPay||0);
   let refund=dayPts;
   if(u.cleared){ d.cleared=false; d.clearBonus=0; refund+=clawClearStreak(d); }
-  d.points-=dayPts; S.points.coins-=refund; S.points.xp-=refund; d.perfect=false;
+  /* Coins use coin refund (incl OT); XP uses stored u.xp (OT never counted in XP). */
+  const xpClaw=u.xp!=null?u.xp:refund;
+  d.points-=dayPts; S.points.coins-=refund; S.points.xp-=xpClaw; d.perfect=false;
   /* Coins may go negative: if you spent the reward then undid the tick, you owe the refund. */
   if(S.points.xp<0) S.points.xp=0;
   if(d.points<0) d.points=0;
@@ -2207,7 +2209,8 @@ function unmarkDone(id){
     const cb=d.clearBonus||0;
     dayPts+=cb; wallet+=cb; xp+=cb;
     d.cleared=false; d.clearBonus=0; d.perfect=false;
-    wallet+=clawClearStreak(d);
+    const streak=clawClearStreak(d);
+    wallet+=streak; xp+=streak; /* streak paid both coins + XP */
   }
   d.points-=dayPts; S.points.coins-=wallet; S.points.xp-=xp;
   /* Coins may go negative after a spend-then-undo — debt until you earn it back. */
@@ -3734,26 +3737,116 @@ function missGate(){
   if(document.querySelector('.gate,.overlay')) return false;
   /* Older-than-yesterday only — yesterday goes through catchUpGate (I did it | Missed). */
   const pend=olderPending(); if(!pend.length) return false;
-  const reasons=[...DEFAULT_REASONS,...S.customReasons]; const picked={};
-  const item=(p,i)=>{const t=S.tasks.find(x=>x.id===p.taskId); return `<div class="card" style="padding:12px" data-miss="${i}"><div class="row between"><b>${esc(t?.name||'Task')}</b><span class="tiny muted">${fmt(p.date)}</span></div><div class="chips" style="margin-top:10px">${reasons.map(r=>`<button class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-custom>+ Other</button></div><input type="text" placeholder="Or type your own reason" style="margin-top:10px;padding:9px 12px" data-c maxlength="120"></div>`;};
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${pend.length===1?'One thing slipped':pend.length+' things slipped'}</h2><p class="muted small" style="margin-bottom:14px">No points lost. Pick a chip or type your own — patterns show up in Progress.</p>${pend.length>1?`<div class="chips" style="margin-bottom:12px"><span class="tiny muted" style="align-self:center">Same for all:</span>${reasons.map(r=>`<button class="chip" data-all="${esc(r)}">${esc(r)}</button>`).join('')}</div>`:''}<div class="stack">${pend.map(item).join('')}</div><div class="foot"><button class="btn primary" data-ok disabled>Save</button></div></div>`);
+  /* Group by date (chronological) — one reason per day for all tasks that day. */
+  const byDay={};
+  pend.forEach(p=>{ (byDay[p.date]=byDay[p.date]||[]).push(p); });
+  const days=Object.keys(byDay).sort();
+  const reasons=[...DEFAULT_REASONS,...S.customReasons];
+  const picked={}; /* date → chip reason */
+  const dayCard=date=>{
+    const items=byDay[date];
+    const names=items.map(p=>{ const t=S.tasks.find(x=>x.id===p.taskId); return esc(t?.name||'Task'); });
+    const n=items.length;
+    const title=`${fmt(date,{weekday:'short',day:'numeric',month:'short'})} · ${n} task${n===1?'':'s'} missed`;
+    const list=names.length<=6?names.join(' · '):names.slice(0,5).join(' · ')+` · +${names.length-5} more`;
+    return `<div class="card miss-day" style="padding:12px" data-day="${esc(date)}">
+      <div class="row between" style="align-items:flex-start;gap:10px"><b>${esc(title)}</b></div>
+      <p class="tiny muted" style="margin:6px 0 10px">${list}</p>
+      <div class="chips">${reasons.map(r=>`<button class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-custom>+ Other</button></div>
+      <input type="text" placeholder="Or type a reason for this day" style="margin-top:10px;padding:9px 12px;width:100%" data-c maxlength="120">
+    </div>`;
+  };
+  const multi=days.length>1;
+  const title=days.length===1
+    ? (byDay[days[0]].length===1?'One day slipped':'A day slipped')
+    : `${days.length} days slipped`;
+  const sub=multi
+    ? 'One reason per day is enough — it covers every missed task that day. Set the same for every day below, or change any day before saving.'
+    : 'One reason covers every missed task that day. Patterns still show up in Progress.';
+  const sameAll=multi?`<div style="margin-bottom:14px"><p class="tiny muted" style="margin-bottom:8px">Same reason for every day</p><div class="chips">${reasons.map(r=>`<button class="chip" data-all="${esc(r)}">${esc(r)}</button>`).join('')}<button class="chip add" data-all-custom>+ Other</button></div></div>`:'';
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <h2>Catch up on missed days</h2>
+    <p class="muted small" style="margin-bottom:6px">${esc(title)}. ${sub}</p>
+    ${sameAll}
+    <div class="stack" data-days>${days.map(dayCard).join('')}</div>
+    <div class="foot"><button class="btn primary" data-ok disabled>Save</button></div>
+  </div>`);
   const okb=o.querySelector('[data-ok]');
-  const reasonOf=card=>{ const i=card.dataset.miss; const typed=card.querySelector('[data-c]')?.value.trim()||''; return (picked[i]||typed||'').trim(); };
-  const check=()=>{ okb.disabled=[...o.querySelectorAll('[data-miss]')].some(card=>!reasonOf(card)); };
-  o.querySelectorAll('[data-miss]').forEach(card=>{ const i=card.dataset.miss;
-    card.querySelectorAll('[data-r]').forEach(c=>c.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');picked[i]=c.dataset.r; haptic(); check();});
-    const inp=card.querySelector('[data-c]'); if(inp) inp.oninput=()=>{ if(inp.value.trim()){ card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); delete picked[i]; } check(); };
-    card.querySelector('[data-custom]').onclick=()=>prompt$('What got in the way?','',v=>{ if(!v) return; if(!S.customReasons.includes(v)){S.customReasons.push(v);save();} const b=document.createElement('button');b.className='chip on';b.textContent=v;b.dataset.r=v;b.onclick=()=>{card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));b.classList.add('on');picked[i]=v; if(inp) inp.value=''; check();}; card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); card.querySelector('[data-custom]').before(b); picked[i]=v; if(inp) inp.value=''; check(); });
+  const reasonOf=card=>{
+    const date=card.dataset.day;
+    const typed=card.querySelector('[data-c]')?.value.trim()||'';
+    return (picked[date]||typed||'').trim();
+  };
+  const check=()=>{ okb.disabled=[...o.querySelectorAll('[data-day]')].some(card=>!reasonOf(card)); };
+  const applyReason=(card, reason, {fromAll}={})=>{
+    const date=card.dataset.day;
+    picked[date]=reason;
+    const inp=card.querySelector('[data-c]'); if(inp) inp.value='';
+    card.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on', x.dataset.r===reason));
+    if(!fromAll) o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on'));
+    check();
+  };
+  const wireCard=card=>{
+    const date=card.dataset.day;
+    card.querySelectorAll('[data-r]').forEach(c=>c.onclick=()=>{
+      applyReason(card, c.dataset.r); haptic();
+    });
+    const inp=card.querySelector('[data-c]');
+    if(inp) inp.oninput=()=>{
+      if(inp.value.trim()){ card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); delete picked[date]; }
+      o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on'));
+      check();
+    };
+    card.querySelector('[data-custom]').onclick=()=>prompt$('What got in the way that day?','',v=>{
+      if(!v) return;
+      if(!S.customReasons.includes(v)){ S.customReasons.push(v); save(); }
+      const b=document.createElement('button'); b.className='chip on'; b.textContent=v; b.dataset.r=v;
+      b.onclick=()=>{ applyReason(card, v); haptic(); };
+      card.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
+      card.querySelector('[data-custom]').before(b);
+      applyReason(card, v); haptic();
+    });
+  };
+  o.querySelectorAll('[data-day]').forEach(wireCard);
+  o.querySelectorAll('[data-all]').forEach(a=>a.onclick=()=>{
+    o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on')); a.classList.add('on');
+    o.querySelectorAll('[data-day]').forEach(card=>applyReason(card, a.dataset.all, {fromAll:true}));
+    haptic();
   });
-  o.querySelectorAll('[data-all]').forEach(a=>a.onclick=()=>{ o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on')); a.classList.add('on'); o.querySelectorAll('[data-miss]').forEach(card=>{ card.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x.dataset.r===a.dataset.all)); picked[card.dataset.miss]=a.dataset.all; const inp=card.querySelector('[data-c]'); if(inp) inp.value=''; }); haptic(); check(); });
+  const allCustom=o.querySelector('[data-all-custom]');
+  if(allCustom) allCustom.onclick=()=>prompt$('Same reason for every day?','',v=>{
+    if(!v) return;
+    if(!S.customReasons.includes(v)){ S.customReasons.push(v); save(); }
+    o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on'));
+    /* Add chip to top row + each day so overrides stay available */
+    const addChip=(parent, beforeSel)=>{
+      const b=document.createElement('button'); b.className='chip on'; b.textContent=v; b.dataset.all=v;
+      b.onclick=()=>{ o.querySelectorAll('[data-all]').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+        o.querySelectorAll('[data-day]').forEach(card=>applyReason(card, v, {fromAll:true})); haptic(); };
+      parent.querySelector(beforeSel).before(b); return b;
+    };
+    addChip(allCustom.parentElement, '[data-all-custom]');
+    o.querySelectorAll('[data-day]').forEach(card=>{
+      if([...card.querySelectorAll('[data-r]')].some(x=>x.dataset.r===v)) return;
+      const b=document.createElement('button'); b.className='chip'; b.textContent=v; b.dataset.r=v;
+      b.onclick=()=>{ applyReason(card, v); haptic(); };
+      card.querySelector('[data-custom]').before(b);
+    });
+    o.querySelectorAll('[data-day]').forEach(card=>applyReason(card, v, {fromAll:true}));
+    haptic();
+  });
   okb.onclick=()=>{
     const answered=new Set();
-    o.querySelectorAll('[data-miss]').forEach(card=>{
-      const i=card.dataset.miss; const p=pend[i]; if(!p) return;
-      const reason=reasonOf(card); saveMissReason(p.date,p.taskId,reason); answered.add(p.date+'|'+p.taskId);
+    o.querySelectorAll('[data-day]').forEach(card=>{
+      const date=card.dataset.day; const reason=reasonOf(card); if(!reason) return;
+      (byDay[date]||[]).forEach(p=>{
+        saveMissReason(p.date,p.taskId,reason);
+        answered.add(p.date+'|'+p.taskId);
+      });
     });
     S.pendingMisses=(S.pendingMisses||[]).filter(p=>!answered.has(p.date+'|'+p.taskId));
-    save(); close(o); haptic(); render(); toast('Noted. Fresh day.');
+    save(); close(o); haptic(); render();
+    toast(days.length===1?'Noted. Fresh day.':`Noted · ${days.length} days.`);
   };
   return true;
 }
