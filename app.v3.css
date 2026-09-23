@@ -544,6 +544,8 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .avatarbtn .avedit svg{width:11px;height:11px}
 .msgwho{display:inline-flex;align-items:center}
 .charsvg{width:100%;height:100%;display:block}
+.avatar.img .charsvg,.charpreview .charsvg,.lookthumb .charsvg,.charpick .charsvg{overflow:hidden}
+/* Open Peeps bust crop is applied via transform on .peeps-bust inside charSVG */
 .charpreview{width:120px;height:120px;margin:0 auto;border-radius:50%;overflow:hidden;background:var(--surface2)}
 .charGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .charpick{border-radius:50%;overflow:hidden;aspect-ratio:1;background:var(--surface2);border:2px solid transparent;padding:0}
@@ -648,3 +650,13 @@ button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
 .rough-week-item .tag{font-size:.72rem;font-weight:600;color:var(--fg2);background:var(--surface);padding:2px 7px;border-radius:var(--r-pill)}
 .rough-sheet .chips{display:flex;flex-wrap:wrap;gap:8px}
 .rough-sheet textarea{min-height:110px}
+
+
+/* Looks sheet — big catalogues scroll inside the sheet */
+.sheet-looks .looks-body{max-height:min(52vh,480px);overflow:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+.seg-scroll{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:none}
+.seg-scroll::-webkit-scrollbar{display:none}
+.seg-scroll button{flex:none;white-space:nowrap}
+.lookGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.charGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lookthumb.swatch{display:block;width:52px;height:52px;border-radius:50%;border:1px solid var(--line)}

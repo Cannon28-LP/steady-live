@@ -1,0 +1,4 @@
+Vendored for Steady (offline / GitHub Pages).
+@dicebear/core@9.4.2 — MIT
+@dicebear/open-peeps@9.4.2 — MIT (wrapper); Open Peeps art by Pablo Stanley — CC0 1.0
+Bundled into ../open-peeps-avatar.js for browser ESM without bare import specifiers.
