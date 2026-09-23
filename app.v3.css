@@ -608,3 +608,43 @@ button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
 .planfold.open>.noterow .chev,.planfold.open .chev{transform:rotate(90deg)}
 .planfold[data-affrow] .editrow[data-afftog],.planfold[data-noterow]>.noterow{cursor:pointer;width:100%;text-align:left;background:none;border:0;color:inherit}
 .planfold-body [data-affedit],.planfold-body [data-note-body]{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+
+
+/* ---- b57: Away · Rough day · Week story ---- */
+.dots i.a{
+  background:transparent;
+  border:2px dashed color-mix(in srgb,var(--fg2) 55%, transparent);
+  box-sizing:border-box;
+}
+.away-card{
+  text-align:left;
+  background:color-mix(in srgb,var(--accent) 8%, var(--surface));
+  border-style:dashed;
+}
+.away-settings .toggle{flex:none}
+.textlink{
+  background:none;border:0;padding:4px 2px;margin:0;
+  color:var(--fg2);font:inherit;font-size:.88rem;font-weight:600;
+  text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--fg2) 35%, transparent);
+  text-underline-offset:3px;cursor:pointer;
+}
+.textlink:active{opacity:.7}
+.week-story{padding:0;overflow:hidden}
+.week-story-sum{
+  list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;
+  gap:12px;padding:14px 16px;
+}
+.week-story-sum::-webkit-details-marker{display:none}
+.week-story-sum .chev{color:var(--fg3);transition:transform .18s var(--ease);font-size:1.1rem}
+.week-story[open] .week-story-sum .chev{transform:rotate(90deg)}
+.week-story-body{padding:0 16px 14px}
+.week-story-text{font-size:.95rem;line-height:1.45;text-wrap:balance;margin:0 0 10px}
+.rough-week{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.rough-week-item{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;width:100%;text-align:left;
+  padding:10px 12px;border-radius:var(--r-sm);border:1px solid var(--line);
+  background:var(--surface2);font:inherit;color:inherit;cursor:pointer;
+}
+.rough-week-item .tag{font-size:.72rem;font-weight:600;color:var(--fg2);background:var(--surface);padding:2px 7px;border-radius:var(--r-pill)}
+.rough-sheet .chips{display:flex;flex-wrap:wrap;gap:8px}
+.rough-sheet textarea{min-height:110px}

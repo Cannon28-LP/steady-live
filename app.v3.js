@@ -332,6 +332,8 @@ function fresh(){
       remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}}},
     flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
     pendingMisses:[], undo:null,
+    away:{until:null},
+    rough:[],
   };
 }
 let S = load();
@@ -341,6 +343,8 @@ function load(){
     const raw=localStorage.getItem(KEY); if(!raw) return fresh();
     const s=fresh(); const p=JSON.parse(raw);
     const m={...s,...p,settings:{...s.settings,...(p.settings||{})},flags:{...s.flags,...(p.flags||{})}};
+    if(!m.away || typeof m.away!=='object') m.away={until:null};
+    if(!Array.isArray(m.rough)) m.rough=[];
     if(!m.points || m.points.coins===undefined){ m.points={coins:m.points?.balance||0,xp:m.points?.lifetime||0}; }
     (m.rewards||[]).forEach(r=>{
       if(!TIER_DAYS[r.tier] && r.tier!=='custom') r.tier = r.tier==='big' ? 'fortnight' : 'week';
@@ -1223,8 +1227,15 @@ function challengeProgress(ch){
   const need=questNeed({...ch,members});
   if(ch.type==='bothClearStreak'||ch.type==='bothOpenStreak'){
     const hit=ch.type==='bothClearStreak'?(x=>allClearedOn(members,x)):(x=>allOpenedOn(members,x));
-    let n=0,x=hit(k)?k:addDays(k,-1);
-    while(inRange(x)&&hit(x)){ n++; x=addDays(x,-1); }
+    let n=0,x=k;
+    // Walk back; away days bridge (skip). Find the first countable day, then tally.
+    while(inRange(x) && isAway(x)) x=addDays(x,-1);
+    if(!(inRange(x) && hit(x))) return {have:0,need};
+    while(inRange(x)){
+      if(isAway(x)){ x=addDays(x,-1); continue; }
+      if(!hit(x)) break;
+      n++; x=addDays(x,-1);
+    }
     return {have:Math.min(n,need),need};
   }
   if(ch.type==='coinsEarned'){
@@ -1302,6 +1313,7 @@ function challengeBroken(raw){
   if(ch.type==='bothClearStreak'||ch.type==='bothOpenStreak'){
     const hit=ch.type==='bothClearStreak'?(x=>allClearedOn(members,x)):(x=>allOpenedOn(members,x));
     for(let x=from;x<k;x=addDays(x,1)){
+      if(isAway(x)) continue;                               // Away does not auto-fail a challenge
       if(!hit(x)) return ch.type==='bothClearStreak'?'Clear streak broken — challenge over':'Open streak broken — challenge over';
     }
     return null;
@@ -1923,7 +1935,88 @@ function taskWeekdays(t){
   const raw=Array.isArray(t.weekdays)?t.weekdays:[];
   return [...new Set(raw.filter(d=>Number.isInteger(d)&&d>=0&&d<=6))].sort((a,b)=>a-b);
 }
+
+/* ---------- Away mode ----------
+   Soft pause: no expected tasks, no auto-miss, no reason prompts.
+   Clear-streak bridges across away days (neither counts nor breaks).
+   Login streak is left alone — opening the app still counts. */
+function isAway(k){ return !!(S.days[k] && S.days[k].away); }
+function awayActive(){ return isAway(today()); }
+function awayUntil(){ return (S.away && S.away.until) || null; }
+function markDayAway(k){
+  const d=day(k);
+  d.away=true;
+  if(d.tasks){
+    for(const id of Object.keys(d.tasks)){
+      if(d.tasks[id]?.status==='missed') delete d.tasks[id];
+    }
+  }
+  S.pendingMisses=(S.pendingMisses||[]).filter(p=>p.date!==k);
+}
+function applyAwayRange(from, until, coverYesterday=false){
+  if(!from) from=today();
+  if(!until || until<from) until=from;
+  for(let k=from;k<=until;k=addDays(k,1)) markDayAway(k);
+  if(coverYesterday){
+    const y=addDays(today(),-1);
+    if(y<from) markDayAway(y);
+  }
+  S.away=S.away||{}; S.away.until=until;
+  // Drop any pending miss prompts that landed on away dates
+  S.pendingMisses=(S.pendingMisses||[]).filter(p=>!isAway(p.date));
+}
+function clearAwayFrom(from){
+  from=from||today();
+  for(const k of Object.keys(S.days||{})){
+    if(k>=from && S.days[k]?.away){
+      delete S.days[k].away;
+    }
+  }
+  if(S.away) S.away.until=null;
+}
+function setAwayEnabled(on, until, coverYesterday=false){
+  if(!on){ clearAwayFrom(today()); return; }
+  const u=until||addDays(today(),3);
+  applyAwayRange(today(), u, coverYesterday);
+}
+function awayStatusLabel(){
+  const u=awayUntil();
+  if(!awayActive()) return '';
+  if(u && u>=today()) return `Away until ${fmt(u,{weekday:'short',day:'numeric',month:'short'})}`;
+  return 'Away today';
+}
+
+/* ---------- Rough day (private outlet) ---------- */
+const ROUGH_FEELS=['Heavy','Flat','Wired','Lonely','Angry','Soft'];
+const ROUGH_CAP=60, ROUGH_TEXT_MAX=800;
+function roughOn(k){ return (S.rough||[]).find(r=>r.date===k)||null; }
+function roughToday(){ return roughOn(today()); }
+function saveRoughDay({text,feel,date,id}){
+  const k=date||today();
+  const t=String(text||'').trim().slice(0,ROUGH_TEXT_MAX);
+  if(!t && !feel) return null;
+  S.rough=Array.isArray(S.rough)?S.rough:[];
+  const existing=id?S.rough.find(r=>r.id===id):S.rough.find(r=>r.date===k);
+  if(existing){
+    existing.text=t; existing.feel=feel||null; existing.at=Date.now(); existing.date=k;
+  } else {
+    S.rough.push({id:uid(), date:k, text:t, feel:feel||null, at:Date.now()});
+  }
+  // Keep a reasonable local history
+  if(S.rough.length>ROUGH_CAP){
+    S.rough.sort((a,b)=>a.at-b.at);
+    S.rough=S.rough.slice(-ROUGH_CAP);
+  }
+  save();
+  return roughOn(k);
+}
+function roughWeek(mon){
+  const end=addDays(mon,6);
+  return (S.rough||[]).filter(r=>r.date>=mon && r.date<=end).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+}
+
 function taskExpectedOn(t,k){
+  if(isAway(k)) return false;
   if(!activeOn(t,k)) return false;
   const c=taskCadence(t);
   if(c==='everyOther'){
@@ -2077,6 +2170,7 @@ function rollover(){
 }
 function finalize(k){
   const d=day(k); if(d.finalized) return;
+  if(d.away){ d.finalized=true; return; }           // Away: seal the day, no auto-miss, no prompts
   for(const t of dueTasks(k)){
     if(!d.tasks[t.id]) d.tasks[t.id]={status:'missed'};
     if(d.tasks[t.id].status==='missed' && !d.tasks[t.id].reason) S.pendingMisses.push({date:k,taskId:t.id});
@@ -2084,7 +2178,15 @@ function finalize(k){
   d.finalized=true;
 }
 
-function clearedStreak(){ let n=0,k=today(); while(S.days[k]?.cleared){ n++; k=addDays(k,-1); } return n; }
+function clearedStreak(){
+  let n=0,k=today();
+  while(true){
+    if(isAway(k)){ k=addDays(k,-1); continue; }          // bridge — neither clear nor break
+    if(S.days[k]?.cleared){ n++; k=addDays(k,-1); continue; }
+    break;
+  }
+  return n;
+}
 function clearWeekBonus(block){ return Math.min(CLEAR_WEEK_CAP, CLEAR_WEEK_BONUS*Math.pow(2,block-1)); }
 function nextClearReward(){
   const n=clearedStreak(), block=Math.floor(n/7)+1;
@@ -2101,7 +2203,15 @@ function payClearStreak(){
   }
   save(); return null;
 }
-function clearedStreakAt(end){ let n=0,k=end; while(S.days[k]?.cleared){ n++; k=addDays(k,-1); } return n; }
+function clearedStreakAt(end){
+  let n=0,k=end;
+  while(true){
+    if(isAway(k)){ k=addDays(k,-1); continue; }
+    if(S.days[k]?.cleared){ n++; k=addDays(k,-1); continue; }
+    break;
+  }
+  return n;
+}
 function payClearStreakAt(end){
   const n=clearedStreakAt(end), block=Math.floor(n/7);
   if(block < (S.clearPaidBlock||0)) S.clearPaidBlock=block;
@@ -2334,14 +2444,119 @@ function render(){
 }
 
 /* ---------- Today ---------- */
+
+/* ---------- Week story (Progress → Overview) ---------- */
+function weekStoryData(mon){
+  mon = mon || weekOf(today());
+  const end=addDays(mon,6);
+  let cleared=0, missedDays=0, awayDays=0;
+  const reasonCount={};
+  for(let i=0;i<7;i++){
+    const k=addDays(mon,i);
+    if(k>today()) continue;
+    if(isAway(k)){ awayDays++; continue; }
+    const s=dayStats(k);
+    if(s.perfect) cleared++;
+    if(s.missed>0){
+      missedDays++;
+      for(const id of expectedOn(k)){
+        const e=S.days[k]?.tasks?.[id];
+        if(e?.status==='missed' && e.reason) reasonCount[e.reason]=(reasonCount[e.reason]||0)+1;
+      }
+    }
+  }
+  const topReasons=Object.entries(reasonCount).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([r])=>r);
+  const roughs=roughWeek(mon);
+  return {mon,end,cleared,missedDays,awayDays,topReasons,roughs};
+}
+function weekStoryTeaser(ws){
+  const bits=[];
+  if(ws.cleared) bits.push(ws.cleared===1?'1 clear':`${ws.cleared} clears`);
+  if(ws.awayDays) bits.push(ws.awayDays===1?'1 away day':`${ws.awayDays} away days`);
+  if(ws.missedDays) bits.push(ws.missedDays===1?'1 missed day':`${ws.missedDays} missed days`);
+  if(ws.roughs.length) bits.push(ws.roughs.length===1?'a rough day note':'rough day notes');
+  if(!bits.length) return 'A quiet week so far — still here.';
+  return bits.slice(0,3).join(' · ');
+}
+function weekStoryParagraph(ws){
+  const parts=[];
+  if(ws.cleared===0 && ws.missedDays===0 && ws.awayDays===0 && !ws.roughs.length){
+    return 'Fresh week. Nothing to weigh yet — just showing up is enough.';
+  }
+  if(ws.cleared) parts.push(ws.cleared===1?'One clear':`${['','One','Two','Three','Four','Five','Six','Seven'][ws.cleared]||ws.cleared} clears`);
+  if(ws.awayDays) parts.push(ws.awayDays===1?'one away day':`${ws.awayDays} away days`);
+  let head=parts.length?parts.join(', '):'';
+  if(ws.topReasons.length){
+    const r=ws.topReasons.map(x=>`‘${x}’`).join(', ');
+    head = head ? `${head}, and a pile of ${r}` : `A pile of ${r}`;
+  } else if(ws.missedDays){
+    head = head ? `${head}, and ${ws.missedDays===1?'a miss':'a few misses'}` : (ws.missedDays===1?'A miss landed.':'A few misses landed.');
+  }
+  if(head) head = head[0].toUpperCase()+head.slice(1);
+  let line=head||'This week is still writing itself';
+  if(ws.roughs.length===1) line += '. You wrote once on a rough day';
+  else if(ws.roughs.length>1) line += `. You wrote on ${ws.roughs.length} rough days`;
+  line += '. Still here.';
+  return line;
+}
+function weekStoryCard(){
+  const ws=weekStoryData();
+  const teaser=weekStoryTeaser(ws);
+  const story=weekStoryParagraph(ws);
+  const roughList=ws.roughs.length?`<ul class="rough-week">${ws.roughs.map(r=>{
+    const line=firstLine(r.text||r.feel||'Rough day', 72);
+    const feel=r.feel?`<span class="tag">${esc(r.feel)}</span>`:'';
+    return `<li><button type="button" class="rough-week-item" data-rough-edit="${esc(r.id)}"><span class="tiny muted">${fmt(r.date,{weekday:'short',day:'numeric'})}</span> <span>${esc(line)}</span> ${feel}</button></li>`;
+  }).join('')}</ul>`:'';
+  return `<details class="card week-story" data-tour="weekstory">
+    <summary class="week-story-sum"><div><b class="small">This week</b><p class="tiny muted">${esc(teaser)}</p></div><span class="chev">›</span></summary>
+    <div class="week-story-body">
+      <p class="week-story-text">${esc(story)}</p>
+      ${roughList}
+      <p class="tiny muted" style="margin-top:10px">Private on this device — away, rough days and miss reasons stay here.</p>
+    </div>
+  </details>`;
+}
+
+function roughSheet(editId){
+  if(document.querySelector('.overlay')) return;
+  const existing=editId?(S.rough||[]).find(r=>r.id===editId):roughToday();
+  const feel0=existing?.feel||'';
+  const text0=existing?.text||'';
+  const o=overlay(`<div class="sheet rough-sheet"><div class="grab"></div>
+    <h2>${existing?'Edit rough day':'Rough day'}</h2>
+    <p class="muted small" style="margin-bottom:12px">What happened — and how does it land? Kept private on this device.</p>
+    <p class="tiny muted" style="margin-bottom:8px">Optional feel</p>
+    <div class="chips" data-feels>${ROUGH_FEELS.map(f=>`<button type="button" class="chip ${feel0===f?'on':''}" data-feel="${f}">${f}</button>`).join('')}<button type="button" class="chip ${!feel0?'on':''}" data-feel="">Skip</button></div>
+    <textarea id="roughtext" maxlength="${ROUGH_TEXT_MAX}" rows="5" placeholder="Write freely…" style="margin-top:14px;width:100%;resize:vertical">${esc(text0)}</textarea>
+    <p class="tiny muted" style="margin-top:6px"><span data-rc>${(text0||'').length}</span> / ${ROUGH_TEXT_MAX}</p>
+    <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Save</button></div>
+  </div>`);
+  let feel=feel0||'';
+  const ta=o.querySelector('#roughtext'); const rc=o.querySelector('[data-rc]');
+  ta.oninput=()=>{ rc.textContent=ta.value.length; };
+  o.querySelectorAll('[data-feel]').forEach(b=>b.onclick=()=>{
+    feel=b.dataset.feel; o.querySelectorAll('[data-feel]').forEach(x=>x.classList.toggle('on',x===b)); haptic();
+  });
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  o.querySelector('[data-ok]').onclick=()=>{
+    const text=ta.value.trim();
+    if(!text && !feel){ toast('Write a little, or pick a feel'); return; }
+    saveRoughDay({text, feel:feel||null, id:existing?.id, date:existing?.date||today()});
+    close(o); haptic('success'); render(); toast('Kept private on this device.');
+  };
+  setTimeout(()=>ta.focus(),200);
+}
+
 function vToday(){
   const k=today(), tasks=dueTasks(k), d=S.days[k]||{}, st=dayStats(k);
   const open=tasks.filter(t=>statusOf(k,t.id)!=='done'), done=tasks.filter(t=>statusOf(k,t.id)==='done');
   const row=t=>{const s=strengthOf(t);return `<li><button class="task ${sel.has(t.id)?'selected':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${cadenceTagHtml(t)}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${taskValue(t)}</span></button></li>`;};
   const a=affirmationToday(); const n=tasks.length;
   const circ=2*Math.PI*52, pct=n?st.done/n:0;
-  const mon=weekOf(k); const wk=Array.from({length:7},(_,i)=>{const dk=addDays(mon,i);const s=dayStats(dk);return {dk,cleared:s.perfect,fut:dk>k||!s.expected,frozen:S.days[dk]?.frozen}});
+  const mon=weekOf(k); const wk=Array.from({length:7},(_,i)=>{const dk=addDays(mon,i);const s=dayStats(dk);const away=isAway(dk);return {dk,cleared:s.perfect,away,fut:dk>k||(!s.expected&&!away),frozen:S.days[dk]?.frozen}});
   const wc=wk.filter(x=>x.cleared).length;
+  const awayNow=isAway(k);
   const lb=loginBonus(S.streak.login+1);
   return `
   <div class="head"><div><div class="eyebrow">${fmt(k,{weekday:'long',day:'numeric',month:'long'})}</div><h1>Today</h1></div>
@@ -2361,14 +2576,21 @@ function vToday(){
       <p class="tiny muted">${nx.streak?`${nx.days} more full ${nx.days===1?'day':'days'} for +${nx.amount} coins`:`Tick everything 7 days running for +${nx.amount} coins`}</p></div>
       <span class="pill ${nx.streak>=7?'accent':''}">${ICON.flame} ${nx.streak}</span></div></div>`;})()}
   <div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=CHEST_DAYS?`Earned · +${chestCoins()} lands Monday`:`Clear ${CHEST_DAYS} of 7 for +${chestCoins()} · ${wc} so far`}</p></div>
-    <div class="dots big">${wk.map(x=>`<i class="${x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}"></i>`).join('')}</div></div></div>
+    <div class="dots big">${wk.map(x=>`<i class="${x.away?'a':x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}${x.away?' · away':''}"></i>`).join('')}</div></div></div>
   ${a?`<p class="whisper">${esc(a.text)}</p>`:''}
+  <div class="row" style="margin:6px 2px 0;justify-content:flex-start">
+    <button type="button" class="textlink" data-rough>${roughToday()?'Rough day · edit':'Rough day?'}</button>
+  </div>
   <div class="section" style="margin-top:14px">
-    ${n===0?`<div class="card empty"><b>No tasks yet</b>Pick two or three things you want to keep doing.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="tasks">Add tasks</button></div>`:
+    ${awayNow?`<div class="card away-card"><b>You're away · habits paused</b>
+      <p class="small muted" style="margin-top:6px">No misses, no reason prompts. Your clear-streak holds.</p>
+      <p class="tiny muted" style="margin-top:6px">${esc(awayStatusLabel())}</p>
+      <button class="btn primary sm" style="margin-top:12px" data-away-back>I'm back</button></div>`:
+    n===0?`<div class="card empty"><b>No tasks yet</b>Pick two or three things you want to keep doing.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="tasks">Add tasks</button></div>`:
     open.length===0?`<div class="card empty"><b>All done</b>Everything's ticked. See you tomorrow.</div>`:`
     <ul class="tasks" data-tour="tasks">${open.map(row).join('')}</ul>
     <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below.</p>`}
-    ${done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">undo anytime today</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id];
+    ${!awayNow && done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">undo anytime today</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id];
       return `<li class="donerow"><button class="task done" data-donetap="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(e?.value||0)+(e?.bonus||0)}${e?.minutes!=null?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${e.minutes}m</span>`:''}</span></button>
         <div class="donerow-acts">${t.target?`<button class="btn sm ghost" data-edittime="${t.id}">Edit</button>`:''}<button class="btn sm" data-undone="${t.id}">Undo</button></div></li>`; }).join('')}</ul></details>`:''}
   </div>
@@ -2570,6 +2792,8 @@ function pOverview(){
       <div class="ring sm"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${2*Math.PI*52}" stroke-dashoffset="${2*Math.PI*52*(1-str/100)}"/></svg></div></div>
     <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap"><span class="pill">${ICON.flame} ${S.streak.login} day streak</span><span class="pill">${chests} chest${chests===1?'':'s'}</span></div>
   </div>
+
+  ${weekStoryCard()}
 
   <div class="card" data-tour="stats"><div class="seg">${['day','week','month','year'].map(r=>`<button class="${progState.range===r?'on':''}" data-range="${r}">${{day:'Day',week:'Week',month:'Month',year:'Year'}[r]}</button>`).join('')}</div>
     <p class="tiny muted" style="margin:10px 2px 0">${cmp?`Compared with the ${label}`:'No earlier period to compare with yet'}</p>
@@ -3088,6 +3312,22 @@ function vSettings(){
       <button class="btn sm ghost danger block" id="signout" style="margin-top:14px">Sign out</button>
     </div></details>`;
   })()}
+  <div class="card away-settings" style="margin:12px 0">
+    <div class="row between" style="align-items:flex-start;gap:12px">
+      <div style="flex:1;min-width:0">
+        <b class="small">Away</b>
+        <p class="tiny muted" style="margin-top:4px">Pause habits while you’re off. No misses, no reason prompts, clear-streak holds.</p>
+        ${awayActive()?`<p class="tiny" style="margin-top:6px;color:var(--accent)">${esc(awayStatusLabel())}</p>`:''}
+      </div>
+      <button class="toggle ${awayActive()?'on':''}" data-away-toggle role="switch" aria-checked="${awayActive()}"></button>
+    </div>
+    ${awayActive()?`<div style="margin-top:12px">
+      <label class="tiny muted" for="awayuntil">Until</label>
+      <input type="date" id="awayuntil" value="${awayUntil()||addDays(today(),3)}" min="${today()}" style="margin-top:6px;width:100%;padding:10px 12px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface2)">
+      ${(S.pendingMisses||[]).some(p=>p.date===addDays(today(),-1))?`<label class="row" style="gap:8px;margin-top:10px;align-items:center"><input type="checkbox" id="awayyest"><span class="small">Also cover yesterday</span></label>`:''}
+      <button class="btn sm primary block" style="margin-top:12px" data-away-save>Update Away</button>
+    </div>`:`<p class="tiny muted" style="margin-top:10px">Default until ${fmt(addDays(today(),3),{weekday:'short',day:'numeric',month:'short'})} when you turn it on.</p>`}
+  </div>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">The idea.</b> Nothing here ever takes points off you. Missing a day costs you what you would have earned, and that is all. The app's job is to notice patterns you would not, and to make keeping your word worth something.</p>
 
@@ -3120,7 +3360,10 @@ function vSettings(){
     <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to the initial.</p>
     <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
-    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons and your affirmation never leave this device.</p>
+    <p><b style="color:var(--fg)">Away.</b> Settings → Away pauses habits for a stretch. Away days ask for nothing, create no misses, and bridge your clear-streak without counting as a clear. Login streak still counts if you open the app. Challenges won’t fail only because you were away.</p>
+    <p><b style="color:var(--fg)">Rough day.</b> A quiet private note on Today — how the day felt, optional feel chip. No coins, no XP, never shared with Friends. Edit anytime the same day.</p>
+    <p><b style="color:var(--fg)">Week story.</b> Progress → Overview stitches clears, away days, top miss reasons and rough-day notes into a short private paragraph for the current week.</p>
+    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons, rough days and your affirmation never leave this device.</p>
     <p class="tiny">Build ${BUILD}</p>
     <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="replayonb">Replay setup</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
   </div></details>`;
@@ -3381,6 +3624,27 @@ function bind(){
   });
   const ca=q('#customink'); if(ca) ca.oninput=()=>{S.settings.ink=ca.value;save();applyTheme();}; if(ca) ca.onchange=()=>{render();keepLook();};
   qa('[data-toggle]').forEach(b=>b.onclick=()=>{S.settings[b.dataset.toggle]=!S.settings[b.dataset.toggle];save();applyTheme();haptic();render();keepLook();});
+  // Away + Rough day
+  qa('[data-away-toggle]').forEach(b=>b.onclick=()=>{
+    if(awayActive()){ setAwayEnabled(false); toast('Welcome back'); }
+    else {
+      const until=addDays(today(),3);
+      const yest=(S.pendingMisses||[]).some(p=>p.date===addDays(today(),-1));
+      setAwayEnabled(true, until, false);
+      save(); haptic(); render();
+      toast(awayStatusLabel()||'Away on');
+      if(yest) toast('Tip: you can also cover yesterday under Away');
+    }
+  });
+  qa('[data-away-save]').forEach(b=>b.onclick=()=>{
+    const until=(q('#awayuntil')?.value)||addDays(today(),3);
+    const cover=!!q('#awayyest')?.checked;
+    setAwayEnabled(true, until, cover);
+    save(); haptic(); render(); toast(awayStatusLabel()||'Away updated');
+  });
+  qa('[data-away-back]').forEach(b=>b.onclick=()=>{ setAwayEnabled(false); save(); haptic(); render(); toast("You're back — habits resume"); });
+  qa('[data-rough]').forEach(b=>b.onclick=()=>roughSheet());
+  qa('[data-rough-edit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); roughSheet(b.dataset.roughEdit); });
   qa('[data-size]').forEach(b=>b.onclick=()=>{S.settings.textSize=clamp(S.settings.textSize+Number(b.dataset.size),80,130);save();applyTheme();render();keepLook();});
   const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings=fresh().settings;save();applyTheme();render();keepLook();toast('Customise reset');};
   const runCheck=async(btn)=>{ const old=btn.textContent; btn.textContent='…';
