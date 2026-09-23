@@ -112,22 +112,23 @@ function monthlyIncome(){
 function rewardFreq(r){ return r.freq || 'monthly'; }
 function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
 /* Unified treat budget: ~6 clear days of coins each week, shared across ALL active rewards
-   (weeklies, fortnights, monthly, custom) by expected buy-events. Per-buy floor ≈ 2½ clear days. */
+   (weeklies, fortnights, monthly, custom) by expected buy-events. Primary rule: fit the treat pot
+   (no hard 2.5-day floor — more rewards means a smaller per-buy price). */
 const WEEKS_PER_MONTH = 4.33;
-const BUY_FLOOR_DAYS = 2.5;
 function rewardDayRate(){ return clearDayPay() || (TASK_BASE + CLEAR_PER_TASK); }
 function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * 6)); }
 function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * 6 * WEEKS_PER_MONTH)); }
-function buyFloor(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * BUY_FLOOR_DAYS)); }
 function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
 function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
-/* Pool ÷ total expected buys/week across the set (optional draft buy-weight). */
-function unitFromList(list, extraBuysPerWeek){
-  const total = (list||[]).reduce((a,r)=>a+buysPerWeekOf(r), 0) + (Number(extraBuysPerWeek)||0);
-  return Math.max(MIN_REWARD_PRICE, round10(weekRewardPool() / Math.max(total, 0.25)));
-}
+/* Pot ÷ expected buys/month across the set (optional draft buy-weight). Prefer spend ≤ pot. */
 function pricedUnit(list, extraBuysPerWeek){
-  return Math.max(buyFloor(), unitFromList(list, extraBuysPerWeek));
+  const listPer = (list||[]).reduce((a,r)=>a+perMonthOf(r), 0);
+  const extraPer = (Number(extraBuysPerWeek)||0) * WEEKS_PER_MONTH;
+  const totalPer = Math.max(listPer + extraPer, 0.25);
+  const pot = monthlyRewardBudget();
+  let unit = Math.max(MIN_REWARD_PRICE, round10(pot / totalPer));
+  while(unit > MIN_REWARD_PRICE && unit * totalPer > pot + 1e-9) unit -= 10;
+  return unit;
 }
 function suggestFromFreq(freqId, others, perMonth){
   const list = others || S.rewards.filter(x=>x.active);
@@ -227,7 +228,7 @@ function budgetState(){
     redemptions:Math.round(redemptions*10)/10, active,
     level: pct>100?'over' : pct>90?'tight' : 'ok'};
 }
-/* Reprice every active reward to the shared week-pool unit (with 2½-day floor). */
+/* Reprice every active reward to the shared pot-fit unit (no hard floor). */
 function rebalancePlan(){
   const b=budgetState(); if(!b.active.length) return [];
   const unit=pricedUnit(b.active, 0);
@@ -379,7 +380,8 @@ function migratePriceFloors(){
   S._priceFloorB60 = 1;
   save(); // persist flag once so we never re-bump
 }
-/* b61: unified week pool across ALL actives + 2½-day buy floor (overrides b60 per-item 5.5×). */
+/* b61: unified week pool across ALL actives (overrides b60 per-item 5.5×).
+   Pot-fit only — no hard floor (same rule as b63). */
 function migratePriceFloorsB61(){
   if(S._priceFloorB61) return;
   const active = (S.rewards||[]).filter(r => r && r.active);
@@ -388,6 +390,17 @@ function migratePriceFloorsB61(){
     active.forEach(r => { r.price = unit; });
   }
   S._priceFloorB61 = 1;
+  save();
+}
+/* b63: force-reprice actives to pot-fit unit once (overrides b61 floors ~200). */
+function migratePriceFloorsB63(){
+  if(S._priceFloorB63) return;
+  const active = (S.rewards||[]).filter(r => r && r.active);
+  if(active.length){
+    const unit = pricedUnit(active, 0);
+    active.forEach(r => { r.price = unit; });
+  }
+  S._priceFloorB63 = 1;
   save();
 }
 let S = load();
@@ -2050,7 +2063,7 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
 function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
-try{ migratePriceFloors(); migratePriceFloorsB61(); }catch(e){ console.error(e); }
+try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
@@ -3470,7 +3483,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn. Rewards share about six clear days of coins a week across everything you’re saving for; each buy at least ~2½ days. Type over it if you disagree. The budget line shows what all your rewards want per month against that treat pot; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from the treat pot. Prices share about six clear days of coins a week across all rewards; more rewards means a smaller price per buy. Type over it if you disagree. The budget line shows what all your rewards want per month against that pot; amber past 90%, red past 100%. <b>Balance these for me</b> fits the pot and shows you the before and after first.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -4349,15 +4362,15 @@ function iosInstallSheet(){
 function budgetCard(){
   const b=budgetState();
   if(!b.active.length) return `<div class="card" style="padding:12px"><b class="small">Your monthly budget</b>
-    <p class="tiny muted" style="margin-top:3px">About ${b.income} coins a month${b.real?'':' (estimated until you have a week of history)'}. Add a reward and this shows whether it fits.</p></div>`;
+    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (about six clear days a week for rewards). Add a reward and this shows whether it fits.</p></div>`;
   const msg = b.level==='over'
-    ? `That does not fit. Something will have to give — fewer rewards, or rarer ones.`
-    : b.level==='tight' ? `That is just about everything you earn. No slack for a chest.`
-    : `That fits, with room for challenges.`;
+    ? `That does not fit the treat pot. Something will have to give — fewer rewards, or rarer ones.`
+    : b.level==='tight' ? `That is just about the whole treat pot. Little slack left.`
+    : `That fits the treat pot, with room for challenges.`;
   return `<div class="card budget ${b.level}" style="padding:12px">
     <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'#f59e0b':'var(--accent)'}">${b.pct}%</span></div>
     <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
-    <p class="tiny muted" style="margin-top:6px">You earn about ${b.income}${b.real?'':' (estimated)'} · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
+    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (about six clear days a week for rewards) · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
     ${rebalancePlan().length?`<button class="btn sm block" style="margin-top:10px" data-rebalance>Balance these for me</button>`:''}
   </div>`;
 }
@@ -4373,7 +4386,7 @@ function rebalanceSheet(){
     <ul class="list">${plan.map(x=>`<li><div><div>${esc(x.r.name)}</div><div class="tiny muted">${esc(x.label.toLowerCase())}</div></div>
       <div style="text-align:right"><span class="tiny muted" style="text-decoration:line-through">${x.from}</span>
       <b style="margin-left:8px;color:${x.raises?'var(--danger)':'var(--accent)'}">${x.to}</b></div></li>`).join('')}</ul>
-    <p class="tiny muted" style="margin-top:10px">Afterwards: ${Math.round(after)} a month of your ~${b.income}.</p>
+    <p class="tiny muted" style="margin-top:10px">Afterwards: ${Math.round(after)} a month of your ~${b.pot} treat pot.</p>
     ${warn.length?`<div class="card callout" style="margin-top:10px;padding:12px"><b class="small">Heads up</b>
       <p class="tiny muted" style="margin-top:3px">${warn.map(x=>`You are ${S.points.coins} of ${x.from} into <b>${esc(x.r.name)}</b> — this moves the post to ${x.to}.`).join(' ')}</p></div>`:''}
     <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Apply</button></div></div>`);
