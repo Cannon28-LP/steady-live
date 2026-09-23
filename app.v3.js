@@ -39,7 +39,12 @@ const TIER_DAYS = {week:7, fortnight:14};
 const TIER_LABEL = {week:'Week', fortnight:'Fortnight'};
 const round10 = n => Math.round(n/10)*10;
 const dayRate = () => Math.max(1, activeTasks().length) * (TASK_BASE*1.3 + CLEAR_PER_TASK); // a cleared day at healthy strength
-const tierCost = t => round10(dayRate()*(TIER_DAYS[t]||TIER_DAYS.week));
+const tierCost = t => {
+  const rate = clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
+  /* Band B: a buy ≈ 5.5 clear days; fortnight ≈ 11. */
+  const days = t==='fortnight' ? 11 : 5.5;
+  return Math.max(MIN_REWARD_PRICE, round10(rate*days));
+};
 const chestCoins = () => round10(dayRate());
 /* A clear day: each task pays base coins plus the clear bonus. Strength and overtime are extra, not assumed. */
 function clearDayPay(){
@@ -107,11 +112,23 @@ function monthlyIncome(){
 function rewardFreq(r){ return r.freq || 'monthly'; }
 function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
 /* What each reward should cost if the active set is to fit the budget. */
+function freqPriceFloor(freqId, perMonth){
+  const rate = clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
+  /* Target: ~5.5 clear days per buy; fortnight ≈ 11; monthly ≈ 22. */
+  if(freqId==='weekly') return round10(rate*5.5);
+  if(freqId==='fortnight') return round10(rate*11);
+  if(freqId==='monthly') return round10(rate*22);
+  /* custom: keep price×perMonth from undercutting a ~month of clear-day pay */
+  const monthlyFloor = round10(rate*22);
+  const per = perFor('custom', perMonth);
+  return Math.max(MIN_REWARD_PRICE, round10(monthlyFloor / Math.max(per, 0.25)));
+}
 function suggestFromFreq(freqId, others, perMonth){
   const inc=monthlyIncome().coins*BUDGET_SHARE;
   const list=(others||S.rewards.filter(x=>x.active));
   const share=inc/(list.length+1);                // this one plus the rest
-  return Math.max(MIN_REWARD_PRICE, round10(share/perFor(freqId, perMonth)));
+  const budget = Math.max(MIN_REWARD_PRICE, round10(share/perFor(freqId, perMonth)));
+  return Math.max(budget, freqPriceFloor(freqId, perMonth));
 }
 /* ---------- Allowances ----------
    The frequency you chose is a real limit, not just a pricing assumption.
@@ -222,8 +239,8 @@ function applyRebalance(plan){ plan.forEach(x=>{ x.r.price=x.to; }); save(); }
 function suggestedPrices(){
   const rate=clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
   return {
-    week: Math.max(MIN_REWARD_PRICE, round10(rate*7)),
-    fortnight: Math.max(MIN_REWARD_PRICE, round10(rate*14)),
+    week: Math.max(MIN_REWARD_PRICE, round10(rate*5.5)),
+    fortnight: Math.max(MIN_REWARD_PRICE, round10(rate*11)),
   };
 }
 const TITLES = [['Drifter',1],['Steady',5],['Committed',12],['Relentless',20]]; // by level
@@ -337,7 +354,28 @@ function fresh(){
     rough:[],
   };
 }
+function migratePriceFloors(){
+  if(S._priceFloorB60) return;
+  const rate = clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
+  const weekFloor = round10(rate*5.5);
+  const fortFloor = round10(rate*11);
+  let bumped = false;
+  for(const r of (S.rewards||[])){
+    if(!r || !r.active) continue;
+    const weekly = r.freq==='weekly' || (!r.freq && r.tier==='week');
+    const fortnight = r.freq==='fortnight' || (!r.freq && r.tier==='fortnight');
+    const price = Math.round(Number(r.price)||0);
+    if(weekly && price>0 && price < weekFloor){
+      r.price = weekFloor; bumped = true;
+    } else if(fortnight && price>0 && price < fortFloor){
+      r.price = fortFloor; bumped = true;
+    }
+  }
+  S._priceFloorB60 = 1;
+  save(); // persist flag once so we never re-bump
+}
 let S = load();
+migratePriceFloors();
 function load(){
   try{
     if(typeof localStorage==='undefined') return fresh();
@@ -721,7 +759,7 @@ async function setMyAvatar(dataUrl){
 /* ---------- Characters ----------
    Open Peeps (Pablo Stanley, CC0) via a local DiceBear bundle. Every Peeps part is
    available to every face — no gendered lockout. Outfits are shirt colours only;
-   headwear replaces hair (Peeps cannot layer a hat). Hair colour stays as a no-op. */
+   headwear replaces hair (Peeps cannot layer a hat). Hair colour tints Peeps hair and facial hair. */
 const TONES = [
   {id:'t1',hex:'#f6dcc8',shade:'#e3bfa4',peeps:'ffdbb4'},
   {id:'t2',hex:'#ecc4a4',shade:'#d4a480',peeps:'edb98a'},
@@ -951,6 +989,9 @@ function buyLook(id){
 }
 
 /* ---------- Drawing one (Open Peeps) ---------- */
+function hairHex(av){
+  return (HAIR_COLOURS.find(c=>c.id===(av&&av.hairCol))||HAIR_COLOURS[1]).hex;
+}
 function peepsOptsFromAv(a){
   const base=BASES.find(b=>b.id===a.base)||BASES[0];
   const tone=TONES.find(t=>t.id===a.tone)||TONES[1];
@@ -960,13 +1001,15 @@ function peepsOptsFromAv(a){
   const facialIt=a.facial?lookItem(a.facial):null;
   const outfitIt=lookItem(a.outfit)||lookItem('o-tee');
   const clothing=(outfitIt.col||'#3f8f83').replace(/^#/,'').toLowerCase();
+  const hair = hairHex(a).replace(/^#/,'').toLowerCase();
   const head = (hatIt && hatIt.peeps) ? hatIt.peeps : (hairIt.peeps||'short1');
   const opts = {
-    seed: 'steady-'+[a.base,a.tone,a.hair,a.hat,a.glasses,a.facial,a.outfit].join('-'),
+    seed: 'steady-'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit].join('-'),
     face: [base.peeps||'calm'],
     head: [head],
     skinColor: [tone.peeps||'edb98a'],
     clothingColor: [clothing],
+    headContrastColor: [hair],
     facialHairProbability: 0,
     maskProbability: 0,
     accessoriesProbability: 0,
@@ -982,20 +1025,36 @@ function peepsOptsFromAv(a){
   }
   return opts;
 }
+/* Retarget ink fills in the DiceBear head + facialHair groups only — never skin, face, or clothing. */
+function tintPeepsHair(svg, hex){
+  const ink = /fill="(?:#000(?:000)?|black|currentColor)"/gi;
+  const paint = `fill="${hex}"`;
+  const tint = chunk => chunk.replace(ink, paint);
+  const headMark = '<g transform="matrix(.99789';
+  const faceMark = '<g transform="translate(315 248)"';
+  const facialMark = '<g transform="translate(279 400)"';
+  const maskMark = '<g transform="translate(179 343)"';
+  const iHead = svg.indexOf(headMark), iFace = svg.indexOf(faceMark);
+  if(iHead>=0 && iFace>iHead) svg = svg.slice(0,iHead) + tint(svg.slice(iHead,iFace)) + svg.slice(iFace);
+  const iFacial = svg.indexOf(facialMark), iMask = svg.indexOf(maskMark);
+  if(iFacial>=0 && iMask>iFacial) svg = svg.slice(0,iFacial) + tint(svg.slice(iFacial,iMask)) + svg.slice(iMask);
+  return svg;
+}
 function charSVG(av,size){
   const a=av||myChar();
+  const hex = hairHex(a);
   let peeps='';
-  try{ peeps = createPeepsSvg(peepsOptsFromAv(a)); }
+  try{ peeps = tintPeepsHair(createPeepsSvg(peepsOptsFromAv(a)), hex); }
   catch(e){ peeps = '<svg viewBox="0 0 704 704" xmlns="http://www.w3.org/2000/svg"></svg>'; }
   const inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
   const bg=(lookItem(a.backdrop)||{}).col;
-  const uid=('cc'+[a.base,a.tone,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||''].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
-  /* Crop/scale: Peeps is full bust+shoulders in 704²; zoom so the face fills Steady's circle. */
+  const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||''].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
+  /* One upper-body frame at every size: head + shoulders/shirt in the circle (Peeps 704²). */
   return `<svg viewBox="0 0 100 100" class="charsvg" ${size?`width="${size}" height="${size}"`:''}>
     <defs><clipPath id="${uid}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
     <g clip-path="url(#${uid})">
       <rect width="100" height="100" fill="${bg||'var(--surface2)'}"/>
-      <g class="peeps-bust" transform="translate(50 52) scale(0.205) translate(-352 -290)">${inner}</g>
+      <g class="peeps-bust" transform="translate(50 50) scale(0.165) translate(-352 -340)">${inner}</g>
     </g></svg>`;
 }
 
@@ -1721,6 +1780,7 @@ const Sync = {
     S={...fresh(),...blob,me:me0,auth:auth0,session:sess0,friends:{},inbox:[],settings:{...fresh().settings,...(blob.settings||{})},flags:{...fresh().flags,...(blob.flags||{})}};
     S.vaultAt=at||Date.now();
     migratePairChallenges(S);
+    migratePriceFloors();
     save();
   },
   async pullVaultSmart(){
@@ -3393,7 +3453,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn over the last four weeks. Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from what you actually earn over the last four weeks, never below about 5.5 clear days of pay for a weekly treat, ~11 for fortnightly, or ~22 for monthly. Type over it if you disagree. The budget line shows what all your rewards want per month against what you bring in; amber past 90%, red past 100%. <b>Balance these for me</b> rescales the prices to fit and shows you the before and after first.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -3410,7 +3470,7 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only — nothing free-typed, so there is nothing to moderate. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest — Rare and Legendary can also unlock an extra Shop buy for the week. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
     <p><b style="color:var(--fg)">Accounts.</b> The account exists only to back things up and to pair with people — everything works without one. Backing up happens by itself a few seconds after anything changes. Forgotten your password? Use the link on the sign-in screen and it emails you a reset. Lost the email as well? Your tasks, history and coins are still on this phone; sign up again with another email and this device carries on. You would lose the old backup and any pairing, nothing else.</p>
-    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture on Friends. Looks art: Open Peeps (Pablo Stanley), CC0 — local DiceBear bundle, not a CDN. Dozens of faces, hair styles, facial hair, eyewear, headwear and shirt colours; six skin tones. Everything is available to every face. Outfits pick <i>shirt colour</i> only. Headwear replaces hair (Peeps cannot layer a hat). Facial hair is optional. Hair colour stays in the picker but Peeps hair is ink, so it does not recolour. Free starters unlock automatically; the rest cost coins.</p>
+    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture on Friends. Looks art: Open Peeps (Pablo Stanley), CC0 — local DiceBear bundle, not a CDN. Dozens of faces, hair styles, facial hair, eyewear, headwear and shirt colours; six skin tones. Everything is available to every face. Outfits pick <i>shirt colour</i> only. Headwear replaces hair (Peeps cannot layer a hat). Facial hair is optional. Hair colour tints Peeps hair and facial hair. Free starters unlock automatically; the rest cost coins.</p>
     <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to your Open Peeps character.</p>
     <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
@@ -4427,7 +4487,7 @@ function charSheet(){
       body.innerHTML=`<div class="swatches">${TONES.map(t=>`<button class="sw ${a.tone===t.id?'on':''}" data-ctone="${t.id}" style="background:${t.hex}" title="${t.id}"></button>`).join('')}</div>`;
     } else if(tab==='hairc'){
       body.innerHTML=`<div class="swatches">${HAIR_COLOURS.map(c=>`<button class="sw ${a.hairCol===c.id?'on':''}" data-chair="${c.id}" style="background:${c.hex}"></button>`).join('')}</div>
-        <p class="tiny muted" style="margin-top:8px">Open Peeps hair is ink — this colour is saved but does not recolour the art.</p>`;
+        <p class="tiny muted" style="margin-top:8px">Tints Peeps hair and facial hair.</p>`;
     } else {
       const items=LOOK_ITEMS.filter(i=>i.slot===tab && !i.legacy);
       const optional=tab==='glasses'||tab==='hat'||tab==='facial';

@@ -545,7 +545,7 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .msgwho{display:inline-flex;align-items:center}
 .charsvg{width:100%;height:100%;display:block}
 .avatar.img .charsvg,.charpreview .charsvg,.lookthumb .charsvg,.charpick .charsvg{overflow:hidden}
-/* Open Peeps bust crop is applied via transform on .peeps-bust inside charSVG */
+/* Open Peeps upper-body frame is applied via transform on .peeps-bust inside charSVG (same at every size) */
 .charpreview{width:120px;height:120px;margin:0 auto;border-radius:50%;overflow:hidden;background:var(--surface2)}
 .charGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .charpick{border-radius:50%;overflow:hidden;aspect-ratio:1;background:var(--surface2);border:2px solid transparent;padding:0}
