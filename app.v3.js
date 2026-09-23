@@ -391,8 +391,7 @@ function migratePriceFloorsB61(){
   save();
 }
 let S = load();
-migratePriceFloors();
-migratePriceFloorsB61();
+/* Price-floor migrates run after activeTasks exists — see after task helpers. */
 function load(){
   try{
     if(typeof localStorage==='undefined') return fresh();
@@ -2049,8 +2048,9 @@ function lighten(h){const [r,g,b]=hexrgb(h);return `rgb(${[r,g,b].map(v=>Math.ro
 function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) return; navigator.vibrate(kind==='heavy'?[18,40,18]:kind==='success'?[10,30,10,30,10]:8); }
 
 /* ---------- Task helpers ---------- */
-const activeOn = (t,k) => t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k));
-const activeTasks = (k=today()) => S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order);
+function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
+function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
+try{ migratePriceFloors(); migratePriceFloorsB61(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
