@@ -54,10 +54,10 @@ function halfDayHaul(n){ n=Math.max(0,n|0); return TASK_BASE*Math.ceil(n/2) + ha
 function weeklyTreatPot(n){ n = (n==null ? typicalN() : n); return 4*clearDayHaul(n) + 3*halfDayHaul(n); }
 const dayRate = () => Math.max(1, clearDayHaul(typicalN()) || TASK_BASE);
 const tierCost = t => {
-  /* Fallback when a reward has no price yet — same unit model as suggestFromFreq. */
+  /* Fallback when a reward has no price yet — cadence-scaled suggestion. */
   const list = (typeof S!=='undefined' && S && S.rewards) ? S.rewards.filter(x=>x.active) : [];
   const freq = t==='fortnight' ? 'fortnight' : 'weekly';
-  return pricedUnit(list, buysPerWeekFor(freq));
+  return suggestFromFreq(freq, list);
 };
 const chestCoins = () => round10(dayRate());
 /* Clear-day haul used for ETAs / pot (base×N + clear bonus; no miss-streak, no OT). */
@@ -122,27 +122,93 @@ function monthlyIncome(){
 }
 function rewardFreq(r){ return r.freq || 'monthly'; }
 function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
-/* Unified treat budget (b64): 4 clear-day hauls + 3 half-day hauls a week, shared across ALL
-   active rewards by expected buy-events. Pot-fit unit (scale down by 10, min floor). */
+/* Unified treat budget (b64/b65): 4 clear-day hauls + 3 half-day hauls a week.
+   b65: sticker ∝ cadence wait (weekly=1w, fortnight=2w, monthly≈4.33w) so a typical
+   week of due buys ≈ weekly pot; fortnight ≈ 2× weekly. */
 const WEEKS_PER_MONTH = 4.33;
 function rewardDayRate(){ return clearDayPay() || TASK_BASE; }
 function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreatPot())); }
 function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreatPot() * WEEKS_PER_MONTH)); }
 function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
 function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
-/* Pot ÷ expected buys/month across the set (optional draft buy-weight). Prefer spend ≤ pot. */
+function snapRewardPrice(n){ return Math.max(MIN_REWARD_PRICE, round10(Number(n)||0)); }
+/* Window weeks (weight): longer cadence → higher sticker, fewer buys/month. */
+function weightFor(freqId, perMonth){
+  const f = freqId || 'monthly';
+  if(f==='weekly') return 1;
+  if(f==='fortnight') return 2;
+  if(f==='monthly') return WEEKS_PER_MONTH;
+  return WEEKS_PER_MONTH / Math.max(perFor('custom', perMonth), 0.25);
+}
+function weightOf(r){ return weightFor(rewardFreq(r), r && r.perMonth); }
+/* Option A: equal weekly pot share × weight. If monthly spend overshoots pot, Option B:
+   base weekly unit × weight, scale base down by 10 until spend ≤ monthly pot. */
+function cadencePlan(list){
+  const active = (list||[]).slice();
+  const n = Math.max(active.length, 1);
+  const weekPot = weeklyTreatPot();
+  const monthPot = monthlyRewardBudget();
+  const weekShare = weekPot / n;
+  const spendOf = plan => plan.reduce((a,x)=>a + x.to * perMonthOf(x.r), 0);
+  const mkA = () => active.map(r=>{
+    const w = weightOf(r);
+    return {r, weight:w, to:snapRewardPrice(weekShare * w)};
+  });
+  const mkB = base => active.map(r=>{
+    const w = weightOf(r);
+    return {r, weight:w, to:snapRewardPrice(base * w)};
+  });
+  let plan = mkA();
+  if(spendOf(plan) > monthPot + 1e-9){
+    let base = Math.max(MIN_REWARD_PRICE, round10(weekShare));
+    plan = mkB(base);
+    while(base > MIN_REWARD_PRICE && spendOf(plan) > monthPot + 1e-9){
+      base -= 10;
+      plan = mkB(base);
+    }
+  }
+  return plan;
+}
+function priceForDraft(freqId, others, perMonth){
+  const draft = {id:'__draft__', active:true, freq:freqId||'monthly'};
+  if(freqId==='custom') draft.perMonth = perFor('custom', perMonth);
+  const list = (others||[]).concat([draft]);
+  const hit = cadencePlan(list).find(x=>x.r===draft);
+  return hit ? hit.to : snapRewardPrice(weeklyTreatPot() / Math.max(list.length, 1));
+}
+/* Weekly-weight sticker for a set; optional draft buy-weight via buysPerWeek (legacy). */
 function pricedUnit(list, extraBuysPerWeek){
-  const listPer = (list||[]).reduce((a,r)=>a+perMonthOf(r), 0);
-  const extraPer = (Number(extraBuysPerWeek)||0) * WEEKS_PER_MONTH;
-  const totalPer = Math.max(listPer + extraPer, 0.25);
-  const pot = monthlyRewardBudget();
-  let unit = Math.max(MIN_REWARD_PRICE, round10(pot / totalPer));
-  while(unit > MIN_REWARD_PRICE && unit * totalPer > pot + 1e-9) unit -= 10;
-  return unit;
+  const baseList = list||[];
+  if(extraBuysPerWeek && Number(extraBuysPerWeek) > 0){
+    const bpw = Number(extraBuysPerWeek);
+    const w = 1 / Math.max(bpw, 0.01);
+    let freqId = 'custom', perMonth;
+    if(Math.abs(w-1)<0.05) freqId = 'weekly';
+    else if(Math.abs(w-2)<0.05) freqId = 'fortnight';
+    else if(Math.abs(w-WEEKS_PER_MONTH)<0.2) freqId = 'monthly';
+    else perMonth = WEEKS_PER_MONTH / w;
+    return priceForDraft(freqId, baseList, perMonth);
+  }
+  if(!baseList.length) return snapRewardPrice(weeklyTreatPot());
+  const plan = cadencePlan(baseList);
+  const weeklyLike = plan.find(x=>Math.abs(x.weight-1)<0.05);
+  if(weeklyLike) return weeklyLike.to;
+  const any = plan[0];
+  return snapRewardPrice(any.to / Math.max(any.weight, 0.25));
 }
 function suggestFromFreq(freqId, others, perMonth){
-  const list = others || S.rewards.filter(x=>x.active);
-  return pricedUnit(list, buysPerWeekFor(freqId, perMonth));
+  const list = others || ((typeof S!=='undefined' && S && S.rewards) ? S.rewards.filter(x=>x.active) : []);
+  return priceForDraft(freqId, list, perMonth);
+}
+function syncCadencePrices(){
+  const active = (S.rewards||[]).filter(r=>r && r.active);
+  if(!active.length) return false;
+  let changed = false;
+  for(const x of cadencePlan(active)){
+    if(Math.round(Number(x.r.price)||0) !== x.to){ x.r.price = x.to; changed = true; }
+  }
+  if(changed) save();
+  return changed;
 }
 /* ---------- Allowances ----------
    The frequency you chose is a real limit, not just a pricing assumption.
@@ -238,25 +304,24 @@ function budgetState(){
     redemptions:Math.round(redemptions*10)/10, active,
     level: pct>100?'over' : pct>90?'tight' : 'ok'};
 }
-/* Reprice every active reward to the shared pot-fit unit (no hard floor). */
+/* Reprice each active reward from cadence weight (fortnight ≈ 2× weekly). */
 function rebalancePlan(){
   const b=budgetState(); if(!b.active.length) return [];
-  const unit=pricedUnit(b.active, 0);
-  return b.active.map(r=>{
-    const from=rewardPrice(r);
-    const to=unit;
-    const progress=Math.min(1,(S.points.coins||0)/from);
-    return {r,from,to,freq:rewardFreq(r),label:freqLabel(r),per:perMonthOf(r),raises:to>from,halfway:progress>=0.5};
+  return cadencePlan(b.active).map(x=>{
+    const from=rewardPrice(x.r);
+    const to=x.to;
+    const progress=Math.min(1,(S.points.coins||0)/Math.max(from,1));
+    return {r:x.r,from,to,freq:rewardFreq(x.r),label:freqLabel(x.r),per:perMonthOf(x.r),raises:to>from,halfway:progress>=0.5};
   }).filter(x=>x.to!==x.from);
 }
 function applyRebalance(plan){ plan.forEach(x=>{ x.r.price=x.to; }); save(); }
 
-function suggestedPrices(){
-  const list=S.rewards.filter(x=>x.active);
-  /* Chips = price as if adding one more of that cadence into the current set. */
+function suggestedPrices(excludeId){
+  const list=S.rewards.filter(x=>x.active && x.id!==excludeId);
+  /* Chips = sticker as if this reward used that cadence in the current set. */
   return {
-    week: pricedUnit(list, buysPerWeekFor('weekly')),
-    fortnight: pricedUnit(list, buysPerWeekFor('fortnight')),
+    week: suggestFromFreq('weekly', list),
+    fortnight: suggestFromFreq('fortnight', list),
   };
 }
 const TITLES = [['Drifter',1],['Steady',5],['Committed',12],['Relentless',20]]; // by level
@@ -422,6 +487,16 @@ function migratePriceFloorsB64(){
     active.forEach(r => { r.price = unit; });
   }
   S._priceFloorB64 = 1;
+  save();
+}
+/* b65: cadence-scaled stickers (week share × window weeks; Option B if over pot). */
+function migratePriceFloorsB65(){
+  if(S._priceFloorB65) return;
+  const active = (S.rewards||[]).filter(r => r && r.active);
+  if(active.length){
+    for(const x of cadencePlan(active)) x.r.price = x.to;
+  }
+  S._priceFloorB65 = 1;
   save();
 }
 let S = load();
@@ -2094,7 +2169,7 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
 function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
-try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); }catch(e){ console.error(e); }
+try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
@@ -3519,7 +3594,7 @@ function vSettings(){
       <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" step="10" value="${suggestFromFreq(newRewardFreq,null,newRewardPer)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
         <button class="btn primary grow" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
       <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq,null,newRewardPer))}</p>
-      <p class="tiny muted">Suggested from what you actually earn. Type over it if you disagree — the budget above keeps you honest.</p>
+      <p class="tiny muted">Suggested from your treat pot and this cadence — longer wait, higher sticker. Type over it if you disagree — the budget above keeps you honest.</p>
     </div>
     ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}
       <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
@@ -3624,7 +3699,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from the treat pot. The pot is about four clear days plus three half days of coins a week, shared across all rewards; more rewards means a smaller price per buy. Type over it if you disagree. The budget line shows what all your rewards want per month against that pot; amber past 90%, red past 100%. <b>Balance these for me</b> fits the pot and shows you the before and after first.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price follows that cadence: longer wait between buys means a higher sticker, so a fortnight costs about twice a weekly. The treat pot is still about four clear days plus three half days of coins a week from your tasks; prices auto-recalc when tasks or rewards change (and via <b>Balance these for me</b>). Type over a price if you disagree. The budget line shows what all your rewards want per month against that pot; amber past 90%, red past 100%.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -3831,11 +3906,11 @@ function bind(){
   const nt=q('#newtask'); const addT=()=>{ const v=nt.value.trim(); if(!v) return;
     if(S.tasks.filter(t=>!t.archived).length>=MAX_TASKS){ toast("That's the "+MAX_TASKS+" task cap."); return; }
     const tg=clamp(Math.round(Number(q('#newtarget').value)||0),0,600);
-    S.tasks.push({id:uid(),name:v,createdAt:today(),order:S.tasks.length,archived:false,target:tg||null}); save(); haptic(); render(); document.getElementById('acc-tasks').open=true; document.getElementById('newtask')?.focus();
+    S.tasks.push({id:uid(),name:v,createdAt:today(),order:S.tasks.length,archived:false,target:tg||null}); save(); syncCadencePrices(); haptic(); render(); document.getElementById('acc-tasks').open=true; document.getElementById('newtask')?.focus();
     toast('Task added'); };
   if(nt){ q('#addtask').onclick=addT; nt.onkeydown=e=>{if(e.key==='Enter')addT();}; q('#newtarget').onkeydown=e=>{if(e.key==='Enter')addT();}; }
   qa('[data-rename]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.rename); editTask(t);});
-  qa('[data-deltask]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.deltask); modal(`<h2>Remove “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. Past days stay in Progress.</p>`,'Remove',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();render();document.getElementById('acc-tasks').open=true;toast('Removed');},true);});
+  qa('[data-deltask]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.deltask); modal(`<h2>Remove “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. Past days stay in Progress.</p>`,'Remove',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();syncCadencePrices();render();document.getElementById('acc-tasks').open=true;toast('Removed');},true);});
   // rewards
   qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
   const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); document.getElementById('newwhy')?.focus();};
@@ -3887,14 +3962,14 @@ function bind(){
     if(price<MIN_REWARD_PRICE){ toast('Minimum '+MIN_REWARD_PRICE+' coins'); return; }
     const rec={id:uid(),name:v,active:true,tier:'custom',price,freq:newRewardFreq};
     if(newRewardFreq==='custom') rec.perMonth=clamp(Math.round(Number(q('#newper')?.value)||newRewardPer),1,MAX_PER_MONTH);
-    S.rewards.push(rec); save(); haptic(); rewOpen=true; render();
+    S.rewards.push(rec); save(); syncCadencePrices(); haptic(); rewOpen=true; render();
     const b=budgetState();
     if(pendingExtras().length){ toast('Reward added · place your chest extra'); queueMicrotask(()=>offerChestExtras()); }
     else if(b.level==='over') toast('Over budget — tap Balance these for me','Balance',()=>rebalanceSheet());
     else toast('Reward added'); };
   if(nr){ q('#addreward').onclick=addR; nr.onkeydown=e=>{if(e.key==='Enter')addR();}; if(np) np.onkeydown=e=>{if(e.key==='Enter')addR();}; }
   qa('[data-editreward]').forEach(b=>b.onclick=()=>{ const r=S.rewards.find(x=>x.id===b.dataset.editreward); if(r) editReward(r); });
-  qa('[data-delreward]').forEach(b=>b.onclick=()=>{const x=S.rewards.find(r=>r.id===b.dataset.delreward);x.active=false;save();render();document.getElementById('acc-rewards').open=true;});
+  qa('[data-delreward]').forEach(b=>b.onclick=()=>{const x=S.rewards.find(r=>r.id===b.dataset.delreward);x.active=false;save();syncCadencePrices();render();document.getElementById('acc-rewards').open=true;});
   // quotes
   // look
   const keepLook=()=>{ const acc=document.getElementById('acc-look'); if(acc) acc.open=true; };
@@ -4067,7 +4142,7 @@ function editTask(t){
 
 function editReward(r){
   const cur=rewardPrice(r);
-  const sp=suggestedPrices();
+  const sp=suggestedPrices(r.id);
   const o=overlay(`<div class="modal"><h2>Price for “${esc(r.name)}”</h2>
     <div style="margin-top:12px"><span class="plabel">How often</span>
       <div class="chips" id="efreq">${FREQS.map(f=>`<button type="button" class="chip ${rewardFreq(r)===f.id?'on':''}" data-ef="${f.id}">${f.label}</button>`).join('')}</div>
@@ -4530,7 +4605,7 @@ function iosInstallSheet(){
 function budgetCard(){
   const b=budgetState();
   if(!b.active.length) return `<div class="card" style="padding:12px"><b class="small">Your monthly budget</b>
-    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (about four clears + three half days a week for rewards). Add a reward and this shows whether it fits.</p></div>`;
+    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (four clears + three half days a week from your tasks). Prices follow how often you can have each treat — longer cadence, higher sticker. Add a reward and this shows whether it fits.</p></div>`;
   const msg = b.level==='over'
     ? `That does not fit the treat pot. Something will have to give — fewer rewards, or rarer ones.`
     : b.level==='tight' ? `That is just about the whole treat pot. Little slack left.`
@@ -4538,7 +4613,7 @@ function budgetCard(){
   return `<div class="card budget ${b.level}" style="padding:12px">
     <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'#f59e0b':'var(--accent)'}">${b.pct}%</span></div>
     <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
-    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (about four clears + three half days a week) · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
+    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (four clears + three half days a week) · stickers follow cadence (fortnight ≈ 2× weekly) · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
     ${rebalancePlan().length?`<button class="btn sm block" style="margin-top:10px" data-rebalance>Balance these for me</button>`:''}
   </div>`;
 }
@@ -4550,7 +4625,7 @@ function rebalanceSheet(){
     + b.active.filter(r=>!plan.some(x=>x.r.id===r.id)).reduce((a,r)=>a+monthlyCostOf(r),0);
   const warn=plan.filter(x=>x.raises&&x.halfway);
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Rebalance your rewards?</h2>
-    <p class="muted small" style="margin-bottom:12px">Frequencies stay exactly as you set them. Only the prices move.</p>
+    <p class="muted small" style="margin-bottom:12px">Frequencies stay as you set them. Prices follow cadence — longer wait, higher sticker — so a typical week of due buys fits the treat pot.</p>
     <ul class="list">${plan.map(x=>`<li><div><div>${esc(x.r.name)}</div><div class="tiny muted">${esc(x.label.toLowerCase())}</div></div>
       <div style="text-align:right"><span class="tiny muted" style="text-decoration:line-through">${x.from}</span>
       <b style="margin-left:8px;color:${x.raises?'var(--danger)':'var(--accent)'}">${x.to}</b></div></li>`).join('')}</ul>
