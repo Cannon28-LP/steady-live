@@ -3,7 +3,7 @@
 import { createPeepsSvg } from './vendor/open-peeps-avatar.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-23'; }catch(e){ return '2026-09-23'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-24'; }catch(e){ return '2026-09-24'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -16,7 +16,7 @@ const SYNC = {
   url:    'https://rjytcvajeysfnfmtgakm.supabase.co',
   anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
 };
-const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 10, CLEAR_PER_TASK = 0, CHEST_DAYS = 6;
+const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 3, CLEAR_PER_TASK = 0, CHEST_DAYS = 6;
 /* Days of slip before weak-habit pay rises — one miss must not bump the badge. */
 const MAX_TASKS = 10, MIN_REWARD_PRICE = 10;
 const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
@@ -38,7 +38,21 @@ const STUCK_MISSES = 5, ADVICE_COOLDOWN = 14;
 const TIER_DAYS = {week:7, fortnight:14};
 const TIER_LABEL = {week:'Week', fortnight:'Fortnight'};
 const round10 = n => Math.round(n/10)*10;
-const dayRate = () => Math.max(1, activeTasks().length) * (TASK_BASE*1.3 + CLEAR_PER_TASK); // a cleared day at healthy strength
+const round5 = n => Math.round(n/5)*5;
+/* b64 day-quality earn: per-task base TASK_BASE (3) + miss-streak bump on base only;
+   half-day bonus at ≥50% done; clear bonus at 100% (delta if half already paid). */
+function typicalN(k){
+  const due = (typeof dueTasks==='function') ? dueTasks(k||today()).length : 0;
+  if(due>0) return due;
+  const act = (typeof activeTasks==='function') ? activeTasks(k||today()).length : 0;
+  return act;
+}
+function halfDayBonusAmt(n){ return round5(2*Math.max(0,n)); }
+function clearDayBonusAmt(n){ return round10(5.5*Math.max(0,n)); }
+function clearDayHaul(n){ n=Math.max(0,n|0); return TASK_BASE*n + clearDayBonusAmt(n); }
+function halfDayHaul(n){ n=Math.max(0,n|0); return TASK_BASE*Math.ceil(n/2) + halfDayBonusAmt(n); }
+function weeklyTreatPot(n){ n = (n==null ? typicalN() : n); return 4*clearDayHaul(n) + 3*halfDayHaul(n); }
+const dayRate = () => Math.max(1, clearDayHaul(typicalN()) || TASK_BASE);
 const tierCost = t => {
   /* Fallback when a reward has no price yet — same unit model as suggestFromFreq. */
   const list = (typeof S!=='undefined' && S && S.rewards) ? S.rewards.filter(x=>x.active) : [];
@@ -46,12 +60,9 @@ const tierCost = t => {
   return pricedUnit(list, buysPerWeekFor(freq));
 };
 const chestCoins = () => round10(dayRate());
-/* A clear day: each task pays base coins plus the clear bonus. Strength and overtime are extra, not assumed. */
-function clearDayPay(){
-  const n=activeTasks().length;
-  return n * (TASK_BASE + CLEAR_PER_TASK);
-}
-function typicalDayEarn(){ return Math.max(TASK_BASE + CLEAR_PER_TASK, clearDayPay()); }
+/* Clear-day haul used for ETAs / pot (base×N + clear bonus; no miss-streak, no OT). */
+function clearDayPay(){ return clearDayHaul(typicalN()); }
+function typicalDayEarn(){ return Math.max(TASK_BASE, clearDayPay()); }
 function coinsNeeded(cost){
   return Math.max(0, (Number(cost)||0) - (S.points.coins||0));
 }
@@ -111,13 +122,12 @@ function monthlyIncome(){
 }
 function rewardFreq(r){ return r.freq || 'monthly'; }
 function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
-/* Unified treat budget: ~6 clear days of coins each week, shared across ALL active rewards
-   (weeklies, fortnights, monthly, custom) by expected buy-events. Primary rule: fit the treat pot
-   (no hard 2.5-day floor — more rewards means a smaller per-buy price). */
+/* Unified treat budget (b64): 4 clear-day hauls + 3 half-day hauls a week, shared across ALL
+   active rewards by expected buy-events. Pot-fit unit (scale down by 10, min floor). */
 const WEEKS_PER_MONTH = 4.33;
-function rewardDayRate(){ return clearDayPay() || (TASK_BASE + CLEAR_PER_TASK); }
-function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * 6)); }
-function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(rewardDayRate() * 6 * WEEKS_PER_MONTH)); }
+function rewardDayRate(){ return clearDayPay() || TASK_BASE; }
+function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreatPot())); }
+function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreatPot() * WEEKS_PER_MONTH)); }
 function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
 function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
 /* Pot ÷ expected buys/month across the set (optional draft buy-weight). Prefer spend ≤ pot. */
@@ -221,7 +231,7 @@ function budgetState(){
   const pot=monthlyRewardBudget();
   const active=S.rewards.filter(x=>x.active);
   const spend=active.reduce((a,r)=>a+monthlyCostOf(r),0);
-  /* Shop fit vs the six-clear-day/week treat pot (not full monthly income). */
+  /* Shop fit vs the 4-clear + 3-half treat pot (not full monthly income). */
   const pct=pot?Math.round(100*spend/pot):0;
   const redemptions=active.reduce((a,r)=>a+perMonthOf(r),0);
   return {income:inc.coins, pot, real:inc.real, spend:Math.round(spend), pct,
@@ -401,6 +411,17 @@ function migratePriceFloorsB63(){
     active.forEach(r => { r.price = unit; });
   }
   S._priceFloorB63 = 1;
+  save();
+}
+/* b64: reprice after pot change (4 clears + 3 half-days / week). */
+function migratePriceFloorsB64(){
+  if(S._priceFloorB64) return;
+  const active = (S.rewards||[]).filter(r => r && r.active);
+  if(active.length){
+    const unit = pricedUnit(active, 0);
+    active.forEach(r => { r.price = unit; });
+  }
+  S._priceFloorB64 = 1;
   save();
 }
 let S = load();
@@ -706,9 +727,19 @@ function reminderBody(){
 }
 /* Fires while the app is open. Once per slot per day. */
 function reminderTick(){
+  const k=today();
+  /* Away return nudge — fires on the end date if notifications are allowed.
+     Does not require the morning-reminders switch; cancel/reschedule with Away. */
+  try{
+    const a=S.away;
+    if(a && a.remindOn && k>=a.remindOn && a.remindFired!==a.remindOn && Notification.permission==='granted'){
+      a.remindFired=a.remindOn; save();
+      showLocal('Welcome back', "Away ends today — Steady's ready when you are.", 'steady-away-end');
+    }
+  }catch(e){}
   const c=remindCfg(); if(!c.on||Notification.permission!=='granted') return;
   const now=new Date(); const hm=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  c.fired=c.fired||{}; const k=today();
+  c.fired=c.fired||{};
   /* Plan items with a time on them */
   if(c.todos!==false){
     for(const t of S.todos){
@@ -853,115 +884,115 @@ const LOOK_ITEMS = [
   {id:'h-medium1',  slot:'hair', name:'Medium 1',       cost:0,   peeps:'medium1'},
   {id:'h-shaved1',  slot:'hair', name:'Shaved 1',       cost:0,   peeps:'shaved1'},
   {id:'h-no1',      slot:'hair', name:'No hair 1',      cost:0,   peeps:'noHair1'},
-  // fluff 80–120
-  {id:'h-buzz',     slot:'hair', name:'Shaved 2',       cost:80,  peeps:'shaved2'},
-  {id:'h-shaved3',  slot:'hair', name:'Shaved 3',       cost:80,  peeps:'shaved3'},
-  {id:'h-short5',   slot:'hair', name:'Short 5',        cost:90,  peeps:'short5'},
-  {id:'h-no2',      slot:'hair', name:'No hair 2',      cost:80,  peeps:'noHair2'},
-  {id:'h-no3',      slot:'hair', name:'No hair 3',      cost:80,  peeps:'noHair3'},
-  {id:'h-fringe',   slot:'hair', name:'Bangs',          cost:100, peeps:'bangs'},
-  {id:'h-bangs2',   slot:'hair', name:'Bangs 2',        cost:100, peeps:'bangs2'},
-  {id:'h-quiff',    slot:'hair', name:'Pomp',           cost:100, peeps:'pomp'},
-  {id:'h-medium2',  slot:'hair', name:'Medium 2',       cost:110, peeps:'medium2'},
-  {id:'h-medium3',  slot:'hair', name:'Medium 3',       cost:110, peeps:'medium3'},
-  {id:'h-pony',     slot:'hair', name:'Medium 2 (pony)',cost:110, peeps:'medium2'}, // legacy alias art
-  {id:'h-bun',      slot:'hair', name:'Bun',            cost:110, peeps:'bun'},
-  {id:'h-bun2',     slot:'hair', name:'Bun 2',          cost:110, peeps:'bun2'},
-  {id:'h-undercut', slot:'hair', name:'Flat top',       cost:110, peeps:'flatTop'},
-  {id:'h-wavy',     slot:'hair', name:'Long curly',     cost:120, peeps:'longCurly'},
-  {id:'h-longbangs',slot:'hair', name:'Long bangs',     cost:120, peeps:'longBangs'},
-  {id:'h-mbangs',   slot:'hair', name:'Medium bangs',   cost:120, peeps:'mediumBangs'},
-  // nicer 180–300
-  {id:'h-mbangs2',  slot:'hair', name:'Medium bangs 2', cost:180, peeps:'mediumBangs2'},
-  {id:'h-mbangs3',  slot:'hair', name:'Medium bangs 3', cost:180, peeps:'mediumBangs3'},
-  {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:200, peeps:'mediumBangs'}, // legacy
-  {id:'h-braids',   slot:'hair', name:'Cornrows',       cost:200, peeps:'cornrows'},
-  {id:'h-cornrows2',slot:'hair', name:'Cornrows 2',     cost:220, peeps:'cornrows2'},
-  {id:'h-space',    slot:'hair', name:'Buns',           cost:200, peeps:'buns'},
-  {id:'h-afro',     slot:'hair', name:'Afro',           cost:200, peeps:'afro'},
-  {id:'h-longafro', slot:'hair', name:'Long afro',      cost:240, peeps:'longAfro'},
-  {id:'h-dreads1',  slot:'hair', name:'Dreads 1',       cost:240, peeps:'dreads1'},
-  {id:'h-dreads2',  slot:'hair', name:'Dreads 2',       cost:260, peeps:'dreads2'},
-  {id:'h-twists',   slot:'hair', name:'Twists',         cost:240, peeps:'twists'},
-  {id:'h-twists2',  slot:'hair', name:'Twists 2',       cost:260, peeps:'twists2'},
-  {id:'h-bantu',    slot:'hair', name:'Bantu knots',    cost:280, peeps:'bantuKnots'},
-  {id:'h-flattopL', slot:'hair', name:'Flat top long',  cost:220, peeps:'flatTopLong'},
-  {id:'h-grayshort',slot:'hair', name:'Gray short',     cost:200, peeps:'grayShort'},
-  {id:'h-graymed',  slot:'hair', name:'Gray medium',    cost:220, peeps:'grayMedium'},
-  {id:'h-graybun',  slot:'hair', name:'Gray bun',       cost:240, peeps:'grayBun'},
-  // statement 400–600
-  {id:'h-mohawk',   slot:'hair', name:'Mohawk',         cost:400, peeps:'mohawk'},
-  {id:'h-mohawk2',  slot:'hair', name:'Mohawk 2',       cost:450, peeps:'mohawk2'},
-  {id:'h-bear',     slot:'hair', name:'Bear',           cost:500, peeps:'bear'},
+  // fluff 120–180 (b64 bump from Band B)
+  {id:'h-buzz',     slot:'hair', name:'Shaved 2',       cost:120,  peeps:'shaved2'},
+  {id:'h-shaved3',  slot:'hair', name:'Shaved 3',       cost:120,  peeps:'shaved3'},
+  {id:'h-short5',   slot:'hair', name:'Short 5',        cost:140,  peeps:'short5'},
+  {id:'h-no2',      slot:'hair', name:'No hair 2',      cost:120,  peeps:'noHair2'},
+  {id:'h-no3',      slot:'hair', name:'No hair 3',      cost:120,  peeps:'noHair3'},
+  {id:'h-fringe',   slot:'hair', name:'Bangs',          cost:150, peeps:'bangs'},
+  {id:'h-bangs2',   slot:'hair', name:'Bangs 2',        cost:150, peeps:'bangs2'},
+  {id:'h-quiff',    slot:'hair', name:'Pomp',           cost:150, peeps:'pomp'},
+  {id:'h-medium2',  slot:'hair', name:'Medium 2',       cost:160, peeps:'medium2'},
+  {id:'h-medium3',  slot:'hair', name:'Medium 3',       cost:160, peeps:'medium3'},
+  {id:'h-pony',     slot:'hair', name:'Medium 2 (pony)',cost:160, peeps:'medium2'}, // legacy alias art
+  {id:'h-bun',      slot:'hair', name:'Bun',            cost:160, peeps:'bun'},
+  {id:'h-bun2',     slot:'hair', name:'Bun 2',          cost:160, peeps:'bun2'},
+  {id:'h-undercut', slot:'hair', name:'Flat top',       cost:160, peeps:'flatTop'},
+  {id:'h-wavy',     slot:'hair', name:'Long curly',     cost:180, peeps:'longCurly'},
+  {id:'h-longbangs',slot:'hair', name:'Long bangs',     cost:180, peeps:'longBangs'},
+  {id:'h-mbangs',   slot:'hair', name:'Medium bangs',   cost:180, peeps:'mediumBangs'},
+  // nicer 250–400 (b64)
+  {id:'h-mbangs2',  slot:'hair', name:'Medium bangs 2', cost:250, peeps:'mediumBangs2'},
+  {id:'h-mbangs3',  slot:'hair', name:'Medium bangs 3', cost:250, peeps:'mediumBangs3'},
+  {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:280, peeps:'mediumBangs'}, // legacy
+  {id:'h-braids',   slot:'hair', name:'Cornrows',       cost:280, peeps:'cornrows'},
+  {id:'h-cornrows2',slot:'hair', name:'Cornrows 2',     cost:320, peeps:'cornrows2'},
+  {id:'h-space',    slot:'hair', name:'Buns',           cost:280, peeps:'buns'},
+  {id:'h-afro',     slot:'hair', name:'Afro',           cost:280, peeps:'afro'},
+  {id:'h-longafro', slot:'hair', name:'Long afro',      cost:350, peeps:'longAfro'},
+  {id:'h-dreads1',  slot:'hair', name:'Dreads 1',       cost:350, peeps:'dreads1'},
+  {id:'h-dreads2',  slot:'hair', name:'Dreads 2',       cost:380, peeps:'dreads2'},
+  {id:'h-twists',   slot:'hair', name:'Twists',         cost:350, peeps:'twists'},
+  {id:'h-twists2',  slot:'hair', name:'Twists 2',       cost:380, peeps:'twists2'},
+  {id:'h-bantu',    slot:'hair', name:'Bantu knots',    cost:400, peeps:'bantuKnots'},
+  {id:'h-flattopL', slot:'hair', name:'Flat top long',  cost:320, peeps:'flatTopLong'},
+  {id:'h-grayshort',slot:'hair', name:'Gray short',     cost:280, peeps:'grayShort'},
+  {id:'h-graymed',  slot:'hair', name:'Gray medium',    cost:320, peeps:'grayMedium'},
+  {id:'h-graybun',  slot:'hair', name:'Gray bun',       cost:350, peeps:'grayBun'},
+  // statement 500–700 (b64)
+  {id:'h-mohawk',   slot:'hair', name:'Mohawk',         cost:500, peeps:'mohawk'},
+  {id:'h-mohawk2',  slot:'hair', name:'Mohawk 2',       cost:600, peeps:'mohawk2'},
+  {id:'h-bear',     slot:'hair', name:'Bear',           cost:700, peeps:'bear'},
 
   // —— Facial hair (optional) ——
   {id:'fh-chin',    slot:'facial', name:'Chin',         cost:0,   peeps:'chin'},
   {id:'fh-goat1',   slot:'facial', name:'Goatee 1',     cost:0,   peeps:'goatee1'},
   {id:'fh-mous1',   slot:'facial', name:'Moustache 1',  cost:0,   peeps:'moustache1'},
   {id:'fh-mous2',   slot:'facial', name:'Moustache 2',  cost:0,   peeps:'moustache2'},
-  {id:'fh-full',    slot:'facial', name:'Full',         cost:80,  peeps:'full'},
-  {id:'fh-full2',   slot:'facial', name:'Full 2',       cost:90,  peeps:'full2'},
-  {id:'fh-full3',   slot:'facial', name:'Full 3',       cost:100, peeps:'full3'},
-  {id:'fh-full4',   slot:'facial', name:'Full 4',       cost:110, peeps:'full4'},
-  {id:'fh-goat2',   slot:'facial', name:'Goatee 2',     cost:80,  peeps:'goatee2'},
-  {id:'fh-mous3',   slot:'facial', name:'Moustache 3',  cost:80,  peeps:'moustache3'},
-  {id:'fh-mous4',   slot:'facial', name:'Moustache 4',  cost:80,  peeps:'moustache4'},
-  {id:'fh-mous5',   slot:'facial', name:'Moustache 5',  cost:90,  peeps:'moustache5'},
-  {id:'fh-mous6',   slot:'facial', name:'Moustache 6',  cost:90,  peeps:'moustache6'},
-  {id:'fh-mous7',   slot:'facial', name:'Moustache 7',  cost:100, peeps:'moustache7'},
-  {id:'fh-mous8',   slot:'facial', name:'Moustache 8',  cost:100, peeps:'moustache8'},
-  {id:'fh-mous9',   slot:'facial', name:'Moustache 9',  cost:110, peeps:'moustache9'},
+  {id:'fh-full',    slot:'facial', name:'Full',         cost:120,  peeps:'full'},
+  {id:'fh-full2',   slot:'facial', name:'Full 2',       cost:140,  peeps:'full2'},
+  {id:'fh-full3',   slot:'facial', name:'Full 3',       cost:150, peeps:'full3'},
+  {id:'fh-full4',   slot:'facial', name:'Full 4',       cost:160, peeps:'full4'},
+  {id:'fh-goat2',   slot:'facial', name:'Goatee 2',     cost:120,  peeps:'goatee2'},
+  {id:'fh-mous3',   slot:'facial', name:'Moustache 3',  cost:120,  peeps:'moustache3'},
+  {id:'fh-mous4',   slot:'facial', name:'Moustache 4',  cost:120,  peeps:'moustache4'},
+  {id:'fh-mous5',   slot:'facial', name:'Moustache 5',  cost:140,  peeps:'moustache5'},
+  {id:'fh-mous6',   slot:'facial', name:'Moustache 6',  cost:140,  peeps:'moustache6'},
+  {id:'fh-mous7',   slot:'facial', name:'Moustache 7',  cost:150, peeps:'moustache7'},
+  {id:'fh-mous8',   slot:'facial', name:'Moustache 8',  cost:150, peeps:'moustache8'},
+  {id:'fh-mous9',   slot:'facial', name:'Moustache 9',  cost:160, peeps:'moustache9'},
 
-  // —— Shirt colours (outfit slot) —— free + Band B
+  // —— Shirt colours (outfit slot) —— free + paid (b64 band)
   {id:'o-tee',     slot:'outfit', name:'Teal',         cost:0,   col:'#3f8f83'},
   {id:'o-hoodie',  slot:'outfit', name:'Slate',        cost:0,   col:'#4a5568'},
   {id:'o-navy',    slot:'outfit', name:'Navy',         cost:0,   col:'#2c3e6b'},
   {id:'o-cream',   slot:'outfit', name:'Cream',        cost:0,   col:'#f3ebe0'},
-  {id:'o-shirt',   slot:'outfit', name:'Cloud',        cost:80,  col:'#dfe6ef'},
-  {id:'o-stripe',  slot:'outfit', name:'Pearl',        cost:80,  col:'#e4e9f0'},
-  {id:'o-white',   slot:'outfit', name:'White',        cost:80,  col:'#f7f7f5'},
-  {id:'o-black',   slot:'outfit', name:'Black',        cost:100, col:'#1f2428'},
-  {id:'o-charcoal',slot:'outfit', name:'Charcoal',     cost:100, col:'#3a3f44'},
-  {id:'o-sky',     slot:'outfit', name:'Sky',          cost:120, col:'#6fa8d8'},
-  {id:'o-mint',    slot:'outfit', name:'Mint',         cost:120, col:'#6fd6bd'},
-  {id:'o-hivis',   slot:'outfit', name:'Hi-vis',       cost:140, col:'#e4d43a'},
-  {id:'o-jumper',  slot:'outfit', name:'Knit brown',   cost:160, col:'#8a6b4f'},
-  {id:'o-dress',   slot:'outfit', name:'Rose',         cost:180, col:'#c2466f'},
-  {id:'o-berry',   slot:'outfit', name:'Berry',        cost:180, col:'#9b3d5a'},
-  {id:'o-jacket',  slot:'outfit', name:'Denim',        cost:200, col:'#3f6796'},
-  {id:'o-forest',  slot:'outfit', name:'Forest',       cost:200, col:'#2f6b4f'},
-  {id:'o-rust',    slot:'outfit', name:'Rust',         cost:220, col:'#b85a32'},
-  {id:'o-violet',  slot:'outfit', name:'Violet',       cost:240, col:'#6d5ae0'},
-  {id:'o-coral',   slot:'outfit', name:'Coral',        cost:240, col:'#e07a6d'},
+  {id:'o-shirt',   slot:'outfit', name:'Cloud',        cost:120,  col:'#dfe6ef'},
+  {id:'o-stripe',  slot:'outfit', name:'Pearl',        cost:120,  col:'#e4e9f0'},
+  {id:'o-white',   slot:'outfit', name:'White',        cost:120,  col:'#f7f7f5'},
+  {id:'o-black',   slot:'outfit', name:'Black',        cost:150, col:'#1f2428'},
+  {id:'o-charcoal',slot:'outfit', name:'Charcoal',     cost:150, col:'#3a3f44'},
+  {id:'o-sky',     slot:'outfit', name:'Sky',          cost:180, col:'#6fa8d8'},
+  {id:'o-mint',    slot:'outfit', name:'Mint',         cost:180, col:'#6fd6bd'},
+  {id:'o-hivis',   slot:'outfit', name:'Hi-vis',       cost:200, col:'#e4d43a'},
+  {id:'o-jumper',  slot:'outfit', name:'Knit brown',   cost:240, col:'#8a6b4f'},
+  {id:'o-dress',   slot:'outfit', name:'Rose',         cost:250, col:'#c2466f'},
+  {id:'o-berry',   slot:'outfit', name:'Berry',        cost:250, col:'#9b3d5a'},
+  {id:'o-jacket',  slot:'outfit', name:'Denim',        cost:280, col:'#3f6796'},
+  {id:'o-forest',  slot:'outfit', name:'Forest',       cost:280, col:'#2f6b4f'},
+  {id:'o-rust',    slot:'outfit', name:'Rust',         cost:320, col:'#b85a32'},
+  {id:'o-violet',  slot:'outfit', name:'Violet',       cost:350, col:'#6d5ae0'},
+  {id:'o-coral',   slot:'outfit', name:'Coral',        cost:350, col:'#e07a6d'},
 
   // —— Eyewear / accessories ——
   {id:'g-round',   slot:'glasses', name:'Glasses',     cost:0,   peeps:'glasses'},
-  {id:'g-square',  slot:'glasses', name:'Glasses 2',   cost:100, peeps:'glasses2'},
-  {id:'g-cats',    slot:'glasses', name:'Glasses 3',   cost:120, peeps:'glasses3'},
-  {id:'g-glass4',  slot:'glasses', name:'Glasses 4',   cost:140, peeps:'glasses4'},
-  {id:'g-glass5',  slot:'glasses', name:'Glasses 5',   cost:160, peeps:'glasses5'},
-  {id:'g-shades',  slot:'glasses', name:'Sunglasses',  cost:200, peeps:'sunglasses'},
-  {id:'g-shades2', slot:'glasses', name:'Sunglasses 2',cost:220, peeps:'sunglasses2'},
-  {id:'g-patch',   slot:'glasses', name:'Eyepatch',    cost:250, peeps:'eyepatch'},
+  {id:'g-square',  slot:'glasses', name:'Glasses 2',   cost:150, peeps:'glasses2'},
+  {id:'g-cats',    slot:'glasses', name:'Glasses 3',   cost:180, peeps:'glasses3'},
+  {id:'g-glass4',  slot:'glasses', name:'Glasses 4',   cost:200, peeps:'glasses4'},
+  {id:'g-glass5',  slot:'glasses', name:'Glasses 5',   cost:240, peeps:'glasses5'},
+  {id:'g-shades',  slot:'glasses', name:'Sunglasses',  cost:280, peeps:'sunglasses'},
+  {id:'g-shades2', slot:'glasses', name:'Sunglasses 2',cost:320, peeps:'sunglasses2'},
+  {id:'g-patch',   slot:'glasses', name:'Eyepatch',    cost:360, peeps:'eyepatch'},
 
   // —— Headwear (replaces hair) ——
-  {id:'a-beanie',  slot:'hat', name:'Beanie',         cost:180, peeps:'hatBeanie'},
-  {id:'a-cap',     slot:'hat', name:'Cap',             cost:180, peeps:'hatHip'},
-  {id:'a-hijab',   slot:'hat', name:'Hijab',           cost:200, peeps:'hijab'},
-  {id:'a-turban',  slot:'hat', name:'Turban',          cost:200, peeps:'turban'},
+  {id:'a-beanie',  slot:'hat', name:'Beanie',         cost:250, peeps:'hatBeanie'},
+  {id:'a-cap',     slot:'hat', name:'Cap',             cost:250, peeps:'hatHip'},
+  {id:'a-hijab',   slot:'hat', name:'Hijab',           cost:280, peeps:'hijab'},
+  {id:'a-turban',  slot:'hat', name:'Turban',          cost:280, peeps:'turban'},
   // legacy hat ids kept as aliases → migrated to hair on load (see LOOK_ID_MAP)
-  {id:'a-bow',     slot:'hair', name:'Bun 2 (legacy)', cost:110, peeps:'bun2', legacy:true},
-  {id:'a-band',    slot:'hair', name:'Bangs 2 (legacy)',cost:100, peeps:'bangs2', legacy:true},
+  {id:'a-bow',     slot:'hair', name:'Bun 2 (legacy)', cost:160, peeps:'bun2', legacy:true},
+  {id:'a-band',    slot:'hair', name:'Bangs 2 (legacy)',cost:150, peeps:'bangs2', legacy:true},
 
   // —— Backdrops ——
   {id:'bg-plain',  slot:'backdrop', name:'Plain',      cost:0,   col:null},
-  {id:'bg-sun',    slot:'backdrop', name:'Sunrise',    cost:80,  col:'#f0a05a'},
-  {id:'bg-mint',   slot:'backdrop', name:'Mint',       cost:80,  col:'#6fd6bd'},
-  {id:'bg-night',  slot:'backdrop', name:'Night',      cost:100, col:'#2c3358'},
-  {id:'bg-rose',   slot:'backdrop', name:'Rose',       cost:100, col:'#dd7ea4'},
-  {id:'bg-sky',    slot:'backdrop', name:'Sky',        cost:100, col:'#7eb6e0'},
-  {id:'bg-lilac',  slot:'backdrop', name:'Lilac',      cost:120, col:'#b8a4e0'},
-  {id:'bg-peach',  slot:'backdrop', name:'Peach',      cost:120, col:'#f0c4a8'},
+  {id:'bg-sun',    slot:'backdrop', name:'Sunrise',    cost:120,  col:'#f0a05a'},
+  {id:'bg-mint',   slot:'backdrop', name:'Mint',       cost:120,  col:'#6fd6bd'},
+  {id:'bg-night',  slot:'backdrop', name:'Night',      cost:150, col:'#2c3358'},
+  {id:'bg-rose',   slot:'backdrop', name:'Rose',       cost:150, col:'#dd7ea4'},
+  {id:'bg-sky',    slot:'backdrop', name:'Sky',        cost:150, col:'#7eb6e0'},
+  {id:'bg-lilac',  slot:'backdrop', name:'Lilac',      cost:180, col:'#b8a4e0'},
+  {id:'bg-peach',  slot:'backdrop', name:'Peach',      cost:180, col:'#f0c4a8'},
 ];
 /* Old saved ids → current ids (equipped + owned). */
 const LOOK_ID_MAP = {
@@ -1356,7 +1387,7 @@ function coinsEarnedSince(from,to){
   let n=0; for(let x=from;x<=to;x=addDays(x,1)) n+=(dayStats(x).points||0); return n;
 }
 function friendCoinsSince(f,from,to){
-  /* Friends sync done/expected only — estimate 10 coins per done task. */
+  /* Friends sync done/expected only — estimate TASK_BASE coins per done (ignores day bonuses; b64 follow-up). */
   let n=0; for(let x=from;x<=to;x=addDays(x,1)){ const d=f.days?.[x]; if(d?.done) n+=10*(d.done||0); } return n;
 }
 function buysSince(from,to){
@@ -2063,7 +2094,7 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
 function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
-try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); }catch(e){ console.error(e); }
+try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
@@ -2118,15 +2149,49 @@ function clearAwayFrom(from){
   }
   if(S.away) S.away.until=null;
 }
+/* Duration N days inclusive of today → until = today+(N-1). */
+function awayUntilFromDays(n, from){
+  from = from || today();
+  n = clamp(Math.round(Number(n)||3), 1, 90);
+  return addDays(from, n-1);
+}
+function awayDaysLeft(){
+  const u=awayUntil(); if(!u) return 0;
+  return Math.max(0, daysBetween(today(), u)+1);
+}
+function scheduleAwayEndReminder(until){
+  S.away=S.away||{};
+  S.away.remindOn = until || null;
+  S.away.remindFired = null;
+}
+function cancelAwayEndReminder(){
+  if(!S.away) return;
+  S.away.remindOn = null;
+  S.away.remindFired = null;
+}
 function setAwayEnabled(on, until, coverYesterday=false){
-  if(!on){ clearAwayFrom(today()); return; }
+  if(!on){
+    clearAwayFrom(today());
+    cancelAwayEndReminder();
+    return;
+  }
   const u=until||addDays(today(),3);
   applyAwayRange(today(), u, coverYesterday);
+  /* Shorten: drop away flags past the new end date. */
+  for(const k of Object.keys(S.days||{})){
+    if(k>u && S.days[k]?.away) delete S.days[k].away;
+  }
+  S.away=S.away||{}; S.away.until=u;
+  S.away.days = Math.max(1, daysBetween(today(), u)+1);
+  scheduleAwayEndReminder(u);
 }
 function awayStatusLabel(){
   const u=awayUntil();
   if(!awayActive()) return '';
-  if(u && u>=today()) return `Away until ${fmt(u,{weekday:'short',day:'numeric',month:'short'})}`;
+  if(u && u>=today()){
+    const n=awayDaysLeft();
+    return `Away until ${fmt(u,{weekday:'short',day:'numeric',month:'short'})} · ${n} day${n===1?'':'s'}`;
+  }
   return 'Away today';
 }
 
@@ -2208,8 +2273,9 @@ function strengthOf(t,k=today()){ let s=0; for(let x=t.createdAt;x<=k;x=addDays(
   else if(st==='missed') s=s*0.95;
 } return clamp(Math.round(s),0,100); }
 function avgStrength(k=today()){ const ts=activeTasks(k); if(!ts.length) return 0; return Math.round(ts.reduce((a,t)=>a+strengthOf(t,k),0)/ts.length); }
-/* Pay: always TASK_BASE (10). After 2 expected misses in a row → 11, then +1 per
-   further miss day, capped at 15. One miss alone does not raise pay. Off-cadence
+/* Pay: always TASK_BASE (3). After 2 expected misses in a row → 4, then +1 per
+   further miss day, capped at TASK_BASE+5 (8). Same +0…+5 delta as the old 10→15
+   ladder; bump applies to per-task base only, never to day bonuses. Off-cadence
    days are skipped; unrecorded days break the streak (only real misses count). */
 function consecutiveMissesBefore(t,k=today()){
   let n=0, x=addDays(k,-1);
@@ -2222,7 +2288,7 @@ function consecutiveMissesBefore(t,k=today()){
 }
 function taskValueFromMisses(misses){
   if(misses<2) return TASK_BASE;
-  return Math.min(15, TASK_BASE+(misses-1));
+  return Math.min(TASK_BASE+5, TASK_BASE+(misses-1));
 }
 function taskValue(t){ return taskValueFromMisses(consecutiveMissesBefore(t)); }
 function taskValueAt(t,k){ return taskValueFromMisses(consecutiveMissesBefore(t,k)); }
@@ -2369,6 +2435,31 @@ function payClearStreakAt(end){
   }
   save(); return null;
 }
+/* b64 day-quality bonuses: half at ≥50% done, clear at 100%.
+   Stores halfBonus + clearBonus (clear step = full−half so total = clear haul bonus).
+   Returns coin/xp delta vs previous stored amounts (negative when clawing on undo). */
+function dayQualityTargets(N, done){
+  N=Math.max(0,N|0); done=Math.max(0,done|0);
+  let half=0, clearStep=0, cleared=false;
+  if(N>0 && done*2>=N) half = halfDayBonusAmt(N);
+  if(N>0 && done>=N){
+    cleared = true;
+    const full = clearDayBonusAmt(N);
+    clearStep = Math.max(0, full - half);
+  }
+  return {half, clearStep, cleared, total: half+clearStep};
+}
+function syncDayQualityBonuses(d, N, done){
+  const t = dayQualityTargets(N, done);
+  const prevHalf = d.halfBonus||0;
+  const prevClear = d.clearBonus||0;
+  const delta = (t.half - prevHalf) + (t.clearStep - prevClear);
+  d.halfBonus = t.half;
+  d.clearBonus = t.clearStep;
+  d.cleared = t.cleared;
+  d.perfect = t.cleared;
+  return delta;
+}
 /* Mark a task done on a past day (yesterday catch-up). Same economy as same-day; no double award. */
 function completeOnDate(k,id){
   const d=day(k);
@@ -2381,9 +2472,11 @@ function completeOnDate(k,id){
   let coins=v, xp=v;
   const n=tasks.length;
   const allDone=tasks.filter(x=>d.tasks[x.id]?.status==='done').length;
-  let cleared=false;
-  if(n && allDone===n && !d.cleared){ d.cleared=true; d.clearBonus=CLEAR_PER_TASK*n; coins+=d.clearBonus; xp+=d.clearBonus; cleared=true; }
-  d.points=(d.points||0)+coins; S.points.coins+=coins; S.points.xp+=xp; d.perfect=!!d.cleared;
+  const wasCleared=!!d.cleared;
+  const bonusDelta=syncDayQualityBonuses(d, n, allDone);
+  coins+=bonusDelta; xp+=bonusDelta;
+  const cleared=!!d.cleared && !wasCleared;
+  d.points=(d.points||0)+coins; S.points.coins+=coins; S.points.xp+=xp;
   let streakWin=null;
   if(cleared){ streakWin=payClearStreakAt(k); if(streakWin){ coins+=streakWin.amount; } }
   S.pendingMisses=(S.pendingMisses||[]).filter(p=>!(p.date===k && p.taskId===id));
@@ -2417,20 +2510,27 @@ function completeSelected(mins){
     coins+=v+bonus; xp+=v; changed.push(id);
   }
   const allDone=tasks.filter(t=>d.tasks[t.id]?.status==='done').length;
-  let cleared=false;
-  if(n && allDone===n && !d.cleared){ d.cleared=true; d.clearBonus=CLEAR_PER_TASK*n; coins+=d.clearBonus; xp+=d.clearBonus; cleared=true; }
-  d.points+=coins; S.points.coins+=coins; S.points.xp+=xp; d.perfect=!!d.cleared;
+  const wasCleared=!!d.cleared;
+  const bonusDelta=syncDayQualityBonuses(d, n, allDone);
+  coins+=bonusDelta; xp+=bonusDelta;
+  const cleared=!!d.cleared && !wasCleared;
+  d.points+=coins; S.points.coins+=coins; S.points.xp+=xp;
   sel.clear(); save();
   haptic(cleared?'success':'light');
   changed.forEach(id=>document.querySelector(`[data-task="${id}"]`)?.classList.add('leaving'));
   const streakWin = cleared ? payClearStreak() : null;
   const streakPay=streakWin?.amount||0;
   if(streakPay){ d.clearStreakPay=(d.clearStreakPay||0)+streakPay; d.clearStreakBlock=streakWin.block; }
-  S.undo={date:k,ids:changed,coins:coins+streakPay,xp:xp+streakPay,cleared,streakPay,streakBlock:streakWin?.block||null};
+  S.undo={date:k,ids:changed,coins:coins+streakPay,xp:xp+streakPay,cleared,streakPay,streakBlock:streakWin?.block||null,
+    halfBonus:d.halfBonus||0, clearBonus:d.clearBonus||0};
   save();
+  const halfHit=!cleared && bonusDelta>0 && (d.halfBonus||0)>0 && allDone*2>=n;
   setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick();
     if(streakWin) setTimeout(()=>streakScene(streakWin),900);
-    toast(cleared?`Day cleared · +${coins}`:`${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`); if(cleared) celebrate(); }, motionOK()?220:0);
+    const msg = cleared ? `Day cleared · +${coins}`
+      : halfHit ? `Half day · +${coins}`
+      : `${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`;
+    toast(msg); if(cleared) celebrate(); }, motionOK()?220:0);
 }
 function clawClearStreak(d){
   /* Clear day streak fields + rewind block. Return pay — callers subtract once from wallet/XP. */
@@ -2441,13 +2541,23 @@ function clawClearStreak(d){
 }
 function undoLast(){
   const u=S.undo; if(!u) return; const d=day(u.date);
-  u.ids.forEach(id=>{ delete d.tasks[id]; });
-  const dayPts=u.coins-(u.streakPay||0);
-  let refund=dayPts;
-  if(u.cleared){ d.cleared=false; d.clearBonus=0; refund+=clawClearStreak(d); }
-  /* Coins use coin refund (incl OT); XP uses stored u.xp (OT never counted in XP). */
-  const xpClaw=u.xp!=null?u.xp:refund;
-  d.points-=dayPts; S.points.coins-=refund; S.points.xp-=xpClaw; d.perfect=false;
+  let taskCoins=0, taskXp=0;
+  u.ids.forEach(id=>{
+    const e=d.tasks[id];
+    if(e){ taskCoins+=(e.value||0)+(e.bonus||0); taskXp+=(e.value||0); }
+    delete d.tasks[id];
+  });
+  const tasks=dueTasks(u.date);
+  const n=tasks.length;
+  const done=tasks.filter(t=>d.tasks[t.id]?.status==='done').length;
+  const wasCleared=!!d.cleared;
+  const bonusDelta=syncDayQualityBonuses(d, n, done); // ≤0 when clawing
+  let streakClaw=0;
+  if(wasCleared && !d.cleared) streakClaw=clawClearStreak(d);
+  const refund = taskCoins - bonusDelta + streakClaw;
+  const xpClaw = taskXp - bonusDelta + streakClaw;
+  d.points -= (taskCoins - bonusDelta);
+  S.points.coins -= refund; S.points.xp -= xpClaw;
   /* Coins may go negative: if you spent the reward then undid the tick, you owe the refund. */
   if(S.points.xp<0) S.points.xp=0;
   if(d.points<0) d.points=0;
@@ -2457,16 +2567,19 @@ function undoLast(){
 function unmarkDone(id){
   const k=today(), d=day(k), e=d.tasks[id];
   if(!e||e.status!=='done') return;
-  let dayPts=(e.value||0)+(e.bonus||0), wallet=(e.value||0)+(e.bonus||0), xp=e.value||0;
+  const taskCoins=(e.value||0)+(e.bonus||0), taskXp=e.value||0;
   delete d.tasks[id];
-  if(d.cleared){
-    const cb=d.clearBonus||0;
-    dayPts+=cb; wallet+=cb; xp+=cb;
-    d.cleared=false; d.clearBonus=0; d.perfect=false;
-    const streak=clawClearStreak(d);
-    wallet+=streak; xp+=streak; /* streak paid both coins + XP */
-  }
-  d.points-=dayPts; S.points.coins-=wallet; S.points.xp-=xp;
+  const tasks=dueTasks(k);
+  const n=tasks.length;
+  const done=tasks.filter(t=>d.tasks[t.id]?.status==='done').length;
+  const wasCleared=!!d.cleared;
+  const bonusDelta=syncDayQualityBonuses(d, n, done); // ≤0 when clawing half/clear
+  let streakClaw=0;
+  if(wasCleared && !d.cleared) streakClaw=clawClearStreak(d);
+  const wallet = taskCoins - bonusDelta + streakClaw;
+  const xp = taskXp - bonusDelta + streakClaw;
+  d.points -= (taskCoins - bonusDelta);
+  S.points.coins -= wallet; S.points.xp -= xp;
   /* Coins may go negative after a spend-then-undo — debt until you earn it back. */
   if(S.points.xp<0) S.points.xp=0;
   if(d.points<0) d.points=0;
@@ -2711,7 +2824,16 @@ function vToday(){
       <div class="center"><div><b>+${d.points||0}</b><span>today</span></div></div></div>
     <div class="ring-meta">
       <h3>${n===0?'Nothing set yet':d.cleared?'Day cleared':`${st.done} of ${n}`}</h3>
-      <p class="muted small">${n===0?'Add tasks in Settings to start earning.':d.cleared?(CLEAR_PER_TASK>0?`Clear bonus +${d.clearBonus} banked.`:''):(CLEAR_PER_TASK>0?`${open.length} left · finish them for +${CLEAR_PER_TASK*n}`:`${open.length} left`)}</p>
+      <p class="muted small">${(()=>{
+        if(n===0) return 'Add tasks in Settings to start earning.';
+        const half=halfDayBonusAmt(n), clear=clearDayBonusAmt(n);
+        const hb=d.halfBonus||0, cb=d.clearBonus||0;
+        if(d.cleared) return `Clear bonus +${hb+cb} banked.`;
+        if(hb) return `${open.length} left · clear for +${Math.max(0,clear-hb)} more`;
+        const needHalf=Math.ceil(n/2)-st.done;
+        if(needHalf>0) return `${open.length} left · ${needHalf} more for half-day +${half}`;
+        return `${open.length} left · half-day +${half} ready at 50%`;
+      })()}</p>
       ${d.bonus?`<p class="small" style="margin-top:6px;color:var(--accent)">+${d.bonus} streak bonus today</p>`:`<p class="tiny muted" style="margin-top:6px">Tomorrow's streak bonus: +${lb}</p>`}
     </div>
   </div>
@@ -3460,30 +3582,49 @@ function vSettings(){
     <div class="row between" style="align-items:flex-start;gap:12px">
       <div style="flex:1;min-width:0">
         <b class="small">Away</b>
-        <p class="tiny muted" style="margin-top:4px">Pause habits while you’re off. No misses, no reason prompts, clear-streak holds.</p>
+        <p class="tiny muted" style="margin-top:4px">Pause habits while you’re off. Pick how many days. No misses, no reason prompts, clear-streak holds.${Notification.permission==='granted'?' A gentle return nudge on the end day.':''}</p>
         ${awayActive()?`<p class="tiny" style="margin-top:6px;color:var(--accent)">${esc(awayStatusLabel())}</p>`:''}
       </div>
       <button class="toggle ${awayActive()?'on':''}" data-away-toggle role="switch" aria-checked="${awayActive()}"></button>
     </div>
-    ${awayActive()?`<div style="margin-top:12px">
-      <label class="tiny muted" for="awayuntil">Until</label>
-      <input type="date" id="awayuntil" value="${awayUntil()||addDays(today(),3)}" min="${today()}" style="margin-top:6px;width:100%;padding:10px 12px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface2)">
+    ${(()=>{
+      const u=awayUntil()||awayUntilFromDays(3);
+      const days=awayActive()?(S.away?.days||awayDaysLeft()||3): (S.away?.days||3);
+      const presets=[1,3,7,14];
+      return `<div style="margin-top:12px">
+      <label class="tiny muted">How many days</label>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px">
+        ${presets.map(n=>`<button type="button" class="btn sm ${Number(days)===n?'primary':''}" data-away-days="${n}">${n}d</button>`).join('')}
+        <span class="row" style="gap:4px;align-items:center">
+          <button type="button" class="btn sm" data-away-step="-1" aria-label="Fewer days">−</button>
+          <input type="number" id="awaydays" min="1" max="90" value="${clamp(Number(days)||3,1,90)}" style="width:56px;padding:8px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface2);text-align:center">
+          <button type="button" class="btn sm" data-away-step="1" aria-label="More days">+</button>
+        </span>
+      </div>
+      <label class="tiny muted" for="awayuntil" style="display:block;margin-top:10px">Until</label>
+      <input type="date" id="awayuntil" value="${u}" min="${today()}" style="margin-top:6px;width:100%;padding:10px 12px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface2)">
       ${(S.pendingMisses||[]).some(p=>p.date===addDays(today(),-1))?`<label class="row" style="gap:8px;margin-top:10px;align-items:center"><input type="checkbox" id="awayyest"><span class="small">Also cover yesterday</span></label>`:''}
-      <button class="btn sm primary block" style="margin-top:12px" data-away-save>Update Away</button>
-    </div>`:`<p class="tiny muted" style="margin-top:10px">Default until ${fmt(addDays(today(),3),{weekday:'short',day:'numeric',month:'short'})} when you turn it on.</p>`}
+      ${awayActive()
+        ? `<button class="btn sm primary block" style="margin-top:12px" data-away-save>Update Away</button>`
+        : `<button class="btn sm primary block" style="margin-top:12px" data-away-start>Start Away</button>`}
+      <p class="tiny muted" style="margin-top:8px">${Notification.permission==='granted'
+        ? 'Return reminder set for the end day (cancel or change length anytime).'
+        : 'Tip: allow Reminders if you’d like a gentle nudge when Away ends.'}</p>
+    </div>`;
+    })()}
   </div>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">The idea.</b> Nothing here ever takes points off you. Missing a day costs you what you would have earned, and that is all. The app's job is to notice patterns you would not, and to make keeping your word worth something.</p>
 
-    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and XP. Miss two expected days in a row and the next tick pays 11, then +1 per further miss day up to 15. One miss alone does not raise pay. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
+    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and XP. Miss two expected days in a row and the next tick pays ${TASK_BASE+1}, then +1 per further miss day up to ${TASK_BASE+5}. One miss alone does not raise pay. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
-    <p><b style="color:var(--fg)">Day cleared.</b> Tick everything to mark the day clear — that feeds your full-clear streak and the weekly chest. There is no extra per-task clear coin bonus; each task already paid when you ticked it.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a 10-coin task pays 8, not 5. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
+    <p><b style="color:var(--fg)">Day quality.</b> On a normal day with N tasks due: each done task pays its base. At half done (≥50%) you get a one-time half-day bonus of about ${halfDayBonusAmt(8)} for N=8. Clear the day (100%) for a clear bonus of about ${clearDayBonusAmt(8)} — if the half was already paid, only the difference is added. Rough day and Away earn nothing. Undo claws back task coins and any day bonus you drop below.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a ${TASK_BASE}-coin task pays ${Math.max(1,Math.round(TASK_BASE*(TIME_FLOOR+(1-TIME_FLOOR)*0.5)))}, not half. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
     <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from the treat pot. Prices share about six clear days of coins a week across all rewards; more rewards means a smaller price per buy. Type over it if you disagree. The budget line shows what all your rewards want per month against that pot; amber past 90%, red past 100%. <b>Balance these for me</b> fits the pot and shows you the before and after first.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price comes from the treat pot. The pot is about four clear days plus three half days of coins a week, shared across all rewards; more rewards means a smaller price per buy. Type over it if you disagree. The budget line shows what all your rewards want per month against that pot; amber past 90%, red past 100%. <b>Balance these for me</b> fits the pot and shows you the before and after first.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -3504,7 +3645,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to your Open Peeps character.</p>
     <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
-    <p><b style="color:var(--fg)">Away.</b> Settings → Away pauses habits for a stretch. Away days ask for nothing, create no misses, and bridge your clear-streak without counting as a clear. Login streak still counts if you open the app. Challenges won’t fail only because you were away.</p>
+    <p><b style="color:var(--fg)">Away.</b> Settings → Away pauses habits for a stretch you choose (1, 3, 7, 14 days or any number). Away days ask for nothing, create no misses, and bridge your clear-streak without counting as a clear. Login streak still counts if you open the app. Challenges won’t fail only because you were away. If notifications are allowed, a calm return reminder fires on the end day — change the length or end early and it reschedules or cancels.</p>
     <p><b style="color:var(--fg)">Rough day.</b> A quiet private note on Today — how the day felt, optional feel chip. No coins, no XP, never shared with Friends. Edit anytime the same day.</p>
     <p><b style="color:var(--fg)">Week story.</b> Progress → Overview stitches clears, away days, top miss reasons and rough-day notes into a short private paragraph for the current week.</p>
     <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons, rough days and your affirmation never leave this device.</p>
@@ -3769,22 +3910,49 @@ function bind(){
   const ca=q('#customink'); if(ca) ca.oninput=()=>{S.settings.ink=ca.value;save();applyTheme();}; if(ca) ca.onchange=()=>{render();keepLook();};
   qa('[data-toggle]').forEach(b=>b.onclick=()=>{S.settings[b.dataset.toggle]=!S.settings[b.dataset.toggle];save();applyTheme();haptic();render();keepLook();});
   // Away + Rough day
+  const syncAwayUntilFromDays=()=>{
+    const inp=q('#awaydays'); const days=clamp(Math.round(Number(inp?.value)||3),1,90);
+    if(inp) inp.value=days;
+    const until=awayUntilFromDays(days);
+    const du=q('#awayuntil'); if(du) du.value=until;
+    return {days, until};
+  };
+  const syncAwayDaysFromUntil=()=>{
+    const until=(q('#awayuntil')?.value)||awayUntilFromDays(3);
+    const days=Math.max(1, daysBetween(today(), until)+1);
+    const inp=q('#awaydays'); if(inp) inp.value=days;
+    return {days, until};
+  };
+  const startOrUpdateAway=(cover)=>{
+    const until=(q('#awayuntil')?.value)||syncAwayUntilFromDays().until;
+    const days=Math.max(1, daysBetween(today(), until)+1);
+    S.away=S.away||{}; S.away.days=days;
+    setAwayEnabled(true, until, !!cover);
+    save(); haptic(); render(); toast(awayStatusLabel()||'Away on');
+  };
+  qa('[data-away-days]').forEach(b=>b.onclick=()=>{
+    const inp=q('#awaydays'); if(inp) inp.value=b.dataset.awayDays;
+    syncAwayUntilFromDays(); haptic();
+  });
+  qa('[data-away-step]').forEach(b=>b.onclick=()=>{
+    const inp=q('#awaydays'); if(!inp) return;
+    inp.value=clamp((Number(inp.value)||3)+Number(b.dataset.awayStep),1,90);
+    syncAwayUntilFromDays(); haptic();
+  });
+  const ad=q('#awaydays'); if(ad) ad.onchange=()=>syncAwayUntilFromDays();
+  const au=q('#awayuntil'); if(au) au.onchange=()=>syncAwayDaysFromUntil();
   qa('[data-away-toggle]').forEach(b=>b.onclick=()=>{
-    if(awayActive()){ setAwayEnabled(false); toast('Welcome back'); }
-    else {
-      const until=addDays(today(),3);
-      const yest=(S.pendingMisses||[]).some(p=>p.date===addDays(today(),-1));
-      setAwayEnabled(true, until, false);
-      save(); haptic(); render();
-      toast(awayStatusLabel()||'Away on');
-      if(yest) toast('Tip: you can also cover yesterday under Away');
-    }
+    if(awayActive()){ setAwayEnabled(false); save(); haptic(); render(); toast('Welcome back'); }
+    else { startOrUpdateAway(!!q('#awayyest')?.checked); }
+  });
+  qa('[data-away-start]').forEach(b=>b.onclick=()=>{
+    const cover=!!q('#awayyest')?.checked;
+    startOrUpdateAway(cover);
+    const yest=(S.pendingMisses||[]).some(p=>p.date===addDays(today(),-1));
+    if(yest && !cover) toast('Tip: you can also cover yesterday under Away');
   });
   qa('[data-away-save]').forEach(b=>b.onclick=()=>{
-    const until=(q('#awayuntil')?.value)||addDays(today(),3);
-    const cover=!!q('#awayyest')?.checked;
-    setAwayEnabled(true, until, cover);
-    save(); haptic(); render(); toast(awayStatusLabel()||'Away updated');
+    startOrUpdateAway(!!q('#awayyest')?.checked);
   });
   qa('[data-away-back]').forEach(b=>b.onclick=()=>{ setAwayEnabled(false); save(); haptic(); render(); toast("You're back — habits resume"); });
   qa('[data-rough]').forEach(b=>b.onclick=()=>roughSheet());
@@ -4314,7 +4482,7 @@ function onboarding(next, force){
 
 /* ---------- Spotlight tour ---------- */
 const TOURS={
-  today:[['ring','Coins earned today. Each task pays 10 — after 2 misses in a row it rises by 1 a day up to 15.'],['tasks','Tap to pick, confirm below. Timed ones ask how long — and Done today lets you Undo anytime (coins come back) or Edit the minutes.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
+  today:[['ring','Coins earned today. Each task pays 3 — after 2 misses in a row it rises by 1 a day up to 8. Half and clear days add a bonus on top.'],['tasks','Tap to pick, confirm below. Timed ones ask how long — and Done today lets you Undo anytime (coins come back) or Edit the minutes.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
   plan:[['listadd','List, Notes and Affirmations. Add anything for today, a date, or someday — nothing here can be failed.']],
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
   shop:[['balance','Coins to spend. XP fills the level bar and is never spent. The shop stays open — allowances on each reward do the limiting.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
@@ -4362,7 +4530,7 @@ function iosInstallSheet(){
 function budgetCard(){
   const b=budgetState();
   if(!b.active.length) return `<div class="card" style="padding:12px"><b class="small">Your monthly budget</b>
-    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (about six clear days a week for rewards). Add a reward and this shows whether it fits.</p></div>`;
+    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (about four clears + three half days a week for rewards). Add a reward and this shows whether it fits.</p></div>`;
   const msg = b.level==='over'
     ? `That does not fit the treat pot. Something will have to give — fewer rewards, or rarer ones.`
     : b.level==='tight' ? `That is just about the whole treat pot. Little slack left.`
@@ -4370,7 +4538,7 @@ function budgetCard(){
   return `<div class="card budget ${b.level}" style="padding:12px">
     <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'#f59e0b':'var(--accent)'}">${b.pct}%</span></div>
     <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
-    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (about six clear days a week for rewards) · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
+    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (about four clears + three half days a week) · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
     ${rebalancePlan().length?`<button class="btn sm block" style="margin-top:10px" data-rebalance>Balance these for me</button>`:''}
   </div>`;
 }
