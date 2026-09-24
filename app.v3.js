@@ -1183,13 +1183,19 @@ function charSVG(av,size){
   catch(e){ peeps = '<svg viewBox="0 0 704 704" xmlns="http://www.w3.org/2000/svg"></svg>'; }
   const inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
   const bg=(lookItem(a.backdrop)||{}).col;
-  const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||''].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
-  /* One upper-body frame at every size: head + shoulders/shirt in the circle (Peeps 704²). */
+  /* size≥52 = Looks thumbs/picks/preview (bust). No size / mechip / faces = face crop. */
+  const bust = (size|0) >= 52;
+  const nonce = Math.random().toString(36).slice(2,7);
+  const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||'',nonce].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
+  /* Face: tighter head+hair fill (b66). Bust: b60 upper-body frame. */
+  const xf = bust
+    ? 'translate(50 50) scale(0.165) translate(-352 -340)'
+    : 'translate(50 54) scale(0.225) translate(-352 -270)';
   return `<svg viewBox="0 0 100 100" class="charsvg" ${size?`width="${size}" height="${size}"`:''}>
     <defs><clipPath id="${uid}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
     <g clip-path="url(#${uid})">
       <rect width="100" height="100" fill="${bg||'var(--surface2)'}"/>
-      <g class="peeps-bust" transform="translate(50 50) scale(0.165) translate(-352 -340)">${inner}</g>
+      <g class="peeps-bust" transform="${xf}">${inner}</g>
     </g></svg>`;
 }
 
@@ -2602,8 +2608,8 @@ function completeSelected(mins){
   const halfHit=!cleared && bonusDelta>0 && (d.halfBonus||0)>0 && allDone*2>=n;
   setTimeout(()=>{ render(); if(cleared&&typeof friendsTick==='function') friendsTick();
     if(streakWin) setTimeout(()=>streakScene(streakWin),900);
-    const msg = cleared ? `Day cleared · +${coins}`
-      : halfHit ? `Half day · +${coins}`
+    const msg = cleared ? `Day clear +${(d.halfBonus||0)+(d.clearBonus||0)}`
+      : halfHit ? `Half-day +${d.halfBonus||0}`
       : `${changed.length===1?'Marked done':changed.length+' marked done'} · +${coins}`;
     toast(msg); if(cleared) celebrate(); }, motionOK()?220:0);
 }
@@ -2883,8 +2889,25 @@ function roughSheet(editId){
 function vToday(){
   const k=today(), tasks=dueTasks(k), d=S.days[k]||{}, st=dayStats(k);
   const open=tasks.filter(t=>statusOf(k,t.id)!=='done'), done=tasks.filter(t=>statusOf(k,t.id)==='done');
-  const row=t=>{const s=strengthOf(t);return `<li><button class="task ${sel.has(t.id)?'selected':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${cadenceTagHtml(t)}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${taskValue(t)}</span></button></li>`;};
   const a=affirmationToday(); const n=tasks.length;
+  /* b66: calm near-threshold earn cues — banner + decisive-row bonus hint (not inflated per-row). */
+  const halfAmt=halfDayBonusAmt(n), clearAmt=clearDayBonusAmt(n);
+  const hbNow=d.halfBonus||0;
+  const needHalf=(!n||hbNow||d.cleared)?0:Math.ceil(n/2)-st.done;
+  const needClear=(!n||d.cleared)?0:n-st.done;
+  const clearRemain=Math.max(0, clearAmt-hbNow);
+  const nearBanner = (!open.length||d.cleared)?'':(
+    needClear===1 ? `1 more to clear · +${clearRemain} more`
+    : needHalf===1 ? `1 more for half-day · +${halfAmt}`
+    : '');
+  const row=t=>{
+    const s=strengthOf(t);
+    const base=taskValue(t);
+    let tip='';
+    if(needClear===1) tip=`<span class="valtip">clear +${clearRemain}</span>`;
+    else if(needHalf===1) tip=`<span class="valtip">half +${halfAmt}</span>`;
+    return `<li><button class="task ${sel.has(t.id)?'selected':''}" data-task="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${cadenceTagHtml(t)}<span class="str"><i style="width:${s}%"></i></span></span><span class="val">+${base}${tip}</span></button></li>`;
+  };
   const circ=2*Math.PI*52, pct=n?st.done/n:0;
   const mon=weekOf(k); const wk=Array.from({length:7},(_,i)=>{const dk=addDays(mon,i);const s=dayStats(dk);const away=isAway(dk);return {dk,cleared:s.perfect,away,fut:dk>k||(!s.expected&&!away),frozen:S.days[dk]?.frozen}});
   const wc=wk.filter(x=>x.cleared).length;
@@ -2929,6 +2952,7 @@ function vToday(){
       <button class="btn primary sm" style="margin-top:12px" data-away-back>I'm back</button></div>`:
     n===0?`<div class="card empty"><b>No tasks yet</b>Pick two or three things you want to keep doing.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="tasks">Add tasks</button></div>`:
     open.length===0?`<div class="card empty"><b>All done</b>Everything's ticked. See you tomorrow.</div>`:`
+    ${nearBanner?`<p class="tiny muted earn-near">${nearBanner}</p>`:''}
     <ul class="tasks" data-tour="tasks">${open.map(row).join('')}</ul>
     <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below.</p>`}
     ${!awayNow && done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">undo anytime today</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id];
@@ -3545,7 +3569,7 @@ function vShop(){
           al.maxed?`That is it ${al.period}` : al.intoExtra?'Buy with a chest extra' : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
   <div class="section"><h2>Looks <span class="muted">${looks().owned.filter(id=>lookItem(id)&&!lookItem(id).legacy).length} of ${LOOK_ITEMS.filter(i=>!i.legacy).length}</span></h2>
     <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
-      <span class="avatar big img">${charSVG(myChar())}</span>
+      <span class="avatar big img">${charSVG(myChar(),64)}</span>
       <div><b>Your character</b><p class="tiny muted">Open Peeps — hair, facial hair, shirt colours, eyewear, headwear and backdrops.</p></div></div>
       <span class="chev">›</span></button></div>
   <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
@@ -3693,7 +3717,7 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and XP. Miss two expected days in a row and the next tick pays ${TASK_BASE+1}, then +1 per further miss day up to ${TASK_BASE+5}. One miss alone does not raise pay. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
-    <p><b style="color:var(--fg)">Day quality.</b> On a normal day with N tasks due: each done task pays its base. At half done (≥50%) you get a one-time half-day bonus of about ${halfDayBonusAmt(8)} for N=8. Clear the day (100%) for a clear bonus of about ${clearDayBonusAmt(8)} — if the half was already paid, only the difference is added. Rough day and Away earn nothing. Undo claws back task coins and any day bonus you drop below.</p>
+    <p><b style="color:var(--fg)">Day quality.</b> On a normal day with N tasks due: each done task pays its base (shown as +${TASK_BASE} on the row). At half done (≥50%) you get a one-time half-day bonus of about ${halfDayBonusAmt(8)} for N=8. Clear the day (100%) for a clear bonus of about ${clearDayBonusAmt(8)} — if the half was already paid, only the difference is added. When you are one tick from half or clear, Today shows a calm “1 more for …” line and a tiny bonus hint under that row’s +${TASK_BASE}. Rough day and Away earn nothing. Undo claws back task coins and any day bonus you drop below.</p>
     <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a ${TASK_BASE}-coin task pays ${Math.max(1,Math.round(TASK_BASE*(TIME_FLOOR+(1-TIME_FLOOR)*0.5)))}, not half. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
     <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
@@ -4744,7 +4768,7 @@ function charSheet(){
   const TABS=[['face','Face'],['skin','Skin'],['hairc','Hair colour'],...SLOTS.map(([k,l])=>[k,l])];
   const draw=()=>{
     const a=myChar();
-    o.querySelector('#cprev').innerHTML=charSVG(a);
+    o.querySelector('#cprev').innerHTML=charSVG(a,120);
     o.querySelector('#ctabs').innerHTML=TABS.map(([k,l])=>`<button class="${tab===k?'on':''}" data-ctab="${k}">${l}</button>`).join('');
     const body=o.querySelector('#cbody');
     if(tab==='face'){
