@@ -534,10 +534,10 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .avatar.mini{width:20px;height:20px;font-size:.66rem;margin-right:6px;vertical-align:middle;display:inline-grid}
 .mechip{position:relative;display:flex;align-items:center;gap:8px;padding:4px 4px 4px 10px;border-radius:999px;background:var(--card);border:1px solid var(--line);color:inherit;max-width:52vw}
 .mechip-name{font-weight:650;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:28vw}
-.mechip .avatar{width:36px;height:36px;flex:none}
-.mechip .avedit{position:absolute;right:0;bottom:0;width:18px;height:18px;border-radius:50%;
+.mechip .avatar{width:54px;height:54px;flex:none}
+.mechip .avedit{position:absolute;right:2px;bottom:2px;width:22px;height:22px;border-radius:50%;
   background:var(--card);border:1px solid var(--line);display:grid;place-items:center}
-.mechip .avedit svg{width:10px;height:10px}
+.mechip .avedit svg{width:11px;height:11px}
 .mechip:active{transform:scale(.97)}
 .avatarbtn{position:relative;flex:none;border-radius:50%}
 .avatarbtn:active{transform:scale(.95)}
@@ -547,7 +547,7 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .msgwho{display:inline-flex;align-items:center}
 .charsvg{width:100%;height:100%;display:block}
 .avatar.img .charsvg,.charpreview .charsvg,.lookthumb .charsvg,.charpick .charsvg{overflow:hidden}
-/* Open Peeps frame via .peeps-bust in charSVG: face crop under 52px, bust at Looks sizes */
+/* Open Peeps frame via .peeps-bust in charSVG: medium bust-leaning under 52px, bust at Looks sizes */
 .charpreview{width:120px;height:120px;margin:0 auto;border-radius:50%;overflow:hidden;background:var(--surface2)}
 .charGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .charpick{border-radius:50%;overflow:hidden;aspect-ratio:1;background:var(--surface2);border:2px solid transparent;padding:0}

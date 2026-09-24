@@ -122,9 +122,11 @@ function monthlyIncome(){
 }
 function rewardFreq(r){ return r.freq || 'monthly'; }
 function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
-/* Unified treat budget (b64/b65): 4 clear-day hauls + 3 half-day hauls a week.
-   b65: sticker ∝ cadence wait (weekly=1w, fortnight=2w, monthly≈4.33w) so a typical
-   week of due buys ≈ weekly pot; fortnight ≈ 2× weekly. */
+/* Unified treat budget (b64/b68): 4 clear-day hauls + 3 half-day hauls a week.
+   b68: sticker = pot × weight (weekly=1, fortnight=2, monthly≈4.33, custom=4.33/perMonth).
+   Do NOT divide by active reward count — more rewards make the budget meter amber/red
+   (honest); user picks fewer treats or waits longer. A weekly buy ≈ one week of pot;
+   one clear day alone must not afford a weekly. */
 const WEEKS_PER_MONTH = 4.33;
 function rewardDayRate(){ return clearDayPay() || TASK_BASE; }
 function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreatPot())); }
@@ -141,40 +143,21 @@ function weightFor(freqId, perMonth){
   return WEEKS_PER_MONTH / Math.max(perFor('custom', perMonth), 0.25);
 }
 function weightOf(r){ return weightFor(rewardFreq(r), r && r.perMonth); }
-/* Option A: equal weekly pot share × weight. If monthly spend overshoots pot, Option B:
-   base weekly unit × weight, scale base down by 10 until spend ≤ monthly pot. */
+/* price(r) = snap(weeklyTreatPot() * weight(r)) — independent of how many actives. */
 function cadencePlan(list){
   const active = (list||[]).slice();
-  const n = Math.max(active.length, 1);
   const weekPot = weeklyTreatPot();
-  const monthPot = monthlyRewardBudget();
-  const weekShare = weekPot / n;
-  const spendOf = plan => plan.reduce((a,x)=>a + x.to * perMonthOf(x.r), 0);
-  const mkA = () => active.map(r=>{
+  return active.map(r=>{
     const w = weightOf(r);
-    return {r, weight:w, to:snapRewardPrice(weekShare * w)};
+    return {r, weight:w, to:snapRewardPrice(weekPot * w)};
   });
-  const mkB = base => active.map(r=>{
-    const w = weightOf(r);
-    return {r, weight:w, to:snapRewardPrice(base * w)};
-  });
-  let plan = mkA();
-  if(spendOf(plan) > monthPot + 1e-9){
-    let base = Math.max(MIN_REWARD_PRICE, round10(weekShare));
-    plan = mkB(base);
-    while(base > MIN_REWARD_PRICE && spendOf(plan) > monthPot + 1e-9){
-      base -= 10;
-      plan = mkB(base);
-    }
-  }
-  return plan;
 }
 function priceForDraft(freqId, others, perMonth){
   const draft = {id:'__draft__', active:true, freq:freqId||'monthly'};
   if(freqId==='custom') draft.perMonth = perFor('custom', perMonth);
   const list = (others||[]).concat([draft]);
   const hit = cadencePlan(list).find(x=>x.r===draft);
-  return hit ? hit.to : snapRewardPrice(weeklyTreatPot() / Math.max(list.length, 1));
+  return hit ? hit.to : snapRewardPrice(weeklyTreatPot() * weightFor(freqId, perMonth));
 }
 /* Weekly-weight sticker for a set; optional draft buy-weight via buysPerWeek (legacy). */
 function pricedUnit(list, extraBuysPerWeek){
@@ -304,7 +287,7 @@ function budgetState(){
     redemptions:Math.round(redemptions*10)/10, active,
     level: pct>100?'over' : pct>90?'tight' : 'ok'};
 }
-/* Reprice each active reward from cadence weight (fortnight ≈ 2× weekly). */
+/* Reprice each active reward: pot × cadence weight (fortnight ≈ 2× weekly). */
 function rebalancePlan(){
   const b=budgetState(); if(!b.active.length) return [];
   return cadencePlan(b.active).map(x=>{
@@ -497,6 +480,16 @@ function migratePriceFloorsB65(){
     for(const x of cadencePlan(active)) x.r.price = x.to;
   }
   S._priceFloorB65 = 1;
+  save();
+}
+/* b68: sticker = full week pot × weight (no divide-by-actives). Reprice once. */
+function migratePriceFloorsB68(){
+  if(S._priceFloorB68) return;
+  const active = (S.rewards||[]).filter(r => r && r.active);
+  if(active.length){
+    for(const x of cadencePlan(active)) x.r.price = x.to;
+  }
+  S._priceFloorB68 = 1;
   save();
 }
 let S = load();
@@ -1165,7 +1158,8 @@ function peepsOptsFromAv(a){
   }
   return opts;
 }
-/* Retarget ink fills in the DiceBear head + facialHair groups only — never skin, face, or clothing. */
+/* Retarget ink fills in the DiceBear head + facialHair groups only — never skin, face,
+   accessories (glasses), or clothing. Accessories sit at translate(203 303), after face. */
 function tintPeepsHair(svg, hex){
   const ink = /fill="(?:#000(?:000)?|black|currentColor)"/gi;
   const paint = `fill="${hex}"`;
@@ -1174,10 +1168,18 @@ function tintPeepsHair(svg, hex){
   const faceMark = '<g transform="translate(315 248)"';
   const facialMark = '<g transform="translate(279 400)"';
   const maskMark = '<g transform="translate(179 343)"';
-  const iHead = svg.indexOf(headMark), iFace = svg.indexOf(faceMark);
-  if(iHead>=0 && iFace>iHead) svg = svg.slice(0,iHead) + tint(svg.slice(iHead,iFace)) + svg.slice(iFace);
+  const accMark = '<g transform="translate(203 303)"';
+  const iHead = svg.indexOf(headMark), iFace = svg.indexOf(faceMark), iAcc = svg.indexOf(accMark);
+  /* Hair only: stop at face, or earlier if accessories somehow precede face. */
+  let iHairEnd = iFace;
+  if(iAcc>=0 && (iHairEnd<0 || iAcc<iHairEnd)) iHairEnd = iAcc;
+  if(iHead>=0 && iHairEnd>iHead) svg = svg.slice(0,iHead) + tint(svg.slice(iHead,iHairEnd)) + svg.slice(iHairEnd);
   const iFacial = svg.indexOf(facialMark), iMask = svg.indexOf(maskMark);
-  if(iFacial>=0 && iMask>iFacial) svg = svg.slice(0,iFacial) + tint(svg.slice(iFacial,iMask)) + svg.slice(iMask);
+  /* Facial hair only — never walk into mask or accessories. */
+  let iFaceEnd = iMask;
+  const iAcc2 = svg.indexOf(accMark);
+  if(iAcc2>=0 && (iFaceEnd<0 || iAcc2<iFaceEnd)) iFaceEnd = iAcc2;
+  if(iFacial>=0 && iFaceEnd>iFacial) svg = svg.slice(0,iFacial) + tint(svg.slice(iFacial,iFaceEnd)) + svg.slice(iFaceEnd);
   return svg;
 }
 function charSVG(av,size){
@@ -1188,14 +1190,15 @@ function charSVG(av,size){
   catch(e){ peeps = '<svg viewBox="0 0 704 704" xmlns="http://www.w3.org/2000/svg"></svg>'; }
   const inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
   const bg=(lookItem(a.backdrop)||{}).col;
-  /* size≥52 = Looks thumbs/picks/preview (bust). No size / mechip / faces = face crop. */
+  /* size≥52 = Looks thumbs/picks/preview (bust). No size / mechip / faces = medium bust-leaning. */
   const bust = (size|0) >= 52;
   const nonce = Math.random().toString(36).slice(2,7);
   const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||'',nonce].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
-  /* Face: tighter head+hair fill (b66). Bust: b60 upper-body frame. */
+  /* Small: medium bust-leaning (b68) — full face+glasses+hair/shoulders, not forehead-only.
+     Large (≥52): bust (b60). */
   const xf = bust
     ? 'translate(50 50) scale(0.165) translate(-352 -340)'
-    : 'translate(50 54) scale(0.225) translate(-352 -270)';
+    : 'translate(50 52) scale(0.18) translate(-352 -300)';
   return `<svg viewBox="0 0 100 100" class="charsvg" ${size?`width="${size}" height="${size}"`:''}>
     <defs><clipPath id="${uid}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
     <g clip-path="url(#${uid})">
@@ -2180,7 +2183,7 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
 function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
-try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); }catch(e){ console.error(e); }
+try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); migratePriceFloorsB68(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
@@ -3623,7 +3626,7 @@ function vSettings(){
       <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" step="10" value="${suggestFromFreq(newRewardFreq,null,newRewardPer)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
         <button class="btn primary grow" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
       <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq,null,newRewardPer))}</p>
-      <p class="tiny muted">Suggested from your treat pot and this cadence — longer wait, higher sticker. Type over it if you disagree — the budget above keeps you honest.</p>
+      <p class="tiny muted">Suggested as one week of your treat pot times this cadence (weekly ≈ a week to rebuild). Type over it if you disagree — the budget above keeps you honest.</p>
     </div>
     ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}
       <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
@@ -3728,7 +3731,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the price follows that cadence: longer wait between buys means a higher sticker, so a fortnight costs about twice a weekly. The treat pot is still about four clear days plus three half days of coins a week from your tasks; prices auto-recalc when tasks or rewards change (and via <b>Balance these for me</b>). Type over a price if you disagree. The budget line shows what all your rewards want per month against that pot; amber past 90%, red past 100%.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month — and the sticker is one week of the treat pot times that wait (weekly ≈ one week of pot, fortnight ≈ two weeks, monthly ≈ 4.33). One clear day alone will not buy a weekly. The pot is still about four clear days plus three half days of coins a week from your tasks; more rewards do not cheapen each sticker — the budget meter goes amber/red instead, so you pick fewer treats or wait longer. Prices auto-recalc when tasks or rewards change (and via <b>Balance these for me</b>). Type over a price if you disagree. Amber past 90%, red past 100%.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -4639,7 +4642,7 @@ function iosInstallSheet(){
 function budgetCard(){
   const b=budgetState();
   if(!b.active.length) return `<div class="card" style="padding:12px"><b class="small">Your monthly budget</b>
-    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (four clears + three half days a week from your tasks). Prices follow how often you can have each treat — longer cadence, higher sticker. Add a reward and this shows whether it fits.</p></div>`;
+    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (four clears + three half days a week from your tasks). A weekly sticker ≈ one week of that pot; fortnight ≈ two weeks — one clear day will not buy a weekly. Add a reward and this shows whether it fits.</p></div>`;
   const msg = b.level==='over'
     ? `That does not fit the treat pot. Something will have to give — fewer rewards, or rarer ones.`
     : b.level==='tight' ? `That is just about the whole treat pot. Little slack left.`
@@ -4647,7 +4650,7 @@ function budgetCard(){
   return `<div class="card budget ${b.level}" style="padding:12px">
     <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'#f59e0b':'var(--accent)'}">${b.pct}%</span></div>
     <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
-    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (four clears + three half days a week) · stickers follow cadence (fortnight ≈ 2× weekly) · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
+    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (four clears + three half days a week) · weekly ≈ one week of pot · fortnight ≈ two · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
     ${rebalancePlan().length?`<button class="btn sm block" style="margin-top:10px" data-rebalance>Balance these for me</button>`:''}
   </div>`;
 }
@@ -4659,7 +4662,7 @@ function rebalanceSheet(){
     + b.active.filter(r=>!plan.some(x=>x.r.id===r.id)).reduce((a,r)=>a+monthlyCostOf(r),0);
   const warn=plan.filter(x=>x.raises&&x.halfway);
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Rebalance your rewards?</h2>
-    <p class="muted small" style="margin-bottom:12px">Frequencies stay as you set them. Prices follow cadence — longer wait, higher sticker — so a typical week of due buys fits the treat pot.</p>
+    <p class="muted small" style="margin-bottom:12px">Frequencies stay as you set them. Each sticker is the treat pot times its wait — a weekly buy ≈ one week of pot, fortnight ≈ two — so one clear day alone cannot afford a weekly. More rewards do not cheapen stickers; the meter goes amber or red instead.</p>
     <ul class="list">${plan.map(x=>`<li><div><div>${esc(x.r.name)}</div><div class="tiny muted">${esc(x.label.toLowerCase())}</div></div>
       <div style="text-align:right"><span class="tiny muted" style="text-decoration:line-through">${x.from}</span>
       <b style="margin-left:8px;color:${x.raises?'var(--danger)':'var(--accent)'}">${x.to}</b></div></li>`).join('')}</ul>
