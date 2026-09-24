@@ -542,6 +542,11 @@ function backlog(){ return S.todos.filter(t=>!t.done && !t.day).sort((a,b)=>b.cr
 function addTodo(text,day,at){ S.todos.push({id:uid(),text,day:day||null,at:at||null,done:false,createdAt:Date.now()}); save(); }
 function setTodoTime(id,at){ const t=S.todos.find(x=>x.id===id); if(t){ t.at=at||null; save(); } }
 function setTodoDay(id,day){ const t=S.todos.find(x=>x.id===id); if(t){ t.day=day||null; save(); } }
+function moveTodosToTomorrow(items){
+  const tom=addDays(today(),1); let n=0;
+  for(const t of items){ if(t&&!t.done){ t.day=tom; n++; } }
+  if(n) save(); return n;
+}
 function whenLabel(k){ if(!k) return 'Someday'; const d=(parse(k)-parse(today()))/86400000;
   if(d<0) return 'Overdue'; if(d===0) return 'Today'; if(d===1) return 'Tomorrow';
   if(d<7) return parse(k).toLocaleDateString(undefined,{weekday:'long'});
@@ -3016,7 +3021,7 @@ function pList(){
   const overdue=S.todos.filter(t=>!t.done&&t.day&&t.day<today()).sort((a,b)=>a.day<b.day?-1:1);
   const tod=todosOn(today()), ahead=todosAhead(), bl=backlog(), dn=todosDone();
   const w=planState.when;
-  const group=(title,items,note)=>items.length?`<div class="section"><h2>${title}${note?` <span class="muted">${note}</span>`:''}</h2><div class="card"><ul class="tasks">${items.map(rowTodo).join('')}</ul></div></div>`:'';
+  const group=(title,items,note,bulk)=>items.length?`<div class="section"><h2><span>${title}${note?` <span class="muted">${note}</span>`:''}</span>${bulk?`<button type="button" class="textlink" data-moveall="${bulk}">Move all to tomorrow</button>`:''}</h2><div class="card"><ul class="tasks">${items.map(rowTodo).join('')}</ul></div></div>`:'';
   const byDay=(()=>{ const g={}; ahead.forEach(t=>(g[t.day]=g[t.day]||[]).push(t)); return g; })();
   return `
   <div class="card" data-tour="listadd">
@@ -3030,8 +3035,8 @@ function pList(){
       <button class="chip ${w&&w.includes('-')?'on':'add'}" data-when="pick">${w&&w.includes('-')?whenLabel(w):'Pick a date'}</button>
       <button class="btn primary sm" id="addtodo" style="margin-left:auto">Add</button></div>
   </div>
-  ${group('Overdue',overdue,'moved along with you')}
-  ${group('Today',tod)}
+  ${group('Overdue',overdue,'moved along with you','overdue')}
+  ${group('Today',tod,null,'today')}
   ${Object.entries(byDay).map(([k,items])=>group(whenLabel(k),items,fmt(k,{day:'numeric',month:'short'}))).join('')}
   ${group('Someday',bl,'no date yet')}
   ${dn.length?`<details class="fold"><summary><span>Ticked off today (${dn.length})</span></summary><div class="card" style="margin-top:8px"><ul class="tasks">${dn.map(t=>{ const more=textHasMore(t.text); const h=`<button class="tick on" data-todo="${t.id}">${ICON.check}</button><span class="name">${esc(firstLine(t.text))}</span>`; return more?`<li><details class="planfold"><summary class="todo done">${h}</summary><div class="planfold-body">${esc(t.text)}</div></details></li>`:`<li><div class="todo done">${h}</div></li>`; }).join('')}</ul></div></details>`:''}
@@ -3733,7 +3738,7 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
     <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Chests pay coins; Rare has a chance of +1 shop buy for the week, Legendary gives two — you pick which rewards. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
-    <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses.</p>
+    <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses. On Today or Overdue you can push unfinished list items to tomorrow in one tap — only when you ask; nothing rolls over on its own.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
@@ -3782,6 +3787,11 @@ function bind(){
     haptic(); if(!t.done&&S.settings.motion){ el.classList.add('ticking'); setTimeout(()=>{toggleTodo(id);render();},200); } else { toggleTodo(id); render(); } });
   qa('[data-tmove]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tmove);
     moveSheet(t); });
+  qa('[data-moveall]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const which=b.dataset.moveall;
+    const items=which==='today'?todosOn(today()):S.todos.filter(x=>!x.done&&x.day&&x.day<today());
+    const n=moveTodosToTomorrow(items); if(!n) return;
+    haptic(); render(); toast(`Moved ${n} to tomorrow`); });
   qa('[data-pull]').forEach(b=>b.onclick=()=>{ setTodoDay(b.dataset.pull,today()); haptic(); render(); toast('Moved to today'); });
   qa('[data-tdrop]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
     toast('Removed','Undo',()=>{ S.todos.push(t); save(); render(); }); });
@@ -4582,7 +4592,7 @@ function onboarding(next, force){
 /* ---------- Spotlight tour ---------- */
 const TOURS={
   today:[['ring','Coins earned today. Each task pays 3 — after 2 misses in a row it rises by 1 a day up to 8. Half and clear days add a bonus on top.'],['tasks','Tap to pick, confirm below. Timed ones ask how long — and Done today lets you Undo anytime (coins come back) or Edit the minutes.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
-  plan:[['listadd','List, Notes and Affirmations. Add anything for today, a date, or someday — nothing here can be failed.']],
+  plan:[['listadd','List, Notes and Affirmations. Add anything for today, a date, or someday — nothing here can be failed. Unfinished Today or Overdue items can be pushed to tomorrow in one tap.']],
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
   shop:[['balance','Coins to spend. XP fills the level bar and is never spent. The shop stays open — allowances on each reward do the limiting.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
   settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, designs, font, type size.'],['remind','Optional nudges: morning, evening if anything’s open, and your own affirmations.'],['account','Update app, backup/restore, and sign out live here.']],
