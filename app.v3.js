@@ -3829,8 +3829,78 @@ function vShop(){
       <div><b>Your character</b><p class="tiny muted">Open Peeps — hair, facial hair, shirt colours, eyewear, headwear and backdrops.</p></div></div>
       <span class="chev">›</span></button></div>
   <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
-    ${S.locker.length?`<div class="card"><ul class="list">${[...S.locker].reverse().map(x=>`<li class="locker-item ${x.usedAt?'used':''}"><div><div>${esc(x.name)}</div><div class="tiny muted">${x.usedAt?'Used '+fmt(x.usedAt):'Bought '+fmt(x.boughtAt)}</div></div>${x.usedAt?'':`<button class="btn sm" data-use="${x.id}">Mark used</button>`}</li>`).join('')}</ul></div>`:'<div class="card"><p class="muted small">Things you buy land here.</p></div>'}</div>`;
+    ${lockerHtml()}</div>`;
 }
+/* Shop locker: unused open list + used by date folds (default) or by reward name. */
+let lockerView='date'; // 'date' | 'reward'
+function lockerRewardName(x){
+  if(x.name) return x.name;
+  const r=S.rewards.find(r=>r.id===x.rewardId);
+  return r?r.name:'Reward';
+}
+function lockerUsedBuckets(items){
+  const t=today(), mon=weekOf(t), sun=addDays(mon,6);
+  const monthKey=t.slice(0,7);
+  const buckets=[];
+  const by={today:[],week:[],emonth:[],months:{}};
+  for(const x of items){
+    const u=x.usedAt; if(!u) continue;
+    if(u===t) by.today.push(x);
+    else if(u>=mon && u<=sun) by.week.push(x);
+    else if(u.slice(0,7)===monthKey && u<mon) by.emonth.push(x);
+    else {
+      const mk=u.slice(0,7);
+      (by.months[mk]||(by.months[mk]=[])).push(x);
+    }
+  }
+  const newest=(a,b)=>(b.usedAt||'').localeCompare(a.usedAt||'') || (b.boughtAt||'').localeCompare(a.boughtAt||'');
+  const push=(key,label,list)=>{ if(!list.length) return; list.sort(newest); buckets.push({key,label,items:list}); };
+  push('today','Today',by.today);
+  push('week','This week',by.week);
+  if(by.emonth.length){
+    push('emonth','Earlier '+parse(t).toLocaleDateString(undefined,{month:'short'}),by.emonth);
+  }
+  Object.keys(by.months).sort((a,b)=>b.localeCompare(a)).forEach(mk=>{
+    const [y,m]=mk.split('-').map(Number);
+    const label=new Date(y,m-1,1).toLocaleDateString(undefined,{month:'short',year:'numeric'});
+    push(mk,label,by.months[mk]);
+  });
+  return buckets;
+}
+function lockerUsedRow(x, hideName){
+  return `<li class="locker-item used"><div>${hideName?'':`<div>${esc(lockerRewardName(x))}</div>`}<div class="tiny muted">Used ${fmt(x.usedAt)}</div></div></li>`;
+}
+function lockerDateFolds(items, hideName){
+  return lockerUsedBuckets(items).map(b=>`<details class="fold"><summary><span>${esc(b.label)} · ${b.items.length}</span></summary><ul class="list" style="margin-top:8px">${b.items.map(x=>lockerUsedRow(x, hideName)).join('')}</ul></details>`).join('');
+}
+function lockerHtml(){
+  if(!S.locker.length) return '<div class="card"><p class="muted small">Things you buy land here.</p></div>';
+  const unused=[...S.locker].filter(x=>!x.usedAt).reverse();
+  const used=[...S.locker].filter(x=>x.usedAt);
+  const parts=[];
+  if(unused.length){
+    parts.push(`<ul class="list">${unused.map(x=>`<li class="locker-item"><div><div>${esc(lockerRewardName(x))}</div><div class="tiny muted">Bought ${fmt(x.boughtAt)}</div></div><button class="btn sm" data-use="${x.id}">Mark used</button></li>`).join('')}</ul>`);
+  }
+  if(used.length){
+    const showChips=used.length>=2;
+    const chips=showChips?`<div class="seg locker-used-seg" style="margin:8px 0 4px"><button type="button" class="${lockerView==='date'?'on':''}" data-locker-view="date">All</button><button type="button" class="${lockerView==='reward'?'on':''}" data-locker-view="reward">By reward name</button></div>`:'';
+    let body='';
+    if(lockerView==='reward'){
+      const groups={};
+      for(const x of used){ const n=lockerRewardName(x); (groups[n]||(groups[n]=[])).push(x); }
+      const names=Object.keys(groups).sort((a,b)=>a.localeCompare(b));
+      body=names.map(n=>{
+        const list=groups[n];
+        return `<details class="fold"><summary><span>${esc(n)} · ${list.length}</span></summary>${lockerDateFolds(list, true)}</details>`;
+      }).join('');
+    } else {
+      body=lockerDateFolds(used, false);
+    }
+    parts.push(`<div class="locker-used"><div class="row between" style="margin:${unused.length?'12px':0} 0 2px"><b class="small muted">Used · ${used.length}</b></div>${chips}${body}</div>`);
+  }
+  return `<div class="card">${parts.join('')}</div>`;
+}
+
 function buy(id){
   const r=S.rewards.find(x=>x.id===id); if(!r) return; const cost=rewardPrice(r); if(S.points.coins<cost) return;
   const al=allowanceState(r);
@@ -4188,6 +4258,7 @@ function bind(){
   qa('[data-buy]').forEach(b=>b.onclick=()=>buy(b.dataset.buy));
   const pe=q('#placeextras'); if(pe) pe.onclick=()=>offerChestExtras();
   qa('[data-use]').forEach(b=>b.onclick=()=>{const x=S.locker.find(l=>l.id===b.dataset.use); x.usedAt=today(); save(); haptic(); render(); toast('Enjoy it.');});
+  qa('[data-locker-view]').forEach(b=>b.onclick=()=>{lockerView=b.dataset.lockerView==='reward'?'reward':'date'; haptic(); render();});
   // Settings — tasks
   const nt=q('#newtask'); const addT=()=>{ const v=nt.value.trim(); if(!v) return;
     if(S.tasks.filter(t=>!t.archived).length>=MAX_TASKS){ toast("That's the "+MAX_TASKS+" task cap."); return; }

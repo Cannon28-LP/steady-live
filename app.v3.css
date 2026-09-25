@@ -262,6 +262,10 @@ body.has-confirm .toast{bottom:calc(var(--tabbar) + env(safe-area-inset-bottom) 
 .reward.locked .bar i{background:var(--fg3)}
 .locker-item{opacity:1}
 .locker-item.used{opacity:.5}
+.locker-used details.fold{margin-top:8px;padding-top:6px}
+.locker-used details.fold:first-of-type{border-top:0;margin-top:4px;padding-top:0}
+.locker-used details.fold details.fold{margin-top:6px;padding-top:4px;margin-left:2px}
+.locker-used-seg{font-size:.85rem}
 
 /* Settings */
 .acc{border:1px solid var(--line);border-radius:var(--r);background:color-mix(in srgb,var(--surface) 92%, transparent);overflow:hidden}
