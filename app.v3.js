@@ -3,7 +3,7 @@
 import { createPeepsSvg } from './vendor/open-peeps-avatar.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-24'; }catch(e){ return '2026-09-24'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-25'; }catch(e){ return '2026-09-25'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -139,6 +139,27 @@ function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(weekly
 function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
 function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
 function snapRewardPrice(n){ return Math.max(MIN_REWARD_PRICE, round10(Number(n)||0)); }
+/* b72: one weekly treat sticker — pot split across active weeklies (fallback 4). */
+function weeklyTreatUnit(){
+  const n = Math.max(1, (S.rewards||[]).filter(r=>r.active && rewardFreq(r)==='weekly').length || 4);
+  return snapRewardPrice(weeklyTreatPot() / n);
+}
+/* Chest bands ≈ half / 1 / 2 weeklies (common / rare / legendary). */
+const CHEST_ROLL_MUL = {
+  common:    [0.4, 0.5, 0.6],
+  rare:      [0.9, 1.0, 1.1],
+  legendary: [1.8, 2.0, 2.2],
+};
+function tierChestRolls(tier){
+  const u = weeklyTreatUnit();
+  return (CHEST_ROLL_MUL[tier]||CHEST_ROLL_MUL.common).map(m => Math.max(5, Math.round(u*m/5)*5));
+}
+/* Coin-haul per-person need = needMul × clearDayHaul(typicalN), snapped. */
+function coinHaulNeedEach(ch){
+  const mul = Number(ch && ch.needMul);
+  if(!(mul>0)) return Math.max(1, Math.round(Number(ch && ch.need)||0));
+  return Math.max(MIN_REWARD_PRICE, round10(mul * clearDayHaul(typicalN())));
+}
 /* Window weeks (weight): longer cadence → higher cohort pot before split. */
 function weightFor(freqId, perMonth){
   const f = freqId || 'monthly';
@@ -1357,29 +1378,30 @@ function nextDemoName(){
    Nothing here can be failed: windows roll forward, so a bad patch costs
    time, never progress you already had. */
 const TIERS_C = {
-  /* Common grey · Rare blue · Legendary purple — matches the chest panels. */
-  common:    {label:'Common',    colour:'#94a3b8', rolls:[10,20,30]},
-  rare:      {label:'Rare',      colour:'#3b82f6', rolls:[50,70,90]},
-  legendary: {label:'Legendary', colour:'#a855f7', rolls:[150,180,200]},
+  /* Common grey · Rare blue · Legendary purple — matches the chest panels.
+     Chest coin bands are live via tierChestRolls() (b72). */
+  common:    {label:'Common',    colour:'#94a3b8'},
+  rare:      {label:'Rare',      colour:'#3b82f6'},
+  legendary: {label:'Legendary', colour:'#a855f7'},
 };
 const CHAL_COOLDOWN_DAYS = 1;
 const CHALLENGES = {
   /* Same four shapes at every tier — only the bar moves. */
   common:[
     {id:'c1',name:'Clear streak',     desc:'Everyone clears the day, 3 days running.',           type:'bothClearStreak', need:3},
-    {id:'c2',name:'Coin haul',        desc:'Earn 250 coins each in 4 days.',                     type:'coinsEarned',     need:250, window:4},
+    {id:'c2',name:'Coin haul',        desc:'Earn about 3 clear-day hauls each in 4 days.',       type:'coinsEarned',     needMul:3, window:4},
     {id:'c3',name:'Show up',          desc:'Everyone opens the app 7 days running.',             type:'bothOpenStreak',  need:7},
     {id:'c4',name:'Shop silence',     desc:'Nobody buys a reward for 3 days.',                   type:'noBuys',          need:3},
   ],
   rare:[
     {id:'r1',name:'Clear streak',     desc:'Everyone clears the day, 7 days running.',           type:'bothClearStreak', need:7},
-    {id:'r2',name:'Coin haul',        desc:'Earn 500 coins each in 7 days.',                     type:'coinsEarned',     need:500, window:7},
+    {id:'r2',name:'Coin haul',        desc:'Earn about 5 clear-day hauls each in 7 days.',       type:'coinsEarned',     needMul:5, window:7},
     {id:'r3',name:'Show up',          desc:'Everyone opens the app 14 days running.',            type:'bothOpenStreak',  need:14},
     {id:'r4',name:'Shop silence',     desc:'Nobody buys a reward for 7 days.',                   type:'noBuys',          need:7},
   ],
   legendary:[
     {id:'l1',name:'Clear streak',     desc:'Everyone clears the day, 14 days running.',          type:'bothClearStreak', need:14},
-    {id:'l2',name:'Coin haul',        desc:'Earn 1000 coins each in 14 days.',                   type:'coinsEarned',     need:1000,window:14},
+    {id:'l2',name:'Coin haul',        desc:'Earn about 10 clear-day hauls each in 14 days.',     type:'coinsEarned',     needMul:10,window:14},
     {id:'l3',name:'Show up',          desc:'Everyone opens the app 30 days running.',            type:'bothOpenStreak',  need:30},
     {id:'l4',name:'Shop silence',     desc:'Nobody buys a reward for 14 days.',                  type:'noBuys',          need:14},
   ],
@@ -1491,8 +1513,8 @@ function partyNames(members){
 function questNeed(ch){
   const party=1+((ch.members||ch.memberIds||[]).length);
   if(ch.type==='combined') return Math.max(ch.need, Math.round(ch.need*party/2));
-  /* Coin haul need is per person — pair of 2 with need 500 → 1000 together. */
-  if(ch.type==='coinsEarned') return ch.need*Math.max(1,party);
+  /* Coin haul need is per person — live each × party (b72 needMul × clearDayHaul). */
+  if(ch.type==='coinsEarned') return coinHaulNeedEach(ch)*Math.max(1,party);
   return ch.need;
 }
 function liveDesc(ch){
@@ -1506,7 +1528,7 @@ function liveDesc(ch){
   if(ch.type==='bothOpenStreak') return `${cap(who)} ${together} open the app ${n} days running. Miss a day and it ends.`;
   if(ch.type==='coinsEarned'){
     const party=1+((ch.members||ch.memberIds||[]).length);
-    const each=ch.need;
+    const each=coinHaulNeedEach(ch);
     return party>1
       ? `Earn ${each} coins each (${n} together) in ${days}. Window ends empty = fail.`
       : `Earn ${n} coins in ${days}. Window ends empty = fail.`;
@@ -1522,8 +1544,17 @@ function coinsEarnedSince(from,to){
   let n=0; for(let x=from;x<=to;x=addDays(x,1)) n+=(dayStats(x).points||0); return n;
 }
 function friendCoinsSince(f,from,to){
-  /* Friends sync done/expected only — estimate TASK_BASE coins per done (ignores day bonuses; b64 follow-up). */
-  let n=0; for(let x=from;x<=to;x=addDays(x,1)){ const d=f.days?.[x]; if(d?.done) n+=10*(d.done||0); } return n;
+  /* Friends sync done/expected only — estimate clear/half/base haul from aggregates (b72). */
+  let n=0;
+  for(let x=from;x<=to;x=addDays(x,1)){
+    const d=f.days?.[x]; if(!d || d.away) continue;
+    const done=d.done|0, expected=d.expected|0;
+    if(expected<=0 && done<=0) continue; /* empty / away-like day */
+    if(expected>0 && done>=expected) n+=clearDayHaul(expected);
+    else if(expected>0 && done*2>=expected) n+=TASK_BASE*done + halfDayBonusAmt(expected);
+    else n+=TASK_BASE*done;
+  }
+  return n;
 }
 function buysSince(from,to){
   return (S.locker||[]).filter(l=>{ const b=l.boughtAt; return b&&b>=from&&b<=to; }).length;
@@ -1657,7 +1688,8 @@ function claimChest(cid){
   const pr=challengeProgress(ch); if(pr.have<pr.need) return null;
   const t=TIERS_C[ch.tier];
   const heads=(ch.memberIds||[]).length+1;
-  const amount=Math.round(t.rolls[Math.floor(Math.random()*t.rolls.length)]*crewMultiplier(heads)/5)*5;
+  const rolls=tierChestRolls(ch.tier);
+  const amount=Math.round(rolls[Math.floor(Math.random()*rolls.length)]*crewMultiplier(heads)/5)*5;
   S.points.coins+=amount; S.points.xp+=amount;
   /* Rare: chance of one shop extra. Legendary: two guaranteed. Common: coins only. */
   let extras=0;
@@ -1675,7 +1707,7 @@ function claimChest(cid){
   S.challenges=chalList().filter(c=>c.id!==cid); save();
   const mult=crewMultiplier(heads);
   return {tier:ch.tier,amount,name:ch.name,colour:t.colour,heads,extras,
-    rolls:t.rolls.map(r=>Math.round(r*mult/5)*5)};
+    rolls:rolls.map(r=>Math.round(r*mult/5)*5)};
 }
 function migratePairChallenges(state){
   const m=state||S;
@@ -3571,7 +3603,7 @@ function challengeCard(raw){
       <div class="chestmini ${done?'shake':''}">${chestSVG(ch.tier)}</div></div>
     <div class="faces" style="margin-top:12px">${ch.members.map(f=>`<span class="avatar" title="${esc(f.name)}">${esc((f.name||'?')[0]).toUpperCase()}</span>`).join('')}</div>
     <div class="row between" style="margin-top:12px"><span class="tiny muted">${pr.have} of ${pr.need}</span>
-      <span class="tiny muted">${t.rolls[0]}–${t.rolls[t.rolls.length-1]} coins${ch.tier==='legendary'?' · 2 shop extras':ch.tier==='rare'?' · chance of shop extra':''}</span></div>
+      <span class="tiny muted">${(()=>{ const rr=tierChestRolls(ch.tier); return rr[0]+'–'+rr[rr.length-1]; })()} coins${ch.tier==='legendary'?' · 2 shop extras':ch.tier==='rare'?' · chance of shop extra':''}</span></div>
     <div class="bar quest chal-bar"><i style="width:${clamp(pc,0,100)}%"></i></div>
     ${counts}
     <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${pills}</div>
@@ -3622,8 +3654,11 @@ function startChallengeModal(crewId,after){
         const locks=questLockReasons(q.id, members);
         const locked=!!locks.length;
         const on=qid===q.id&&!locked;
-        return `<button type="button" class="questpick ${on?'on':''} ${locked?'locked':''}" data-qid="${q.id}" ${locked?'disabled':''}><b>${esc(q.name)}</b><p class="tiny muted">${esc(q.desc)}</p>
-          <p class="tiny muted" style="margin-top:4px">${locked?locks[0]:`${TIERS_C[tier].rolls[0]}–${TIERS_C[tier].rolls[TIERS_C[tier].rolls.length-1]} coins`}</p></button>`;
+        const qMembers=members.map(id=>S.friends[id]).filter(Boolean);
+        const qDesc=liveDesc({...q,tier,members:qMembers});
+        const rr=tierChestRolls(tier);
+        return `<button type="button" class="questpick ${on?'on':''} ${locked?'locked':''}" data-qid="${q.id}" ${locked?'disabled':''}><b>${esc(q.name)}</b><p class="tiny muted">${esc(qDesc)}</p>
+          <p class="tiny muted" style="margin-top:4px">${locked?locks[0]:`${rr[0]}–${rr[rr.length-1]} coins`}</p></button>`;
       }).join('')}</div>
       ${!anyOpen?`<p class="tiny muted" style="margin-top:8px">Nothing left open for this group this month — try another tier or wait.</p>`:''}
       <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok ${picks.size&&anyOpen&&questAvailable(qid,members)?'':'disabled'}>Start</button></div>`;
@@ -3937,7 +3972,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
 
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
-    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Chests pay coins; Rare has a chance of +1 shop buy for the week, Legendary gives two — you pick which rewards. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
+    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Coin haul targets scale with a clear day's coins (about 3 / 5 / 10 clears in the window). Chests pay about half / one / two of a weekly treat by tier; Rare has a chance of +1 shop buy for the week, Legendary gives two — you pick which rewards. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses. On Today or Overdue you can push unfinished list items to tomorrow in one tap — only when you ask; nothing rolls over on its own.</p>
     <p><b style="color:var(--fg)">Tab dots.</b> A dot on a tab means something new is waiting there.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
@@ -5150,11 +5185,12 @@ function chalCardInChat(raw){
   const pr=challengeProgress(ch), t=TIERS_C[ch.tier], done=pr.have>=pr.need;
   const q=findChallenge(ch.questId||ch.cid)||{};
   const mult=crewMultiplier((raw.memberIds||[]).length+1);
-  const lo=Math.round(t.rolls[0]*mult), hi=Math.round(t.rolls[t.rolls.length-1]*mult);
+  const rr=tierChestRolls(ch.tier);
+  const lo=Math.round(rr[0]*mult/5)*5, hi=Math.round(rr[rr.length-1]*mult/5)*5;
   return `<div class="card chatchal ${done?'ready':''}" style="--tier:${t.colour}">
     <div class="row between" style="align-items:flex-start">
       <div><span class="tierbadge">${t.label}</span><b style="display:block;margin-top:6px">${esc(q.name||'Challenge')}</b>
-        <p class="tiny muted">${esc(q.desc||'')}</p></div>
+        <p class="tiny muted">${esc(liveDesc(ch)||q.desc||'')}</p></div>
       <div class="chestmini ${done?'shake':''}">${chestSVG(ch.tier)}</div></div>
     <div class="row between" style="margin-top:10px"><span class="tiny muted">${pr.have} of ${pr.need}</span><span class="tiny muted">${lo}–${hi} coins</span></div>
     <div class="bar quest chal-bar"><i style="width:${clamp(Math.round(100*pr.have/pr.need),0,100)}%"></i></div>
