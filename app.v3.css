@@ -142,6 +142,20 @@ details.fold[open] summary::after{transform:rotate(90deg)}
 .tabbar button svg{width:20px;height:20px}
 .tabbar button{font-size:.6rem;padding:8px 2px;gap:2px}
 .tabbar button.active{color:var(--accent)}
+.tabbar button .tab-dot{
+  position:absolute;top:6px;left:50%;margin-left:6px;
+  width:8px;height:8px;border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--surface) 78%,transparent);
+  pointer-events:none;display:block;
+}
+.tabbar button .tab-dot[hidden]{display:none!important}
+@keyframes tab-dot-pulse{
+  0%{transform:scale(.55);opacity:0}
+  70%{transform:scale(1.1);opacity:1}
+  100%{transform:scale(1);opacity:1}
+}
+.tabbar button .tab-dot.pulse{animation:tab-dot-pulse .48s var(--ease) 1}
 
 /* Sheets, toasts, overlays */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity var(--dur)}

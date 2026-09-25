@@ -447,6 +447,7 @@ function fresh(){
     settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true,
       remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}}},
     flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
+    tabSeen:{},
     pendingMisses:[], undo:null,
     away:{until:null},
     rough:[],
@@ -544,6 +545,7 @@ function load(){
     const raw=localStorage.getItem(KEY); if(!raw) return fresh();
     const s=fresh(); const p=JSON.parse(raw);
     const m={...s,...p,settings:{...s.settings,...(p.settings||{})},flags:{...s.flags,...(p.flags||{})}};
+    if(!m.tabSeen || typeof m.tabSeen!=='object') m.tabSeen={};
     if(!m.away || typeof m.away!=='object') m.away={until:null};
     if(!Array.isArray(m.rough)) m.rough=[];
     if(!m.points || m.points.coins===undefined){ m.points={coins:m.points?.balance||0,xp:m.points?.lifetime||0}; }
@@ -2823,7 +2825,156 @@ const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   coin:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9.5A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5.5 1.5" stroke-linecap="round"/></svg>',
   flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
 
-function setTab(t){ if(t!=='progress') progState.taskId=null; endTour(true); rollTabAff(); tab=t; sel.clear(); render(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+
+/* ---------- Tab attention dots (b71) ----------
+   Calm accent dots on the tab bar when something new/actionable
+   appeared on that tab since the last visit. One teal dot — no counts. */
+function ensureTabSeen(){
+  if(!S.tabSeen || typeof S.tabSeen!=='object') S.tabSeen={};
+  return S.tabSeen;
+}
+function overdueTodos(){
+  return (S.todos||[]).filter(t=>!t.done && t.day && t.day<today());
+}
+function shopAffordIds(){
+  return (S.rewards||[]).filter(x=>{
+    if(!x || !x.active) return false;
+    try{
+      if(!(S.points.coins>=rewardPrice(x))) return false;
+      if(allowanceState(x).maxed) return false;
+    }catch(e){ return false; }
+    return true;
+  }).map(x=>x.id).sort();
+}
+function pairChestSig(){
+  const bits=[];
+  for(const [fid,p] of Object.entries(S.pairs||{})){
+    const ch=(p&&p.chests)||[];
+    if(!ch.length) continue;
+    const last=ch[ch.length-1]||{};
+    bits.push(`${fid}:${ch.length}:${last.at||''}:${last.questId||last.tier||''}`);
+  }
+  return bits.sort().join('|');
+}
+function friendsAttnFp(){
+  const parts=[];
+  for(const c of crewList()){
+    const u=crewUnread(c);
+    if(u>0){
+      const latest=msgsOf(c.id).filter(m=>m.from!=='me').reduce((a,m)=>Math.max(a,m.at||0),0);
+      parts.push(`u:${c.id}:${latest}:${u}`);
+    }else if(!c.seenAt && msgsOf(c.id).some(m=>m.from!=='me')){
+      parts.push(`newcrew:${c.id}`);
+    }
+  }
+  for(const c of chalList()){
+    if(chalIsPending(c) && !iAcceptedChallenge(c)) parts.push(`inv:${c.id}`);
+    if(chalIsActive(c)){
+      try{
+        const ch=liveQuest(c); if(!ch) continue;
+        const pr=challengeProgress(ch);
+        if(pr.have>=pr.need) parts.push(`ready:${c.id}`);
+      }catch(e){}
+    }
+  }
+  const cs=pairChestSig();
+  if(cs) parts.push(`chest:${cs}`);
+  if((S.inbox||[]).length){
+    parts.push('inbox:'+(S.inbox||[]).map(x=>`${x.date||''}:${x.text||''}:${x.coins||0}`).join(','));
+  }
+  return parts.sort().join(';');
+}
+function overdueFp(){
+  return overdueTodos().map(t=>`${t.id}:${t.day||''}`).sort().join(',');
+}
+function progressHasHistory(){
+  for(let i=0;i<7;i++){
+    const k=addDays(today(),-i);
+    const d=S.days[k];
+    if(d && (d.cleared || Object.keys(d.tasks||{}).length)) return true;
+  }
+  const from=addDays(today(),-6);
+  if((S.rough||[]).some(r=>r && r.date && r.date>=from)) return true;
+  return false;
+}
+function tabAttention(tab){
+  const seen=ensureTabSeen();
+  if(tab==='settings') return false;
+  if(tab==='friends'){
+    const fp=friendsAttnFp();
+    if(!fp) return false;
+    return fp!==(seen.friends||'');
+  }
+  if(tab==='shop'){
+    if(pendingExtras().length) return true;
+    const cur=shopAffordIds();
+    if(!cur.length) return false;
+    // Until Shop has been visited once, don't light merely for existing affordability.
+    if(seen.shop===undefined) return false;
+    const prev=new Set(String(seen.shop||'').split(',').filter(Boolean));
+    return cur.some(id=>!prev.has(id));
+  }
+  if(tab==='progress'){
+    if(!progressHasHistory()) return false;
+    return seen.progress!==today();
+  }
+  if(tab==='today' || tab==='plan'){
+    const fp=overdueFp();
+    if(!fp) return false;
+    return fp!==(seen[tab]||'');
+  }
+  return false;
+}
+function tabAttentionWhy(tab){
+  if(tab==='friends'){
+    const fp=friendsAttnFp();
+    if(!fp) return 'quiet';
+    if(fp===(ensureTabSeen().friends||'')) return 'seen:'+fp;
+    return fp;
+  }
+  if(tab==='shop'){
+    const extras=pendingExtras().length;
+    const cur=shopAffordIds();
+    const seen=ensureTabSeen().shop;
+    return `extras:${extras}|afford:${cur.join(',')}|seen:${seen===undefined?'∅':seen}|on:${tabAttention('shop')}`;
+  }
+  if(tab==='progress') return `hist:${progressHasHistory()}|seen:${ensureTabSeen().progress||'∅'}|today:${today()}`;
+  if(tab==='today'||tab==='plan') return `od:${overdueFp()}|seen:${ensureTabSeen()[tab]||'∅'}`;
+  return 'none';
+}
+function markTabSeen(tab){
+  const seen=ensureTabSeen();
+  let next;
+  if(tab==='friends') next=friendsAttnFp();
+  else if(tab==='shop') next=shopAffordIds().join(',');
+  else if(tab==='progress') next=today();
+  else if(tab==='today'||tab==='plan') next=overdueFp();
+  else return;
+  if(seen[tab]===next) return;
+  seen[tab]=next;
+  save();
+}
+function updateTabDots(){
+  document.querySelectorAll('.tabbar button[data-tab]').forEach(b=>{
+    let dot=b.querySelector('.tab-dot');
+    if(!dot){
+      dot=document.createElement('i');
+      dot.className='tab-dot';
+      dot.setAttribute('aria-hidden','true');
+      b.prepend(dot);
+    }
+    const on=!!tabAttention(b.dataset.tab);
+    const was=!dot.hidden;
+    dot.hidden=!on;
+    if(on && !was){
+      dot.classList.remove('pulse');
+      void dot.offsetWidth;
+      dot.classList.add('pulse');
+    }
+  });
+}
+
+function setTab(t){ if(t!=='progress') progState.taskId=null; endTour(true); rollTabAff(); tab=t; sel.clear(); render(); markTabSeen(t); updateTabDots(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
 function render(){
   if(!$app || !document.body.contains($app)) $app=document.getElementById('app');
   if(!$app) return;
@@ -2831,6 +2982,8 @@ function render(){
   document.querySelectorAll('.tabbar button').forEach((b,i)=>{ const on=b.dataset.tab===tab; b.classList.toggle('active',on); if(on && ind) ind.style.transform=`translateX(${i*100}%)`; });
   $app.innerHTML=`<div class="page">${({today:vToday,plan:vPlan,progress:vProgress,friends:vFriends,shop:vShop,settings:vSettings})[tab]()}</div>`;
   bind();
+  try{ markTabSeen(tab); }catch(e){}
+  try{ updateTabDots(); }catch(e){}
 }
 
 /* ---------- Today ---------- */
@@ -3786,6 +3939,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
     <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Chests pay coins; Rare has a chance of +1 shop buy for the week, Legendary gives two — you pick which rewards. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses. On Today or Overdue you can push unfinished list items to tomorrow in one tap — only when you ask; nothing rolls over on its own.</p>
+    <p><b style="color:var(--fg)">Tab dots.</b> A dot on a tab means something new is waiting there.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
@@ -5252,7 +5406,7 @@ function friendsTick(){
     .then(()=>Sync.pullChallenges())
     .then(()=>{ try{ checkChallenges(); }catch(e){} })
     .then(()=>Sync.pullMessages())
-    .then(()=>{ if(tab==='friends'||tab==='shop') render(); })
+    .then(()=>{ if(tab==='friends'||tab==='shop') render(); else { try{ updateTabDots(); }catch(e){} } })
     .catch(()=>{});
   Sync.push().catch(()=>{});
 }
