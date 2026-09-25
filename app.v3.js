@@ -915,9 +915,11 @@ const AV_SIZE = 128, AV_MAX_BYTES = 20000;
 function avatarOf(who){ return who?.avatar || null; }
 function avatarHtml(who,cls){
   const src=avatarOf(who);
+  /* Explicit chip mode keeps mechip on the zoomed-out crop even if CSS width ≥52. */
+  const peepsSize = cls==='chip' ? 'chip' : undefined;
   if(src) return `<span class="avatar ${cls||''} img"><img src="${src}" alt=""></span>`;
-  if(who && who.char) return `<span class="avatar ${cls||''} img">${charSVG(who.char)}</span>`;
-  if(who && S.me && who.id===S.me.id) return `<span class="avatar ${cls||''} img">${charSVG(myChar())}</span>`;
+  if(who && who.char) return `<span class="avatar ${cls||''} img">${charSVG(who.char,peepsSize)}</span>`;
+  if(who && S.me && who.id===S.me.id) return `<span class="avatar ${cls||''} img">${charSVG(myChar(),peepsSize)}</span>`;
   return `<span class="avatar ${cls||''}">${esc((who?.name||'?')[0]).toUpperCase()}</span>`;
 }
 /* Centre-crop to a square, scale down, re-encode. */
@@ -1249,24 +1251,38 @@ function tintPeepsHair(svg, hex){
   if(iFacial>=0 && iFaceEnd>iFacial) svg = svg.slice(0,iFacial) + tint(svg.slice(iFacial,iFaceEnd)) + svg.slice(iFaceEnd);
   return svg;
 }
+/* Opaque white lens fills in Open Peeps glasses (e.g. glasses4) read as solid blobs
+   at small sizes — paint them near-black inside the accessories group only. */
+function blackenGlassesWhites(svg){
+  const accMark = '<g transform="translate(203 303)"';
+  const iAcc = svg.indexOf(accMark);
+  if(iAcc < 0) return svg;
+  const before = svg.slice(0, iAcc);
+  const chunk = svg.slice(iAcc).replace(
+    /fill="(?:#fff(?:fff)?|#FFF(?:FFF)?|white)"/gi,
+    'fill="#111"'
+  );
+  return before + chunk;
+}
 function charSVG(av,size){
   const a=av||myChar();
   const hex = hairHex(a);
   let peeps='';
-  try{ peeps = tintPeepsHair(createPeepsSvg(peepsOptsFromAv(a)), hex); }
+  try{ peeps = blackenGlassesWhites(tintPeepsHair(createPeepsSvg(peepsOptsFromAv(a)), hex)); }
   catch(e){ peeps = '<svg viewBox="0 0 704 704" xmlns="http://www.w3.org/2000/svg"></svg>'; }
   const inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
   const bg=(lookItem(a.backdrop)||{}).col;
-  /* size≥52 = Looks thumbs/picks/preview (bust). No size / mechip / faces = medium bust-leaning. */
-  const bust = (size|0) >= 52;
+  /* size≥52 = Looks thumbs/picks/preview (bust). 'chip' / no size / faces = zoomed-out head. */
+  const bust = size !== 'chip' && (size|0) >= 52;
   const nonce = Math.random().toString(36).slice(2,7);
   const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||'',nonce].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
-  /* Small: medium bust-leaning (b68) — full face+glasses+hair/shoulders, not forehead-only.
-     Large (≥52): bust (b60). */
+  /* Small/chip (b73): zoom out so full head + upper shoulders fit the circle.
+     Large (≥52): bust (b60) unchanged. */
   const xf = bust
     ? 'translate(50 50) scale(0.165) translate(-352 -340)'
-    : 'translate(50 52) scale(0.18) translate(-352 -300)';
-  return `<svg viewBox="0 0 100 100" class="charsvg" ${size?`width="${size}" height="${size}"`:''}>
+    : 'translate(50 50) scale(0.135) translate(-352 -275)';
+  const sizeAttr = (size && size !== 'chip') ? `width="${size}" height="${size}"` : '';
+  return `<svg viewBox="0 0 100 100" class="charsvg" ${sizeAttr}>
     <defs><clipPath id="${uid}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
     <g clip-path="url(#${uid})">
       <rect width="100" height="100" fill="${bg||'var(--surface2)'}"/>
@@ -3681,7 +3697,7 @@ function vFriends(){
   const live=Sync.live(), inn=Sync.signedIn();
   const banner=S.syncError?`<div class="card syncerr"><div class="row between"><div><b>Not syncing right now</b><p class="small muted">${esc(S.syncError)}</p></div><div class="stack" style="gap:6px"><button class="btn sm" id="retrysync">Retry</button><button class="btn sm ghost" id="conncheck2">Diagnose</button></div></div>
     <p class="tiny muted" style="margin-top:8px">Everything else works as normal — your tasks and history are on this device.</p></div>`:'';
-  const meChip=inn?`<button class="mechip" id="avpick" aria-label="Change your picture"><span class="mechip-name">${esc(m.name||'You')}</span>${avatarHtml(m)}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`:'';
+  const meChip=inn?`<button class="mechip" id="avpick" aria-label="Change your picture"><span class="mechip-name">${esc(m.name||'You')}</span>${avatarHtml(m,'chip')}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`:'';
   const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${meChip}</div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `

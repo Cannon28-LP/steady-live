@@ -1,8 +1,8 @@
 // Steady service worker.
 // HTML/JS/CSS: network-first so a broken build never sticks.
 // Other assets: stale-while-revalidate.
-const CACHE = 'steady-v74';
-const ASSETS = ['./', './index.html', './app.v3.js?b=72', './app.v3.css?b=72', './vendor/open-peeps-avatar.js', './manifest.json', './icon.svg'];
+const CACHE = 'steady-v75';
+const ASSETS = ['./', './index.html', './app.v3.js?b=73', './app.v3.css?b=73', './vendor/open-peeps-avatar.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
