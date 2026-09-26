@@ -3,7 +3,7 @@
 import { createPeepsSvg } from './vendor/open-peeps-avatar.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-25'; }catch(e){ return '2026-09-25'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-26'; }catch(e){ return '2026-09-26'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -18,7 +18,7 @@ const SYNC = {
 };
 const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 3, CLEAR_PER_TASK = 0, CHEST_DAYS = 6;
 /* Days of slip before weak-habit pay rises — one miss must not bump the badge. */
-const MAX_TASKS = 10, MIN_REWARD_PRICE = 10;
+const MAX_TASKS = 10, MIN_REWARD_PRICE = 5, MAX_REWARD_PRICE = 30;
 const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
 const CREW_MAX = 8;              // past this a chat stops being a conversation
 const CHAL_PARTY_MAX = 6;
@@ -86,8 +86,8 @@ function earnEta(cost){
 }
 function rewardPrice(r){
   const n=Math.round(Number(r && r.price));
-  if(n>0) return Math.max(MIN_REWARD_PRICE, n);
-  return Math.max(MIN_REWARD_PRICE, tierCost((r && r.tier) || 'week'));
+  if(n>0) return Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, n));
+  return Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, tierCost((r && r.tier) || 'week')));
 }
 /* ---------- Reward budgeting ----------
    You say how often you want a thing; the app works out the price from what you
@@ -138,7 +138,7 @@ function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreat
 function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreatPot() * WEEKS_PER_MONTH)); }
 function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
 function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
-function snapRewardPrice(n){ return Math.max(MIN_REWARD_PRICE, round10(Number(n)||0)); }
+function snapRewardPrice(n){ return Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, round10(Number(n)||0))); }
 /* b72: one weekly treat sticker — pot split across active weeklies (fallback 4). */
 function weeklyTreatUnit(){
   const n = Math.max(1, (S.rewards||[]).filter(r=>r.active && rewardFreq(r)==='weekly').length || 4);
@@ -558,6 +558,18 @@ function migratePriceFloorsB69(){
   S._priceFloorB69 = 1;
   save();
 }
+/* b76: shop max 30 — cap every active reward (incl. locked), then resync unlocked cohorts. */
+function migratePriceCapB76(){
+  if(S._priceCapB76) return;
+  const active = (S.rewards||[]).filter(r => r && r.active);
+  for(const r of active){
+    const p = Math.round(Number(r.price)||0);
+    if(p > MAX_REWARD_PRICE) r.price = MAX_REWARD_PRICE;
+  }
+  S._priceCapB76 = 1;
+  save();
+  try{ syncCadencePrices(); }catch(e){}
+}
 let S = load();
 /* Price-floor migrates run after activeTasks exists — see after task helpers. */
 function load(){
@@ -922,6 +934,14 @@ function avatarHtml(who,cls){
   if(who && S.me && who.id===S.me.id) return `<span class="avatar ${cls||''} img">${charSVG(myChar(),peepsSize)}</span>`;
   return `<span class="avatar ${cls||''}">${esc((who?.name||'?')[0]).toUpperCase()}</span>`;
 }
+/* Top-right mechip on every tab head — name + avatar + edit → Looks / photo. */
+function meChipHtml(){
+  const m = me();
+  return `<button class="mechip" id="avpick" aria-label="Change your picture"><span class="mechip-name">${esc(m.name||'You')}</span>${avatarHtml(m,'chip')}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`;
+}
+function avPairHtml(a,b){
+  return `<span class="avpair">${avatarHtml(a,'chip')}${avatarHtml(b,'chip')}</span>`;
+}
 /* Centre-crop to a square, scale down, re-encode. */
 function fileToAvatar(file){
   return new Promise((res,rej)=>{
@@ -1026,115 +1046,115 @@ const LOOK_ITEMS = [
   {id:'h-medium1',  slot:'hair', name:'Medium 1',       cost:0,   peeps:'medium1'},
   {id:'h-shaved1',  slot:'hair', name:'Shaved 1',       cost:0,   peeps:'shaved1'},
   {id:'h-no1',      slot:'hair', name:'No hair 1',      cost:0,   peeps:'noHair1'},
-  // fluff 120–180 (b64 bump from Band B)
-  {id:'h-buzz',     slot:'hair', name:'Shaved 2',       cost:120,  peeps:'shaved2'},
-  {id:'h-shaved3',  slot:'hair', name:'Shaved 3',       cost:120,  peeps:'shaved3'},
-  {id:'h-short5',   slot:'hair', name:'Short 5',        cost:140,  peeps:'short5'},
-  {id:'h-no2',      slot:'hair', name:'No hair 2',      cost:120,  peeps:'noHair2'},
-  {id:'h-no3',      slot:'hair', name:'No hair 3',      cost:120,  peeps:'noHair3'},
-  {id:'h-fringe',   slot:'hair', name:'Bangs',          cost:150, peeps:'bangs'},
-  {id:'h-bangs2',   slot:'hair', name:'Bangs 2',        cost:150, peeps:'bangs2'},
-  {id:'h-quiff',    slot:'hair', name:'Pomp',           cost:150, peeps:'pomp'},
-  {id:'h-medium2',  slot:'hair', name:'Medium 2',       cost:160, peeps:'medium2'},
-  {id:'h-medium3',  slot:'hair', name:'Medium 3',       cost:160, peeps:'medium3'},
-  {id:'h-pony',     slot:'hair', name:'Medium 2 (pony)',cost:160, peeps:'medium2'}, // legacy alias art
-  {id:'h-bun',      slot:'hair', name:'Bun',            cost:160, peeps:'bun'},
-  {id:'h-bun2',     slot:'hair', name:'Bun 2',          cost:160, peeps:'bun2'},
-  {id:'h-undercut', slot:'hair', name:'Flat top',       cost:160, peeps:'flatTop'},
-  {id:'h-wavy',     slot:'hair', name:'Long curly',     cost:180, peeps:'longCurly'},
-  {id:'h-longbangs',slot:'hair', name:'Long bangs',     cost:180, peeps:'longBangs'},
-  {id:'h-mbangs',   slot:'hair', name:'Medium bangs',   cost:180, peeps:'mediumBangs'},
-  // nicer 250–400 (b64)
-  {id:'h-mbangs2',  slot:'hair', name:'Medium bangs 2', cost:250, peeps:'mediumBangs2'},
-  {id:'h-mbangs3',  slot:'hair', name:'Medium bangs 3', cost:250, peeps:'mediumBangs3'},
-  {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:280, peeps:'mediumBangs'}, // legacy
-  {id:'h-braids',   slot:'hair', name:'Cornrows',       cost:280, peeps:'cornrows'},
-  {id:'h-cornrows2',slot:'hair', name:'Cornrows 2',     cost:320, peeps:'cornrows2'},
-  {id:'h-space',    slot:'hair', name:'Buns',           cost:280, peeps:'buns'},
-  {id:'h-afro',     slot:'hair', name:'Afro',           cost:280, peeps:'afro'},
-  {id:'h-longafro', slot:'hair', name:'Long afro',      cost:350, peeps:'longAfro'},
-  {id:'h-dreads1',  slot:'hair', name:'Dreads 1',       cost:350, peeps:'dreads1'},
-  {id:'h-dreads2',  slot:'hair', name:'Dreads 2',       cost:380, peeps:'dreads2'},
-  {id:'h-twists',   slot:'hair', name:'Twists',         cost:350, peeps:'twists'},
-  {id:'h-twists2',  slot:'hair', name:'Twists 2',       cost:380, peeps:'twists2'},
-  {id:'h-bantu',    slot:'hair', name:'Bantu knots',    cost:400, peeps:'bantuKnots'},
-  {id:'h-flattopL', slot:'hair', name:'Flat top long',  cost:320, peeps:'flatTopLong'},
-  {id:'h-grayshort',slot:'hair', name:'Gray short',     cost:280, peeps:'grayShort'},
-  {id:'h-graymed',  slot:'hair', name:'Gray medium',    cost:320, peeps:'grayMedium'},
-  {id:'h-graybun',  slot:'hair', name:'Gray bun',       cost:350, peeps:'grayBun'},
-  // statement 500–700 (b64)
-  {id:'h-mohawk',   slot:'hair', name:'Mohawk',         cost:500, peeps:'mohawk'},
-  {id:'h-mohawk2',  slot:'hair', name:'Mohawk 2',       cost:600, peeps:'mohawk2'},
-  {id:'h-bear',     slot:'hair', name:'Bear',           cost:700, peeps:'bear'},
+  // fluff ≤8–12 (b76 max 30)
+  {id:'h-buzz',     slot:'hair', name:'Shaved 2',       cost:8,  peeps:'shaved2'},
+  {id:'h-shaved3',  slot:'hair', name:'Shaved 3',       cost:8,  peeps:'shaved3'},
+  {id:'h-short5',   slot:'hair', name:'Short 5',        cost:12,  peeps:'short5'},
+  {id:'h-no2',      slot:'hair', name:'No hair 2',      cost:8,  peeps:'noHair2'},
+  {id:'h-no3',      slot:'hair', name:'No hair 3',      cost:8,  peeps:'noHair3'},
+  {id:'h-fringe',   slot:'hair', name:'Bangs',          cost:12, peeps:'bangs'},
+  {id:'h-bangs2',   slot:'hair', name:'Bangs 2',        cost:12, peeps:'bangs2'},
+  {id:'h-quiff',    slot:'hair', name:'Pomp',           cost:12, peeps:'pomp'},
+  {id:'h-medium2',  slot:'hair', name:'Medium 2',       cost:12, peeps:'medium2'},
+  {id:'h-medium3',  slot:'hair', name:'Medium 3',       cost:12, peeps:'medium3'},
+  {id:'h-pony',     slot:'hair', name:'Medium 2 (pony)',cost:12, peeps:'medium2'}, // legacy alias art
+  {id:'h-bun',      slot:'hair', name:'Bun',            cost:12, peeps:'bun'},
+  {id:'h-bun2',     slot:'hair', name:'Bun 2',          cost:12, peeps:'bun2'},
+  {id:'h-undercut', slot:'hair', name:'Flat top',       cost:12, peeps:'flatTop'},
+  {id:'h-wavy',     slot:'hair', name:'Long curly',     cost:12, peeps:'longCurly'},
+  {id:'h-longbangs',slot:'hair', name:'Long bangs',     cost:12, peeps:'longBangs'},
+  {id:'h-mbangs',   slot:'hair', name:'Medium bangs',   cost:12, peeps:'mediumBangs'},
+  // nicer 18–24 (b76)
+  {id:'h-mbangs2',  slot:'hair', name:'Medium bangs 2', cost:18, peeps:'mediumBangs2'},
+  {id:'h-mbangs3',  slot:'hair', name:'Medium bangs 3', cost:18, peeps:'mediumBangs3'},
+  {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:18, peeps:'mediumBangs'}, // legacy
+  {id:'h-braids',   slot:'hair', name:'Cornrows',       cost:18, peeps:'cornrows'},
+  {id:'h-cornrows2',slot:'hair', name:'Cornrows 2',     cost:24, peeps:'cornrows2'},
+  {id:'h-space',    slot:'hair', name:'Buns',           cost:18, peeps:'buns'},
+  {id:'h-afro',     slot:'hair', name:'Afro',           cost:18, peeps:'afro'},
+  {id:'h-longafro', slot:'hair', name:'Long afro',      cost:24, peeps:'longAfro'},
+  {id:'h-dreads1',  slot:'hair', name:'Dreads 1',       cost:24, peeps:'dreads1'},
+  {id:'h-dreads2',  slot:'hair', name:'Dreads 2',       cost:24, peeps:'dreads2'},
+  {id:'h-twists',   slot:'hair', name:'Twists',         cost:24, peeps:'twists'},
+  {id:'h-twists2',  slot:'hair', name:'Twists 2',       cost:24, peeps:'twists2'},
+  {id:'h-bantu',    slot:'hair', name:'Bantu knots',    cost:24, peeps:'bantuKnots'},
+  {id:'h-flattopL', slot:'hair', name:'Flat top long',  cost:24, peeps:'flatTopLong'},
+  {id:'h-grayshort',slot:'hair', name:'Gray short',     cost:18, peeps:'grayShort'},
+  {id:'h-graymed',  slot:'hair', name:'Gray medium',    cost:24, peeps:'grayMedium'},
+  {id:'h-graybun',  slot:'hair', name:'Gray bun',       cost:24, peeps:'grayBun'},
+  // statement 30 (b76)
+  {id:'h-mohawk',   slot:'hair', name:'Mohawk',         cost:30, peeps:'mohawk'},
+  {id:'h-mohawk2',  slot:'hair', name:'Mohawk 2',       cost:30, peeps:'mohawk2'},
+  {id:'h-bear',     slot:'hair', name:'Bear',           cost:30, peeps:'bear'},
 
   // —— Facial hair (optional) ——
   {id:'fh-chin',    slot:'facial', name:'Chin',         cost:0,   peeps:'chin'},
   {id:'fh-goat1',   slot:'facial', name:'Goatee 1',     cost:0,   peeps:'goatee1'},
   {id:'fh-mous1',   slot:'facial', name:'Moustache 1',  cost:0,   peeps:'moustache1'},
   {id:'fh-mous2',   slot:'facial', name:'Moustache 2',  cost:0,   peeps:'moustache2'},
-  {id:'fh-full',    slot:'facial', name:'Full',         cost:120,  peeps:'full'},
-  {id:'fh-full2',   slot:'facial', name:'Full 2',       cost:140,  peeps:'full2'},
-  {id:'fh-full3',   slot:'facial', name:'Full 3',       cost:150, peeps:'full3'},
-  {id:'fh-full4',   slot:'facial', name:'Full 4',       cost:160, peeps:'full4'},
-  {id:'fh-goat2',   slot:'facial', name:'Goatee 2',     cost:120,  peeps:'goatee2'},
-  {id:'fh-mous3',   slot:'facial', name:'Moustache 3',  cost:120,  peeps:'moustache3'},
-  {id:'fh-mous4',   slot:'facial', name:'Moustache 4',  cost:120,  peeps:'moustache4'},
-  {id:'fh-mous5',   slot:'facial', name:'Moustache 5',  cost:140,  peeps:'moustache5'},
-  {id:'fh-mous6',   slot:'facial', name:'Moustache 6',  cost:140,  peeps:'moustache6'},
-  {id:'fh-mous7',   slot:'facial', name:'Moustache 7',  cost:150, peeps:'moustache7'},
-  {id:'fh-mous8',   slot:'facial', name:'Moustache 8',  cost:150, peeps:'moustache8'},
-  {id:'fh-mous9',   slot:'facial', name:'Moustache 9',  cost:160, peeps:'moustache9'},
+  {id:'fh-full',    slot:'facial', name:'Full',         cost:8,  peeps:'full'},
+  {id:'fh-full2',   slot:'facial', name:'Full 2',       cost:12,  peeps:'full2'},
+  {id:'fh-full3',   slot:'facial', name:'Full 3',       cost:12, peeps:'full3'},
+  {id:'fh-full4',   slot:'facial', name:'Full 4',       cost:12, peeps:'full4'},
+  {id:'fh-goat2',   slot:'facial', name:'Goatee 2',     cost:8,  peeps:'goatee2'},
+  {id:'fh-mous3',   slot:'facial', name:'Moustache 3',  cost:8,  peeps:'moustache3'},
+  {id:'fh-mous4',   slot:'facial', name:'Moustache 4',  cost:8,  peeps:'moustache4'},
+  {id:'fh-mous5',   slot:'facial', name:'Moustache 5',  cost:12,  peeps:'moustache5'},
+  {id:'fh-mous6',   slot:'facial', name:'Moustache 6',  cost:12,  peeps:'moustache6'},
+  {id:'fh-mous7',   slot:'facial', name:'Moustache 7',  cost:12, peeps:'moustache7'},
+  {id:'fh-mous8',   slot:'facial', name:'Moustache 8',  cost:12, peeps:'moustache8'},
+  {id:'fh-mous9',   slot:'facial', name:'Moustache 9',  cost:12, peeps:'moustache9'},
 
-  // —— Shirt colours (outfit slot) —— free + paid (b64 band)
+  // —— Shirt colours (outfit slot) —— free + paid (b76)
   {id:'o-tee',     slot:'outfit', name:'Teal',         cost:0,   col:'#3f8f83'},
   {id:'o-hoodie',  slot:'outfit', name:'Slate',        cost:0,   col:'#4a5568'},
   {id:'o-navy',    slot:'outfit', name:'Navy',         cost:0,   col:'#2c3e6b'},
   {id:'o-cream',   slot:'outfit', name:'Cream',        cost:0,   col:'#f3ebe0'},
-  {id:'o-shirt',   slot:'outfit', name:'Cloud',        cost:120,  col:'#dfe6ef'},
-  {id:'o-stripe',  slot:'outfit', name:'Pearl',        cost:120,  col:'#e4e9f0'},
-  {id:'o-white',   slot:'outfit', name:'White',        cost:120,  col:'#f7f7f5'},
-  {id:'o-black',   slot:'outfit', name:'Black',        cost:150, col:'#1f2428'},
-  {id:'o-charcoal',slot:'outfit', name:'Charcoal',     cost:150, col:'#3a3f44'},
-  {id:'o-sky',     slot:'outfit', name:'Sky',          cost:180, col:'#6fa8d8'},
-  {id:'o-mint',    slot:'outfit', name:'Mint',         cost:180, col:'#6fd6bd'},
-  {id:'o-hivis',   slot:'outfit', name:'Hi-vis',       cost:200, col:'#e4d43a'},
-  {id:'o-jumper',  slot:'outfit', name:'Knit brown',   cost:240, col:'#8a6b4f'},
-  {id:'o-dress',   slot:'outfit', name:'Rose',         cost:250, col:'#c2466f'},
-  {id:'o-berry',   slot:'outfit', name:'Berry',        cost:250, col:'#9b3d5a'},
-  {id:'o-jacket',  slot:'outfit', name:'Denim',        cost:280, col:'#3f6796'},
-  {id:'o-forest',  slot:'outfit', name:'Forest',       cost:280, col:'#2f6b4f'},
-  {id:'o-rust',    slot:'outfit', name:'Rust',         cost:320, col:'#b85a32'},
-  {id:'o-violet',  slot:'outfit', name:'Violet',       cost:350, col:'#6d5ae0'},
-  {id:'o-coral',   slot:'outfit', name:'Coral',        cost:350, col:'#e07a6d'},
+  {id:'o-shirt',   slot:'outfit', name:'Cloud',        cost:8,  col:'#dfe6ef'},
+  {id:'o-stripe',  slot:'outfit', name:'Pearl',        cost:8,  col:'#e4e9f0'},
+  {id:'o-white',   slot:'outfit', name:'White',        cost:8,  col:'#f7f7f5'},
+  {id:'o-black',   slot:'outfit', name:'Black',        cost:12, col:'#1f2428'},
+  {id:'o-charcoal',slot:'outfit', name:'Charcoal',     cost:12, col:'#3a3f44'},
+  {id:'o-sky',     slot:'outfit', name:'Sky',          cost:12, col:'#6fa8d8'},
+  {id:'o-mint',    slot:'outfit', name:'Mint',         cost:12, col:'#6fd6bd'},
+  {id:'o-hivis',   slot:'outfit', name:'Hi-vis',       cost:18, col:'#e4d43a'},
+  {id:'o-jumper',  slot:'outfit', name:'Knit brown',   cost:18, col:'#8a6b4f'},
+  {id:'o-dress',   slot:'outfit', name:'Rose',         cost:18, col:'#c2466f'},
+  {id:'o-berry',   slot:'outfit', name:'Berry',        cost:18, col:'#9b3d5a'},
+  {id:'o-jacket',  slot:'outfit', name:'Denim',        cost:18, col:'#3f6796'},
+  {id:'o-forest',  slot:'outfit', name:'Forest',       cost:18, col:'#2f6b4f'},
+  {id:'o-rust',    slot:'outfit', name:'Rust',         cost:24, col:'#b85a32'},
+  {id:'o-violet',  slot:'outfit', name:'Violet',       cost:24, col:'#6d5ae0'},
+  {id:'o-coral',   slot:'outfit', name:'Coral',        cost:24, col:'#e07a6d'},
 
   // —— Eyewear / accessories ——
   {id:'g-round',   slot:'glasses', name:'Glasses',     cost:0,   peeps:'glasses'},
-  {id:'g-square',  slot:'glasses', name:'Glasses 2',   cost:150, peeps:'glasses2'},
-  {id:'g-cats',    slot:'glasses', name:'Glasses 3',   cost:180, peeps:'glasses3'},
-  {id:'g-glass4',  slot:'glasses', name:'Glasses 4',   cost:200, peeps:'glasses4'},
-  {id:'g-glass5',  slot:'glasses', name:'Glasses 5',   cost:240, peeps:'glasses5'},
-  {id:'g-shades',  slot:'glasses', name:'Sunglasses',  cost:280, peeps:'sunglasses'},
-  {id:'g-shades2', slot:'glasses', name:'Sunglasses 2',cost:320, peeps:'sunglasses2'},
-  {id:'g-patch',   slot:'glasses', name:'Eyepatch',    cost:360, peeps:'eyepatch'},
+  {id:'g-square',  slot:'glasses', name:'Glasses 2',   cost:12, peeps:'glasses2'},
+  {id:'g-cats',    slot:'glasses', name:'Glasses 3',   cost:12, peeps:'glasses3'},
+  {id:'g-glass4',  slot:'glasses', name:'Glasses 4',   cost:18, peeps:'glasses4'},
+  {id:'g-glass5',  slot:'glasses', name:'Glasses 5',   cost:18, peeps:'glasses5'},
+  {id:'g-shades',  slot:'glasses', name:'Sunglasses',  cost:18, peeps:'sunglasses'},
+  {id:'g-shades2', slot:'glasses', name:'Sunglasses 2',cost:24, peeps:'sunglasses2'},
+  {id:'g-patch',   slot:'glasses', name:'Eyepatch',    cost:24, peeps:'eyepatch'},
 
   // —— Headwear (replaces hair) ——
-  {id:'a-beanie',  slot:'hat', name:'Beanie',         cost:250, peeps:'hatBeanie'},
-  {id:'a-cap',     slot:'hat', name:'Cap',             cost:250, peeps:'hatHip'},
-  {id:'a-hijab',   slot:'hat', name:'Hijab',           cost:280, peeps:'hijab'},
-  {id:'a-turban',  slot:'hat', name:'Turban',          cost:280, peeps:'turban'},
+  {id:'a-beanie',  slot:'hat', name:'Beanie',         cost:18, peeps:'hatBeanie'},
+  {id:'a-cap',     slot:'hat', name:'Cap',             cost:18, peeps:'hatHip'},
+  {id:'a-hijab',   slot:'hat', name:'Hijab',           cost:18, peeps:'hijab'},
+  {id:'a-turban',  slot:'hat', name:'Turban',          cost:18, peeps:'turban'},
   // legacy hat ids kept as aliases → migrated to hair on load (see LOOK_ID_MAP)
-  {id:'a-bow',     slot:'hair', name:'Bun 2 (legacy)', cost:160, peeps:'bun2', legacy:true},
-  {id:'a-band',    slot:'hair', name:'Bangs 2 (legacy)',cost:150, peeps:'bangs2', legacy:true},
+  {id:'a-bow',     slot:'hair', name:'Bun 2 (legacy)', cost:12, peeps:'bun2', legacy:true},
+  {id:'a-band',    slot:'hair', name:'Bangs 2 (legacy)',cost:12, peeps:'bangs2', legacy:true},
 
   // —— Backdrops ——
   {id:'bg-plain',  slot:'backdrop', name:'Plain',      cost:0,   col:null},
-  {id:'bg-sun',    slot:'backdrop', name:'Sunrise',    cost:120,  col:'#f0a05a'},
-  {id:'bg-mint',   slot:'backdrop', name:'Mint',       cost:120,  col:'#6fd6bd'},
-  {id:'bg-night',  slot:'backdrop', name:'Night',      cost:150, col:'#2c3358'},
-  {id:'bg-rose',   slot:'backdrop', name:'Rose',       cost:150, col:'#dd7ea4'},
-  {id:'bg-sky',    slot:'backdrop', name:'Sky',        cost:150, col:'#7eb6e0'},
-  {id:'bg-lilac',  slot:'backdrop', name:'Lilac',      cost:180, col:'#b8a4e0'},
-  {id:'bg-peach',  slot:'backdrop', name:'Peach',      cost:180, col:'#f0c4a8'},
+  {id:'bg-sun',    slot:'backdrop', name:'Sunrise',    cost:8,  col:'#f0a05a'},
+  {id:'bg-mint',   slot:'backdrop', name:'Mint',       cost:8,  col:'#6fd6bd'},
+  {id:'bg-night',  slot:'backdrop', name:'Night',      cost:12, col:'#2c3358'},
+  {id:'bg-rose',   slot:'backdrop', name:'Rose',       cost:12, col:'#dd7ea4'},
+  {id:'bg-sky',    slot:'backdrop', name:'Sky',        cost:12, col:'#7eb6e0'},
+  {id:'bg-lilac',  slot:'backdrop', name:'Lilac',      cost:12, col:'#b8a4e0'},
+  {id:'bg-peach',  slot:'backdrop', name:'Peach',      cost:12, col:'#f0c4a8'},
 ];
 /* Old saved ids → current ids (equipped + owned). */
 const LOOK_ID_MAP = {
@@ -1258,10 +1278,9 @@ function blackenGlassesWhites(svg){
   const iAcc = svg.indexOf(accMark);
   if(iAcc < 0) return svg;
   const before = svg.slice(0, iAcc);
-  const chunk = svg.slice(iAcc).replace(
-    /fill="(?:#fff(?:fff)?|#FFF(?:FFF)?|white)"/gi,
-    'fill="#111"'
-  );
+  let chunk = svg.slice(iAcc);
+  chunk = chunk.replace(/fill=["'](?:#fff(?:fff)?|#FFF(?:FFF)?|white)["']/gi, 'fill="#111"');
+  chunk = chunk.replace(/(style=["'][^"']*?)fill\s*:\s*(?:#fff(?:fff)?|#FFF(?:FFF)?|white)\b/gi, '$1fill:#111');
   return before + chunk;
 }
 function charSVG(av,size){
@@ -1270,22 +1289,25 @@ function charSVG(av,size){
   let peeps='';
   try{ peeps = blackenGlassesWhites(tintPeepsHair(createPeepsSvg(peepsOptsFromAv(a)), hex)); }
   catch(e){ peeps = '<svg viewBox="0 0 704 704" xmlns="http://www.w3.org/2000/svg"></svg>'; }
+  /* Leftover currentColor (non-hair line art) must stay ink, not theme text. */
+  peeps = peeps.replace(/fill=["']currentColor["']/gi, 'fill="#111"');
   const inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
   const bg=(lookItem(a.backdrop)||{}).col;
   /* size≥52 = Looks thumbs/picks/preview (bust). 'chip' / no size / faces = zoomed-out head. */
   const bust = size !== 'chip' && (size|0) >= 52;
+  /* Never CSS vars in SVG fill — chip/small use light cream; bust uses light neutral if no col. */
+  const bgFill = bg || (bust ? '#eef2f1' : '#e8f0ee');
   const nonce = Math.random().toString(36).slice(2,7);
   const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||'',nonce].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
-  /* Small/chip (b73): zoom out so full head + upper shoulders fit the circle.
-     Large (≥52): bust (b60) unchanged. */
+  /* Chip (b76): head higher + more shoulders/chest (toward bust). Bust ≥52 unchanged. */
   const xf = bust
     ? 'translate(50 50) scale(0.165) translate(-352 -340)'
-    : 'translate(50 50) scale(0.135) translate(-352 -275)';
+    : 'translate(50 50) scale(0.155) translate(-352 -325)';
   const sizeAttr = (size && size !== 'chip') ? `width="${size}" height="${size}"` : '';
   return `<svg viewBox="0 0 100 100" class="charsvg" ${sizeAttr}>
     <defs><clipPath id="${uid}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
     <g clip-path="url(#${uid})">
-      <rect width="100" height="100" fill="${bg||'var(--surface2)'}"/>
+      <rect width="100" height="100" fill="${bgFill}"/>
       <g class="peeps-bust" transform="${xf}">${inner}</g>
     </g></svg>`;
 }
@@ -2024,6 +2046,7 @@ const Sync = {
     S.vaultAt=at||Date.now();
     migratePairChallenges(S);
     migratePriceFloors();
+    migratePriceCapB76();
     save();
   },
   async pullVaultSmart(){
@@ -2277,7 +2300,7 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
 function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
-try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); migratePriceFloorsB68(); migratePriceFloorsB69(); }catch(e){ console.error(e); }
+try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); migratePriceFloorsB68(); migratePriceFloorsB69(); migratePriceCapB76(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
@@ -3215,8 +3238,9 @@ function vToday(){
   const lb=loginBonus(S.streak.login+1);
   return `
   <div class="head"><div><div class="eyebrow">${fmt(k,{weekday:'long',day:'numeric',month:'long'})}</div><h1>Today</h1></div>
+    <div class="head-trail">${meChipHtml()}
     <div class="headpills"><span class="pill ${S.streak.login>=2?'accent':''}" data-tour="streak">${ICON.flame} ${S.streak.login}d</span>
-      <button class="pill coins" data-go="shop" data-tour="coins">${ICON.coin} ${S.points.coins.toLocaleString()}</button></div></div>
+      <button class="pill coins" data-go="shop" data-tour="coins">${ICON.coin} ${S.points.coins.toLocaleString()}</button></div></div></div>
   <div class="card ring-card" data-tour="ring">
     <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${circ}" stroke-dashoffset="${circ*(1-pct)}"/></svg>
       <div class="center"><div><b>+${d.points||0}</b><span>today</span></div></div></div>
@@ -3306,7 +3330,7 @@ function vPlan(){
       const n = sub==='notes'?notesFiltered().length:whysFiltered().length;
       return n?`${n} match${n===1?'':'es'}`:'No matches';
     })()}</p></div>`:'';
-  return `<div class="head"><div><div class="eyebrow">Outside the points — nothing here can be failed</div><h1>Plan</h1></div></div>
+  return `<div class="head"><div><div class="eyebrow">Outside the points — nothing here can be failed</div><h1>Plan</h1></div>${meChipHtml()}</div>
   ${affirmationLine()}
   <div class="seg" style="margin-bottom:14px">${[['list','List'],['notes','Notes'],['affirmations','Affirmations']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-psub="${v}">${l}</button>`).join('')}</div>
   ${search}
@@ -3440,7 +3464,7 @@ function vProgress(){
   }
   const sub=progState.sub==='calendar'?'overview':(progState.sub||'overview');
   progState.sub=sub;
-  const head=`<div class="head"><div><div class="eyebrow">${S.points.xp} XP · level ${L.L}</div><h1>Progress</h1></div></div>
+  const head=`<div class="head"><div><div class="eyebrow">${S.points.xp} XP · level ${L.L}</div><h1>Progress</h1></div>${meChipHtml()}</div>
     ${affirmationLine()}
     <div class="seg" style="margin-bottom:14px">${[['overview','Overview'],['tasks','Tasks']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-sub="${v}">${l}</button>`).join('')}</div>`;
   return head + ({overview:pOverview,tasks:pTasks})[sub]();
@@ -3749,8 +3773,7 @@ function vFriends(){
   const live=Sync.live(), inn=Sync.signedIn();
   const banner=S.syncError?`<div class="card syncerr"><div class="row between"><div><b>Not syncing right now</b><p class="small muted">${esc(S.syncError)}</p></div><div class="stack" style="gap:6px"><button class="btn sm" id="retrysync">Retry</button><button class="btn sm ghost" id="conncheck2">Diagnose</button></div></div>
     <p class="tiny muted" style="margin-top:8px">Everything else works as normal — your tasks and history are on this device.</p></div>`:'';
-  const meChip=inn?`<button class="mechip" id="avpick" aria-label="Change your picture"><span class="mechip-name">${esc(m.name||'You')}</span>${avatarHtml(m,'chip')}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`:'';
-  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${meChip}</div>${affirmationLine()}${banner}`;
+  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${meChipHtml()}</div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `
   <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
@@ -3795,11 +3818,11 @@ function vFriends(){
       const others=onQ?onQ.members.filter(x=>x.id!==f.id):[];
       return `<div class="card friendrow ${open?'open':''}" style="padding:0;overflow:hidden">
         <button class="friendhead" data-ftog="${f.id}" style="width:100%;text-align:left;padding:14px;background:transparent;border:0;color:inherit;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer">
-          <span class="row" style="gap:12px;align-items:center">${avatarHtml(f)}<b>${esc(f.name)}</b></span>
+          <span class="row" style="gap:12px;align-items:center">${open?avPairHtml(m,f):avatarHtml(f)}<b>${esc(f.name)}</b></span>
           <span class="chev" style="transform:rotate(${open?'90':'0'}deg);transition:transform .15s">›</span>
         </button>
         ${open?`<div style="padding:0 14px 14px;border-top:1px solid var(--line)">
-          <button class="card friendcard" data-friend="${f.id}" style="margin-top:12px"><div class="row between" style="width:100%"><div class="row" style="gap:10px">${avatarHtml(f)}
+          <button class="card friendcard" data-friend="${f.id}" style="margin-top:12px"><div class="row between" style="width:100%"><div class="row" style="gap:10px">${avPairHtml(m,f)}
             <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0} day streak · level ${f.level??1}</p></div></div>
             <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></button>
           <div class="card pairstreak" style="margin-top:10px"><div class="row between"><div><div class="eyebrow">Shared streak</div><div class="heroval">${ps}<small>days</small></div>
@@ -3853,7 +3876,7 @@ function vFriends(){
 function vShop(){
   const T=title(), L=level(); const str=avgStrength(); const canRate=true; const active=S.rewards.filter(x=>x.active);
   return `
-  <div class="head"><div><div class="eyebrow">Coins to spend</div><h1>Shop</h1></div></div>
+  <div class="head"><div><div class="eyebrow">Coins to spend</div><h1>Shop</h1></div>${meChipHtml()}</div>
   ${affirmationLine()}
   <div class="card" data-tour="balance"><div class="balance">${S.points.coins}<small>coins</small></div>
     <div class="row between" style="margin-top:14px"><span class="pill accent">Level ${L.L} · ${T.name}</span><span class="tiny muted">${L.into} / ${L.need} XP</span></div>
@@ -3980,7 +4003,7 @@ function vSettings(){
   const st=S.settings; const tg=(k,on)=>`<button class="toggle ${on?'on':''}" data-toggle="${k}" role="switch" aria-checked="${on}"></button>`;
   const segS=(k,opts)=>`<div class="seg">${opts.map(([v,l])=>`<button class="${st[k]===v?'on':''}" data-set="${k}" data-val="${v}">${l}</button>`).join('')}</div>`;
   return `
-  <div class="head"><div><div class="eyebrow">Steady</div><h1>Settings</h1></div></div>
+  <div class="head"><div><div class="eyebrow">Steady</div><h1>Settings</h1></div>${meChipHtml()}</div>
   ${affirmationLine()}
   <details class="acc" id="acc-tasks" data-tour="tasks"><summary>Tasks <span class="muted">${activeTasks().length} / ${MAX_TASKS}</span></summary><div class="body">
     ${(()=>{const live=S.tasks.filter(t=>!t.archived); const n=live.length; const full=n>=MAX_TASKS; return `
@@ -3998,7 +4021,7 @@ function vSettings(){
       ${newRewardFreq==='custom'?`<div class="row" style="align-items:center;gap:8px">
         <input type="number" id="newper" min="1" max="${MAX_PER_MONTH}" step="1" value="${newRewardPer}" style="width:78px;padding:12px 8px;text-align:center">
         <span class="small muted">times a month</span></div>`:''}
-      <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" step="10" value="${suggestFromFreq(newRewardFreq,null,newRewardPer)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
+      <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" max="${MAX_REWARD_PRICE}" step="5" value="${suggestFromFreq(newRewardFreq,null,newRewardPer)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
         <button class="btn primary grow" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
       <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq,null,newRewardPer))}</p>
       <p class="tiny muted">Suggested as your treat pot split across your weekly rewards (or two weeks of pot across your fortnightly ones). Type over a price to keep it; Rebalance resets to the pot split.</p>
@@ -4106,7 +4129,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Same-cadence rewards share that cadence's pot: weeklies split one week of the treat pot so a solid week can cover every weekly once; fortnights split two weeks of pot among themselves (adding a fortnight does not shrink weekly stickers); monthlies split about 4.33 weeks of pot. One clear day alone will not buy a weekly when you have several. The pot is still about four clear days plus three half days of coins a week from your tasks. Buying every occurrence of everything (including fortnights) can still push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it; <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. Prices are capped at ${MAX_REWARD_PRICE} coins (Looks too). You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Same-cadence rewards share that cadence's pot: weeklies split one week of the treat pot so a solid week can cover every weekly once; fortnights split two weeks of pot among themselves (adding a fortnight does not shrink weekly stickers); monthlies split about 4.33 weeks of pot. One clear day alone will not buy a weekly when you have several. The pot is still about four clear days plus three half days of coins a week from your tasks — stickers still snap into the ${MIN_REWARD_PRICE}–${MAX_REWARD_PRICE} band. Buying every occurrence of everything (including fortnights) can still push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it; <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -4361,6 +4384,7 @@ function bind(){
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
     if(n<MIN_REWARD_PRICE){ eta.textContent='Minimum '+MIN_REWARD_PRICE+' coins so nothing is free.'; return; }
+    if(n>MAX_REWARD_PRICE){ eta.textContent='Maximum '+MAX_REWARD_PRICE+' coins for anything in the shop.'; return; }
     eta.textContent=earnEta(n); };
   const ra2=q('#acc-rewards'); if(ra2) ra2.addEventListener('toggle',()=>{ rewOpen=ra2.open; });
   if(np) np.oninput=refreshEta;
@@ -4375,6 +4399,8 @@ function bind(){
     const suggest=suggestFromFreq(newRewardFreq,null,newRewardPer);
     let price=Math.round(Number(np?.value)||0); if(!price) price=suggest;
     if(price<MIN_REWARD_PRICE){ toast('Minimum '+MIN_REWARD_PRICE+' coins'); return; }
+    if(price>MAX_REWARD_PRICE){ toast('Maximum '+MAX_REWARD_PRICE+' coins'); return; }
+    price=Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, price));
     const rec={id:uid(),name:v,active:true,tier:'custom',price,freq:newRewardFreq};
     if(newRewardFreq==='custom') rec.perMonth=clamp(Math.round(Number(q('#newper')?.value)||newRewardPer),1,MAX_PER_MONTH);
     if(Math.round(price)!==suggest) rec.priceLocked=true;
@@ -4565,7 +4591,7 @@ function editReward(r){
       <div class="row" id="eperwrap" style="align-items:center;gap:8px;margin-top:8px;${rewardFreq(r)==='custom'?'':'display:none'}">
         <input type="number" id="eper" min="1" max="${MAX_PER_MONTH}" step="1" value="${Math.round(perMonthOf(r))}" style="width:78px;padding:10px 8px;text-align:center">
         <span class="small muted">times a month</span></div></div>
-    <input type="number" id="ep" value="${cur}" min="${MIN_REWARD_PRICE}" step="10" style="margin-top:12px">
+    <input type="number" id="ep" value="${cur}" min="${MIN_REWARD_PRICE}" max="${MAX_REWARD_PRICE}" step="5" style="margin-top:12px">
     <div class="chips" style="margin-top:10px"><button type="button" class="chip" data-epreset="${sp.week}">A week · ${sp.week}</button><button type="button" class="chip" data-epreset="${sp.fortnight}">A fortnight · ${sp.fortnight}</button></div>
     <p class="tiny muted" id="eeta" style="margin-top:10px">${earnEta(cur)}</p>
     <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
@@ -4580,12 +4606,12 @@ function editReward(r){
     o.querySelector('#ep').value=suggestFromFreq(ef,others,epv()); upd(); haptic(); });
   if(eper) eper.oninput=()=>{ const others=S.rewards.filter(x=>x.active&&x.id!==r.id);
     o.querySelector('#ep').value=suggestFromFreq('custom',others,epv()); upd(); };
-  const upd=()=>{ const n=Math.round(Number(i.value)||0); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):earnEta(n); };
+  const upd=()=>{ const n=Math.round(Number(i.value)||0); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):n>MAX_REWARD_PRICE?('Maximum '+MAX_REWARD_PRICE+' coins'):earnEta(n); };
   i.oninput=upd;
   o.querySelectorAll('[data-epreset]').forEach(b=>b.onclick=()=>{ i.value=b.dataset.epreset; o.querySelectorAll('[data-epreset]').forEach(x=>x.classList.toggle('on',x===b)); upd(); });
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelector('[data-ok]').onclick=()=>{
-    const n=Math.max(MIN_REWARD_PRICE, Math.round(Number(i.value)||0));
+    const n=Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, Math.round(Number(i.value)||0)));
     const commit=()=>{
       r.price=n; r.tier='custom'; r.freq=ef;
       if(ef==='custom') r.perMonth=epv(); else delete r.perMonth;
@@ -5072,7 +5098,7 @@ function friendStats(f){
 function friendSheet(f){
   const st=friendStats(f);
   const o=overlay(`<div class="sheet"><div class="grab"></div>
-    <div class="row" style="gap:12px;align-items:center">${avatarHtml(f,'big')}
+    <div class="row" style="gap:12px;align-items:center"><span class="avpair big">${avatarHtml(me(),'chip')}${avatarHtml(f,'chip')}</span>
       <div><h2 style="margin:0">${esc(f.name)}</h2><p class="tiny muted">${esc(f.title||'')} · level ${f.level??1} · code ${esc(f.code||'')}</p></div></div>
     <div class="stats" style="margin-top:14px">
       <div class="stat"><b>${st.chests}</b><span>chests together</span></div>
