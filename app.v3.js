@@ -934,10 +934,10 @@ function avatarHtml(who,cls){
   if(who && S.me && who.id===S.me.id) return `<span class="avatar ${cls||''} img">${charSVG(myChar(),peepsSize)}</span>`;
   return `<span class="avatar ${cls||''}">${esc((who?.name||'?')[0]).toUpperCase()}</span>`;
 }
-/* Top-right mechip on every tab head — name + avatar + edit → Looks / photo. */
+/* Top-right mechip — face-only circle + edit → Looks / photo. */
 function meChipHtml(){
   const m = me();
-  return `<button class="mechip" id="avpick" aria-label="Change your picture"><span class="mechip-name">${esc(m.name||'You')}</span>${avatarHtml(m,'chip')}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`;
+  return `<button class="mechip" id="avpick" aria-label="Change your picture">${avatarHtml(m,'chip')}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`;
 }
 /* Streak + coins to the LEFT of mechip — shown on every tab head. */
 function headTrailHtml(){
@@ -1278,18 +1278,17 @@ function tintPeepsHair(svg, hex){
 /* Opaque white lens fills in Open Peeps glasses (e.g. glasses4) read as solid blobs
    at small sizes — paint them near-black inside the accessories group only. */
 function blackenGlassesWhites(svg){
-  const accMark = '<g transform="translate(203 303)"';
+  const accMark = '<g transform="translate(203 303)">';
   const iAcc = svg.indexOf(accMark);
   if(iAcc < 0) return svg;
   const before = svg.slice(0, iAcc);
   let chunk = svg.slice(iAcc);
-  /* Harden: #fff/#ffffff/white + rgb(255,…) — leftover whites read as blobs at chip size. */
-  const whiteFill = /fill=["'](?:#fff(?:fff)?|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))["']/gi;
-  const whiteStyle = /(style=["'][^"']*?)fill\s*:\s*(?:#fff(?:fff)?|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))\b/gi;
-  chunk = chunk.replace(whiteFill, 'fill="#111"');
-  chunk = chunk.replace(whiteStyle, '$1fill:#111');
-  /* Bare fill=white (no quotes) — rare but force. */
+  /* Lens whites + near-whites → ink. Accessory #000 → #111 so dusk button
+     color:inherit (light fg) cannot wash black presentation attrs. */
+  chunk = chunk.replace(/fill=["'](?:#fff(?:fff)?|#f{3,8}|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))["']/gi, 'fill="#111"');
+  chunk = chunk.replace(/(style=["'][^"']*?)fill\s*:\s*(?:#fff(?:fff)?|#f{3,8}|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))\b/gi, '$1fill:#111');
   chunk = chunk.replace(/fill=white\b/gi, 'fill="#111"');
+  chunk = chunk.replace(/fill=["'](?:#000(?:000)?|black)["']/gi, 'fill="#111"');
   return before + chunk;
 }
 function charSVG(av,size){
@@ -1303,7 +1302,10 @@ function charSVG(av,size){
   peeps = peeps.replace(/fill=["']var\([^"']+\)["']/gi, 'fill="#111"');
   /* Second pass: accessories whites that survived tint + first blacken. */
   peeps = blackenGlassesWhites(peeps);
-  const inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
+  /* Global ink normalize — remaining #000/black → #111 (face + frames). Same pipeline
+     for editor + chip; stops #000 reading as light under button color:inherit. */
+  peeps = peeps.replace(/fill=["'](?:#000(?:000)?|black)["']/gi, 'fill="#111"');
+  let inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
   const bg=(lookItem(a.backdrop)||{}).col;
   /* size≥52 = Looks thumbs/picks/preview (bust). 'chip' / no size / faces = zoomed-out head. */
   const bust = size !== 'chip' && (size|0) >= 52;
@@ -1315,6 +1317,13 @@ function charSVG(av,size){
   const xf = bust
     ? 'translate(50 50) scale(0.165) translate(-352 -340)'
     : 'translate(50 50) scale(0.145) translate(-352 -305)';
+  /* Chip: slight stroke on eyewear so thin Open Peeps frames stay readable at 42px. */
+  if(size === 'chip'){
+    inner = inner.replace(
+      '<g transform="translate(203 303)">',
+      '<g transform="translate(203 303)" stroke="#111" stroke-width="10" paint-order="stroke fill">'
+    );
+  }
   /* Chip / small: 2× intrinsic px so SVG downsamples sharp into the CSS box (mechip 42→84). */
   let sizeAttr = '';
   let shapeAttr = '';
