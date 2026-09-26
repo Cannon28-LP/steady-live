@@ -157,6 +157,29 @@ details.fold[open] summary::after{transform:rotate(90deg)}
 }
 .tabbar button .tab-dot.pulse{animation:tab-dot-pulse .48s var(--ease) 1}
 
+/* b75: sub-dots on Friends seg pills + attn dots on cards/sections */
+.seg button{position:relative}
+.seg button .sub-dot{
+  position:absolute;top:4px;right:6px;
+  width:7px;height:7px;border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--surface) 78%,transparent);
+  pointer-events:none;display:block;
+  animation:tab-dot-pulse .48s var(--ease) 1;
+}
+.card.has-attn, .planline.has-attn, h2.has-attn{position:relative}
+.attn-dot{
+  position:absolute;top:10px;right:10px;
+  width:8px;height:8px;border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--surface) 78%,transparent);
+  pointer-events:none;display:block;z-index:1;
+  animation:tab-dot-pulse .48s var(--ease) 1;
+}
+h2.has-attn .attn-dot{top:50%;right:0;margin-top:-4px;transform:none}
+h2.has-attn > span{position:relative;padding-right:14px}
+h2.has-attn > span .attn-dot{top:50%;right:0;margin-top:-4px}
+
 /* Sheets, toasts, overlays */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity var(--dur)}
 .overlay.show{opacity:1}

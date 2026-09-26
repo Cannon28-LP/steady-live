@@ -2874,9 +2874,11 @@ const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   flame:'<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2.5c.4 3.2 3 4.6 4.3 7.2 1.5 3 .9 6.8-2 8.9.4-1.7 0-3.6-1.3-4.9-.2 1.7-1.2 2.7-2.6 3.3-1.3.6-2 1.9-1.6 3.2C7.6 19 6 16.6 6 13.8c0-2.8 1.6-4.4 3-6.3.9 1.1 1.3 2.3 1.2 3.7 2.7-1.6 3.9-5.3 3.3-8.7z"/></svg>'};
 
 
-/* ---------- Tab attention dots (b71) ----------
+/* ---------- Tab attention dots (b71) + section sub-dots (b75) ----------
    Calm accent dots on the tab bar when something new/actionable
-   appeared on that tab since the last visit. One teal dot — no counts. */
+   appeared on that tab since the last visit. Friends splits into
+   list / chats / challenges buckets so opening Friends does not
+   clear every signal — only the sub you open. */
 function ensureTabSeen(){
   if(!S.tabSeen || typeof S.tabSeen!=='object') S.tabSeen={};
   return S.tabSeen;
@@ -2904,33 +2906,74 @@ function pairChestSig(){
   }
   return bits.sort().join('|');
 }
-function friendsAttnFp(){
+/* Friends attention buckets (b75). Prefixes: list=inbox/newcrew, chats=u, challenges=inv/ready/chest. */
+function friendsBucketFp(bucket){
   const parts=[];
-  for(const c of crewList()){
-    const u=crewUnread(c);
-    if(u>0){
-      const latest=msgsOf(c.id).filter(m=>m.from!=='me').reduce((a,m)=>Math.max(a,m.at||0),0);
-      parts.push(`u:${c.id}:${latest}:${u}`);
-    }else if(!c.seenAt && msgsOf(c.id).some(m=>m.from!=='me')){
-      parts.push(`newcrew:${c.id}`);
+  if(bucket==='list' || bucket==='chats'){
+    for(const c of crewList()){
+      const u=crewUnread(c);
+      if(u>0){
+        if(bucket==='chats'){
+          const latest=msgsOf(c.id).filter(m=>m.from!=='me').reduce((a,m)=>Math.max(a,m.at||0),0);
+          parts.push(`u:${c.id}:${latest}:${u}`);
+        }
+      }else if(bucket==='list' && !c.seenAt && msgsOf(c.id).some(m=>m.from!=='me')){
+        parts.push(`newcrew:${c.id}`);
+      }
     }
   }
-  for(const c of chalList()){
-    if(chalIsPending(c) && !iAcceptedChallenge(c)) parts.push(`inv:${c.id}`);
-    if(chalIsActive(c)){
-      try{
-        const ch=liveQuest(c); if(!ch) continue;
-        const pr=challengeProgress(ch);
-        if(pr.have>=pr.need) parts.push(`ready:${c.id}`);
-      }catch(e){}
-    }
-  }
-  const cs=pairChestSig();
-  if(cs) parts.push(`chest:${cs}`);
-  if((S.inbox||[]).length){
+  if(bucket==='list' && (S.inbox||[]).length){
     parts.push('inbox:'+(S.inbox||[]).map(x=>`${x.date||''}:${x.text||''}:${x.coins||0}`).join(','));
   }
+  if(bucket==='challenges'){
+    for(const c of chalList()){
+      if(chalIsPending(c) && !iAcceptedChallenge(c)) parts.push(`inv:${c.id}`);
+      if(chalIsActive(c)){
+        try{
+          const ch=liveQuest(c); if(!ch) continue;
+          const pr=challengeProgress(ch);
+          if(pr.have>=pr.need) parts.push(`ready:${c.id}`);
+        }catch(e){}
+      }
+    }
+    const cs=pairChestSig();
+    if(cs) parts.push(`chest:${cs}`);
+  }
   return parts.sort().join(';');
+}
+function friendsAttnFp(){
+  return ['list','chats','challenges'].map(friendsBucketFp).filter(Boolean).join(';');
+}
+function ensureFriendsSeen(){
+  const seen=ensureTabSeen();
+  let f=seen.friends;
+  if(typeof f==='string'){
+    /* Legacy full-fp string → reset buckets so each sub re-lights once. */
+    f={list:'',chats:'',challenges:''};
+    seen.friends=f;
+    save();
+  }else if(!f || typeof f!=='object'){
+    f={list:'',chats:'',challenges:''};
+    seen.friends=f;
+  }else{
+    if(f.list===undefined) f.list='';
+    if(f.chats===undefined) f.chats='';
+    if(f.challenges===undefined) f.challenges='';
+  }
+  return f;
+}
+function friendsBucketUnseen(bucket){
+  const fp=friendsBucketFp(bucket);
+  if(!fp) return false;
+  return fp!==(ensureFriendsSeen()[bucket]||'');
+}
+function markFriendsSubSeen(sub){
+  if(!['list','chats','challenges'].includes(sub)) sub='list';
+  const seen=ensureFriendsSeen();
+  const next=friendsBucketFp(sub);
+  if(seen[sub]===next) return;
+  seen[sub]=next;
+  save();
 }
 function overdueFp(){
   return overdueTodos().map(t=>`${t.id}:${t.day||''}`).sort().join(',');
@@ -2945,22 +2988,21 @@ function progressHasHistory(){
   if((S.rough||[]).some(r=>r && r.date && r.date>=from)) return true;
   return false;
 }
+function shopNewAffordIds(){
+  const seen=ensureTabSeen();
+  if(seen.shop===undefined) return [];
+  const prev=new Set(String(seen.shop||'').split(',').filter(Boolean));
+  return shopAffordIds().filter(id=>!prev.has(id));
+}
 function tabAttention(tab){
   const seen=ensureTabSeen();
   if(tab==='settings') return false;
   if(tab==='friends'){
-    const fp=friendsAttnFp();
-    if(!fp) return false;
-    return fp!==(seen.friends||'');
+    return friendsBucketUnseen('list')||friendsBucketUnseen('chats')||friendsBucketUnseen('challenges');
   }
   if(tab==='shop'){
     if(pendingExtras().length) return true;
-    const cur=shopAffordIds();
-    if(!cur.length) return false;
-    // Until Shop has been visited once, don't light merely for existing affordability.
-    if(seen.shop===undefined) return false;
-    const prev=new Set(String(seen.shop||'').split(',').filter(Boolean));
-    return cur.some(id=>!prev.has(id));
+    return shopNewAffordIds().length>0;
   }
   if(tab==='progress'){
     if(!progressHasHistory()) return false;
@@ -2975,16 +3017,18 @@ function tabAttention(tab){
 }
 function tabAttentionWhy(tab){
   if(tab==='friends'){
-    const fp=friendsAttnFp();
-    if(!fp) return 'quiet';
-    if(fp===(ensureTabSeen().friends||'')) return 'seen:'+fp;
-    return fp;
+    const f=ensureFriendsSeen();
+    return ['list','chats','challenges'].map(b=>{
+      const fp=friendsBucketFp(b);
+      if(!fp) return b+':quiet';
+      return b+':'+(fp===(f[b]||'')?'seen':'NEW')+':'+fp;
+    }).join('|');
   }
   if(tab==='shop'){
     const extras=pendingExtras().length;
     const cur=shopAffordIds();
     const seen=ensureTabSeen().shop;
-    return `extras:${extras}|afford:${cur.join(',')}|seen:${seen===undefined?'∅':seen}|on:${tabAttention('shop')}`;
+    return `extras:${extras}|afford:${cur.join(',')}|new:${shopNewAffordIds().join(',')}|seen:${seen===undefined?'∅':seen}|on:${tabAttention('shop')}`;
   }
   if(tab==='progress') return `hist:${progressHasHistory()}|seen:${ensureTabSeen().progress||'∅'}|today:${today()}`;
   if(tab==='today'||tab==='plan') return `od:${overdueFp()}|seen:${ensureTabSeen()[tab]||'∅'}`;
@@ -2992,9 +3036,12 @@ function tabAttentionWhy(tab){
 }
 function markTabSeen(tab){
   const seen=ensureTabSeen();
+  if(tab==='friends'){
+    markFriendsSubSeen(friendsState.sub);
+    return;
+  }
   let next;
-  if(tab==='friends') next=friendsAttnFp();
-  else if(tab==='shop') next=shopAffordIds().join(',');
+  if(tab==='shop') next=shopAffordIds().join(',');
   else if(tab==='progress') next=today();
   else if(tab==='today'||tab==='plan') next=overdueFp();
   else return;
@@ -3220,7 +3267,8 @@ function vToday(){
 function planLine(){
   const lt=todosToday().length, ah=todosAhead().length;
   if(!lt&&!ah&&!backlog().length) return '';
-  return `<button class="card planline" data-go="plan"><div><b>${lt?`${lt} on your list today`:ah?`Nothing today · ${ah} coming up`:'Your list is clear'}</b>
+  const odAttn=!!(overdueTodos().length && tabAttention('today'));
+  return `<button class="card planline${odAttn?' has-attn':''}" data-go="plan">${odAttn?'<i class="attn-dot" aria-hidden="true"></i>':''}<div><b>${lt?`${lt} on your list today`:ah?`Nothing today · ${ah} coming up`:'Your list is clear'}</b>
     <p class="tiny muted">${backlog().length?`${backlog().length} in someday`:'Tap to plan ahead'}</p></div><span class="chev">›</span></button>`;
 }
 
@@ -3269,7 +3317,11 @@ function pList(){
   const overdue=S.todos.filter(t=>!t.done&&t.day&&t.day<today()).sort((a,b)=>a.day<b.day?-1:1);
   const tod=todosOn(today()), ahead=todosAhead(), bl=backlog(), dn=todosDone();
   const w=planState.when;
-  const group=(title,items,note,bulk)=>items.length?`<div class="section"><h2><span>${title}${note?` <span class="muted">${note}</span>`:''}</span>${bulk?`<button type="button" class="textlink" data-moveall="${bulk}">Move all to tomorrow</button>`:''}</h2><div class="card"><ul class="tasks">${items.map(rowTodo).join('')}</ul></div></div>`:'';
+  const group=(title,items,note,bulk)=>{
+    if(!items.length) return '';
+    const odAttn=bulk==='overdue' && tabAttention('plan');
+    return `<div class="section"><h2 class="${odAttn?'has-attn':''}"><span>${title}${note?` <span class="muted">${note}</span>`:''}${odAttn?'<i class="attn-dot" aria-hidden="true"></i>':''}</span>${bulk?`<button type="button" class="textlink" data-moveall="${bulk}">Move all to tomorrow</button>`:''}</h2><div class="card"><ul class="tasks">${items.map(rowTodo).join('')}</ul></div></div>`;
+  };
   const byDay=(()=>{ const g={}; ahead.forEach(t=>(g[t.day]=g[t.day]||[]).push(t)); return g; })();
   return `
   <div class="card" data-tour="listadd">
@@ -3716,10 +3768,14 @@ function vFriends(){
   const inbox=(S.inbox||[]).slice(0,3);
   const sub=(['list','chats','challenges'].includes(friendsState.sub)?friendsState.sub:'list');
   friendsState.sub=sub;
+  try{ markFriendsSubSeen(sub); }catch(e){}
   const openId=friendsState.open;
-  const seg=`<div class="seg" style="margin-bottom:14px" data-tour="fsubs">${[['list','Friend list'],['chats','Chats'],['challenges','Active challenges']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-fsub="${v}">${l}</button>`).join('')}</div>`;
+  const seg=`<div class="seg" style="margin-bottom:14px" data-tour="fsubs">${[['list','Friend list'],['chats','Chats'],['challenges','Active challenges']].map(([v,l])=>{
+    const subOn=friendsBucketUnseen(v);
+    return `<button class="${sub===v?'on':''}" data-fsub="${v}">${l}${subOn?'<i class="sub-dot" aria-hidden="true"></i>':''}</button>`;
+  }).join('')}</div>`;
 
-  const inboxCard=inbox.length?`<div class="card callout" style="margin-bottom:10px"><b>${inbox.length===1?'New message':`${inbox.length} new messages`}</b>
+  const inboxCard=inbox.length?`<div class="card callout has-attn" style="margin-bottom:10px"><i class="attn-dot" aria-hidden="true"></i><b>${inbox.length===1?'New message':`${inbox.length} new messages`}</b>
     <ul class="list" style="margin-top:6px">${inbox.map(x=>`<li><span>${esc(x.text)}</span><span class="small ${x.coins?'':'muted'}" style="${x.coins?'color:var(--accent)':''}">${x.coins?`+${x.coins}`:fmt(x.date,{day:'numeric',month:'short'})}</span></li>`).join('')}</ul>
     <button class="btn sm block" id="clearinbox" style="margin-top:10px">Clear</button></div>`:'';
 
@@ -3805,12 +3861,13 @@ function vShop(){
     <p class="tiny muted" style="margin-top:8px">${T.next?`${T.next.name} at level ${T.next.at}. `:'Top title. '}XP is never spent — only coins are.</p></div>
   <div class="section"><h2>Rewards <span class="muted">you set the price</span></h2>
     ${(()=>{const p=pendingExtras(); if(!p.length) return '';
-      return `<div class="card" style="margin-bottom:12px;border-color:color-mix(in srgb,var(--accent) 35%,var(--line))">
+      return `<div class="card has-attn" style="margin-bottom:12px;border-color:color-mix(in srgb,var(--accent) 35%,var(--line))">
+        <i class="attn-dot" aria-hidden="true"></i>
         <b class="small">${p.length} chest extra${p.length===1?'':'s'} to place</b>
         <p class="tiny muted" style="margin-top:4px">${active.length?'Pick which reward gets +1 buy this week.':'Add a reward first — they will wait.'}</p>
         ${active.length?`<button class="btn primary sm" style="margin-top:10px" id="placeextras">Choose</button>`:
           `<button class="btn primary sm" style="margin-top:10px" data-go="settings" data-open="rewards">Add a reward</button>`}</div>`;})()}
-    ${active.length?active.map(x=>{const cost=rewardPrice(x); const afford=S.points.coins>=cost; const ok=afford&&canRate; return `<div class="card reward ${ok?'':'locked'}"><div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">${earnEta(cost)}</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
+    ${active.length?(()=>{const newAff=new Set(shopNewAffordIds()); return active.map(x=>{const cost=rewardPrice(x); const afford=S.points.coins>=cost; const ok=afford&&canRate; const fresh=newAff.has(x.id); return `<div class="card reward ${ok?'':'locked'}${fresh?' has-attn':''}">${fresh?'<i class="attn-dot" aria-hidden="true"></i>':''}<div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">${earnEta(cost)}</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
       ${(()=>{const al=allowanceState(x); const can=ok&&!al.maxed; const mp=monthlyPlanned(x);
         return `<div class="row between" style="margin:8px 0 2px">
           <span class="tiny ${al.monthUsed>mp?'':'muted'}" style="${al.monthUsed>mp?'color:#f59e0b':''}">${al.monthUsed} of ${mp} this month</span>
@@ -3822,7 +3879,7 @@ function vShop(){
         ${al.extras?`<p class="tiny muted" style="margin:0 0 4px">+${al.extras} chest extra${al.extras===1?'':'s'} this week</p>`:''}
         <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
         <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
-          al.maxed?`That is it ${al.period}` : al.intoExtra?'Buy with a chest extra' : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join(''):`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+          al.maxed?`That is it ${al.period}` : al.intoExtra?'Buy with a chest extra' : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join('');})():`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
   <div class="section"><h2>Looks <span class="muted">${looks().owned.filter(id=>lookItem(id)&&!lookItem(id).legacy).length} of ${LOOK_ITEMS.filter(i=>!i.legacy).length}</span></h2>
     <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
       <span class="avatar big img">${charSVG(myChar(),64)}</span>
