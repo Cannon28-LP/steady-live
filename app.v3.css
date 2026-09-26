@@ -573,11 +573,12 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.6)}
 .avatar.img{padding:0;overflow:hidden;background:var(--surface2)}
 .avatar.img img{width:100%;height:100%;object-fit:cover;display:block}
 .avatar.mini{width:20px;height:20px;font-size:.66rem;margin-right:6px;vertical-align:middle;display:inline-grid}
-.head-trail{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.head-trail{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.head-trail .pill{padding:6px 10px;font-size:.82rem}
 .mechip{position:relative;display:flex;align-items:center;gap:8px;padding:3px 4px 3px 10px;border-radius:999px;background:var(--card);border:1px solid var(--line);color:inherit;max-width:52vw}
 .mechip-name{font-weight:650;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:28vw}
 .mechip .avatar,.mechip .avatar.img{width:42px;height:42px;flex:none;border-radius:50%;overflow:hidden}
-.mechip .charsvg{width:100%;height:100%;display:block;border-radius:50%;overflow:hidden}
+.mechip .charsvg{width:100%;height:100%;display:block;border-radius:50%;overflow:hidden;opacity:1;filter:none}
 .mechip .avedit{position:absolute;right:0;bottom:0;width:20px;height:20px;border-radius:50%;
   background:var(--card);border:1px solid var(--line);display:grid;place-items:center;
   box-shadow:0 1px 2px color-mix(in srgb,var(--fg) 14%, transparent)}

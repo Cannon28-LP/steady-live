@@ -939,6 +939,10 @@ function meChipHtml(){
   const m = me();
   return `<button class="mechip" id="avpick" aria-label="Change your picture"><span class="mechip-name">${esc(m.name||'You')}</span>${avatarHtml(m,'chip')}<span class="avedit">${ICON.edit}</span></button><input type="file" id="avfile" accept="image/*" hidden>`;
 }
+/* Streak + coins to the LEFT of mechip — shown on every tab head. */
+function headTrailHtml(){
+  return `<div class="head-trail"><span class="pill ${S.streak.login>=2?'accent':''}" data-tour="streak">${ICON.flame} ${S.streak.login}d</span><button class="pill coins" data-go="shop" data-tour="coins">${ICON.coin} ${S.points.coins.toLocaleString()}</button>${meChipHtml()}</div>`;
+}
 function avPairHtml(a,b){
   return `<span class="avpair">${avatarHtml(a,'chip')}${avatarHtml(b,'chip')}</span>`;
 }
@@ -1279,8 +1283,13 @@ function blackenGlassesWhites(svg){
   if(iAcc < 0) return svg;
   const before = svg.slice(0, iAcc);
   let chunk = svg.slice(iAcc);
-  chunk = chunk.replace(/fill=["'](?:#fff(?:fff)?|#FFF(?:FFF)?|white)["']/gi, 'fill="#111"');
-  chunk = chunk.replace(/(style=["'][^"']*?)fill\s*:\s*(?:#fff(?:fff)?|#FFF(?:FFF)?|white)\b/gi, '$1fill:#111');
+  /* Harden: #fff/#ffffff/white + rgb(255,…) — leftover whites read as blobs at chip size. */
+  const whiteFill = /fill=["'](?:#fff(?:fff)?|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))["']/gi;
+  const whiteStyle = /(style=["'][^"']*?)fill\s*:\s*(?:#fff(?:fff)?|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))\b/gi;
+  chunk = chunk.replace(whiteFill, 'fill="#111"');
+  chunk = chunk.replace(whiteStyle, '$1fill:#111');
+  /* Bare fill=white (no quotes) — rare but force. */
+  chunk = chunk.replace(/fill=white\b/gi, 'fill="#111"');
   return before + chunk;
 }
 function charSVG(av,size){
@@ -1289,8 +1298,11 @@ function charSVG(av,size){
   let peeps='';
   try{ peeps = blackenGlassesWhites(tintPeepsHair(createPeepsSvg(peepsOptsFromAv(a)), hex)); }
   catch(e){ peeps = '<svg viewBox="0 0 704 704" xmlns="http://www.w3.org/2000/svg"></svg>'; }
-  /* Leftover currentColor (non-hair line art) must stay ink, not theme text. */
+  /* Leftover currentColor / CSS vars must stay ink — never theme text colour. */
   peeps = peeps.replace(/fill=["']currentColor["']/gi, 'fill="#111"');
+  peeps = peeps.replace(/fill=["']var\([^"']+\)["']/gi, 'fill="#111"');
+  /* Second pass: accessories whites that survived tint + first blacken. */
+  peeps = blackenGlassesWhites(peeps);
   const inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
   const bg=(lookItem(a.backdrop)||{}).col;
   /* size≥52 = Looks thumbs/picks/preview (bust). 'chip' / no size / faces = zoomed-out head. */
@@ -1299,12 +1311,24 @@ function charSVG(av,size){
   const bgFill = bg || (bust ? '#eef2f1' : '#e8f0ee');
   const nonce = Math.random().toString(36).slice(2,7);
   const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||'',nonce].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
-  /* Chip (b76): head higher + more shoulders/chest (toward bust). Bust ≥52 unchanged. */
+  /* Chip (b77): bring down so hair clears the circle top; bust ≥52 unchanged. */
   const xf = bust
     ? 'translate(50 50) scale(0.165) translate(-352 -340)'
-    : 'translate(50 50) scale(0.155) translate(-352 -325)';
-  const sizeAttr = (size && size !== 'chip') ? `width="${size}" height="${size}"` : '';
-  return `<svg viewBox="0 0 100 100" class="charsvg" ${sizeAttr}>
+    : 'translate(50 50) scale(0.145) translate(-352 -305)';
+  /* Chip / small: 2× intrinsic px so SVG downsamples sharp into the CSS box (mechip 42→84). */
+  let sizeAttr = '';
+  let shapeAttr = '';
+  if(size === 'chip'){
+    sizeAttr = 'width="84" height="84"';
+    shapeAttr = 'shape-rendering="geometricPrecision"';
+  }else if(!bust){
+    const cssPx = (size|0) > 0 ? (size|0) : 40;
+    sizeAttr = `width="${cssPx*2}" height="${cssPx*2}"`;
+    shapeAttr = 'shape-rendering="geometricPrecision"';
+  }else if(size){
+    sizeAttr = `width="${size}" height="${size}"`;
+  }
+  return `<svg viewBox="0 0 100 100" class="charsvg" ${sizeAttr} ${shapeAttr}>
     <defs><clipPath id="${uid}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
     <g clip-path="url(#${uid})">
       <rect width="100" height="100" fill="${bgFill}"/>
@@ -3238,9 +3262,7 @@ function vToday(){
   const lb=loginBonus(S.streak.login+1);
   return `
   <div class="head"><div><div class="eyebrow">${fmt(k,{weekday:'long',day:'numeric',month:'long'})}</div><h1>Today</h1></div>
-    <div class="head-trail">${meChipHtml()}
-    <div class="headpills"><span class="pill ${S.streak.login>=2?'accent':''}" data-tour="streak">${ICON.flame} ${S.streak.login}d</span>
-      <button class="pill coins" data-go="shop" data-tour="coins">${ICON.coin} ${S.points.coins.toLocaleString()}</button></div></div></div>
+    ${headTrailHtml()}</div>
   <div class="card ring-card" data-tour="ring">
     <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${circ}" stroke-dashoffset="${circ*(1-pct)}"/></svg>
       <div class="center"><div><b>+${d.points||0}</b><span>today</span></div></div></div>
@@ -3330,7 +3352,7 @@ function vPlan(){
       const n = sub==='notes'?notesFiltered().length:whysFiltered().length;
       return n?`${n} match${n===1?'':'es'}`:'No matches';
     })()}</p></div>`:'';
-  return `<div class="head"><div><div class="eyebrow">Outside the points — nothing here can be failed</div><h1>Plan</h1></div>${meChipHtml()}</div>
+  return `<div class="head"><div><div class="eyebrow">Outside the points — nothing here can be failed</div><h1>Plan</h1></div>${headTrailHtml()}</div>
   ${affirmationLine()}
   <div class="seg" style="margin-bottom:14px">${[['list','List'],['notes','Notes'],['affirmations','Affirmations']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-psub="${v}">${l}</button>`).join('')}</div>
   ${search}
@@ -3464,7 +3486,7 @@ function vProgress(){
   }
   const sub=progState.sub==='calendar'?'overview':(progState.sub||'overview');
   progState.sub=sub;
-  const head=`<div class="head"><div><div class="eyebrow">${S.points.xp} XP · level ${L.L}</div><h1>Progress</h1></div>${meChipHtml()}</div>
+  const head=`<div class="head"><div><div class="eyebrow">${S.points.xp} XP · level ${L.L}</div><h1>Progress</h1></div>${headTrailHtml()}</div>
     ${affirmationLine()}
     <div class="seg" style="margin-bottom:14px">${[['overview','Overview'],['tasks','Tasks']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-sub="${v}">${l}</button>`).join('')}</div>`;
   return head + ({overview:pOverview,tasks:pTasks})[sub]();
@@ -3773,7 +3795,7 @@ function vFriends(){
   const live=Sync.live(), inn=Sync.signedIn();
   const banner=S.syncError?`<div class="card syncerr"><div class="row between"><div><b>Not syncing right now</b><p class="small muted">${esc(S.syncError)}</p></div><div class="stack" style="gap:6px"><button class="btn sm" id="retrysync">Retry</button><button class="btn sm ghost" id="conncheck2">Diagnose</button></div></div>
     <p class="tiny muted" style="margin-top:8px">Everything else works as normal — your tasks and history are on this device.</p></div>`:'';
-  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${meChipHtml()}</div>${affirmationLine()}${banner}`;
+  const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${headTrailHtml()}</div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `
   <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
@@ -3876,7 +3898,7 @@ function vFriends(){
 function vShop(){
   const T=title(), L=level(); const str=avgStrength(); const canRate=true; const active=S.rewards.filter(x=>x.active);
   return `
-  <div class="head"><div><div class="eyebrow">Coins to spend</div><h1>Shop</h1></div>${meChipHtml()}</div>
+  <div class="head"><div><div class="eyebrow">Coins to spend</div><h1>Shop</h1></div>${headTrailHtml()}</div>
   ${affirmationLine()}
   <div class="card" data-tour="balance"><div class="balance">${S.points.coins}<small>coins</small></div>
     <div class="row between" style="margin-top:14px"><span class="pill accent">Level ${L.L} · ${T.name}</span><span class="tiny muted">${L.into} / ${L.need} XP</span></div>
@@ -4003,7 +4025,7 @@ function vSettings(){
   const st=S.settings; const tg=(k,on)=>`<button class="toggle ${on?'on':''}" data-toggle="${k}" role="switch" aria-checked="${on}"></button>`;
   const segS=(k,opts)=>`<div class="seg">${opts.map(([v,l])=>`<button class="${st[k]===v?'on':''}" data-set="${k}" data-val="${v}">${l}</button>`).join('')}</div>`;
   return `
-  <div class="head"><div><div class="eyebrow">Steady</div><h1>Settings</h1></div>${meChipHtml()}</div>
+  <div class="head"><div><div class="eyebrow">Steady</div><h1>Settings</h1></div>${headTrailHtml()}</div>
   ${affirmationLine()}
   <details class="acc" id="acc-tasks" data-tour="tasks"><summary>Tasks <span class="muted">${activeTasks().length} / ${MAX_TASKS}</span></summary><div class="body">
     ${(()=>{const live=S.tasks.filter(t=>!t.archived); const n=live.length; const full=n>=MAX_TASKS; return `
