@@ -3,7 +3,7 @@
 import { createPeepsSvg } from './vendor/open-peeps-avatar.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-26'; }catch(e){ return '2026-09-26'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-09-28'; }catch(e){ return '2026-09-28'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -18,7 +18,8 @@ const SYNC = {
 };
 const MAX_REWARDS = 6, SPARES = 1, TASK_BASE = 3, CLEAR_PER_TASK = 0, CHEST_DAYS = 6;
 /* Days of slip before weak-habit pay rises — one miss must not bump the badge. */
-const MAX_TASKS = 10, MIN_REWARD_PRICE = 5, MAX_REWARD_PRICE = 30;
+const MAX_TASKS = 10, MIN_REWARD_PRICE = 5, MAX_REWARD_PRICE = 5000; /* soft typed max only (b79); cadence snap has no hard ceiling */
+const MAX_LOOK_COST = 30; /* Looks stay ≤ ~one clear-day haul; rewards use cadence, no hard 30 */
 const CHAL_PEOPLE_MAX = 24;      // slots, not headcount, are the real limit now
 const CREW_MAX = 8;              // past this a chat stops being a conversation
 const CHAL_PARTY_MAX = 6;
@@ -86,8 +87,8 @@ function earnEta(cost){
 }
 function rewardPrice(r){
   const n=Math.round(Number(r && r.price));
-  if(n>0) return Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, n));
-  return Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, tierCost((r && r.tier) || 'week')));
+  if(n>0) return Math.max(MIN_REWARD_PRICE, n);
+  return Math.max(MIN_REWARD_PRICE, tierCost((r && r.tier) || 'week'));
 }
 /* ---------- Reward budgeting ----------
    You say how often you want a thing; the app works out the price from what you
@@ -138,7 +139,7 @@ function weekRewardPool(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreat
 function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(weeklyTreatPot() * WEEKS_PER_MONTH)); }
 function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
 function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
-function snapRewardPrice(n){ return Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, round10(Number(n)||0))); }
+function snapRewardPrice(n){ return Math.max(MIN_REWARD_PRICE, round10(Number(n)||0)); }
 /* b72: one weekly treat sticker — pot split across active weeklies (fallback 4). */
 function weeklyTreatUnit(){
   const n = Math.max(1, (S.rewards||[]).filter(r=>r.active && rewardFreq(r)==='weekly').length || 4);
@@ -558,7 +559,8 @@ function migratePriceFloorsB69(){
   S._priceFloorB69 = 1;
   save();
 }
-/* b76: shop max 30 — cap every active reward (incl. locked), then resync unlocked cohorts. */
+/* b76: shop max 30 — cap every active reward (incl. locked), then resync unlocked cohorts.
+   Kept for saves that never ran it; soft MAX is now 5000 so this no longer flattens cadence. */
 function migratePriceCapB76(){
   if(S._priceCapB76) return;
   const active = (S.rewards||[]).filter(r => r && r.active);
@@ -567,6 +569,15 @@ function migratePriceCapB76(){
     if(p > MAX_REWARD_PRICE) r.price = MAX_REWARD_PRICE;
   }
   S._priceCapB76 = 1;
+  save();
+  try{ syncCadencePrices(); }catch(e){}
+}
+/* b79: lift hard 30 reward cap — resync unlocked stickers to cadence pot split
+   (weekly / 2× fortnight / ~4.33× monthly). Locked prices stay until Rebalance.
+   Looks remain ≤ MAX_LOOK_COST (static catalogue). */
+function migrateCadencePricesB79(){
+  if(S._cadencePricesB79) return;
+  S._cadencePricesB79 = 1;
   save();
   try{ syncCadencePrices(); }catch(e){}
 }
@@ -1050,7 +1061,7 @@ const LOOK_ITEMS = [
   {id:'h-medium1',  slot:'hair', name:'Medium 1',       cost:0,   peeps:'medium1'},
   {id:'h-shaved1',  slot:'hair', name:'Shaved 1',       cost:0,   peeps:'shaved1'},
   {id:'h-no1',      slot:'hair', name:'No hair 1',      cost:0,   peeps:'noHair1'},
-  // fluff ≤8–12 (b76 max 30)
+  // fluff ≤8–12 (b79: Looks stay ≤ MAX_LOOK_COST)
   {id:'h-buzz',     slot:'hair', name:'Shaved 2',       cost:8,  peeps:'shaved2'},
   {id:'h-shaved3',  slot:'hair', name:'Shaved 3',       cost:8,  peeps:'shaved3'},
   {id:'h-short5',   slot:'hair', name:'Short 5',        cost:12,  peeps:'short5'},
@@ -1068,7 +1079,7 @@ const LOOK_ITEMS = [
   {id:'h-wavy',     slot:'hair', name:'Long curly',     cost:12, peeps:'longCurly'},
   {id:'h-longbangs',slot:'hair', name:'Long bangs',     cost:12, peeps:'longBangs'},
   {id:'h-mbangs',   slot:'hair', name:'Medium bangs',   cost:12, peeps:'mediumBangs'},
-  // nicer 18–24 (b76)
+  // nicer 18–24 (Looks ≤30)
   {id:'h-mbangs2',  slot:'hair', name:'Medium bangs 2', cost:18, peeps:'mediumBangs2'},
   {id:'h-mbangs3',  slot:'hair', name:'Medium bangs 3', cost:18, peeps:'mediumBangs3'},
   {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:18, peeps:'mediumBangs'}, // legacy
@@ -1086,7 +1097,7 @@ const LOOK_ITEMS = [
   {id:'h-grayshort',slot:'hair', name:'Gray short',     cost:18, peeps:'grayShort'},
   {id:'h-graymed',  slot:'hair', name:'Gray medium',    cost:24, peeps:'grayMedium'},
   {id:'h-graybun',  slot:'hair', name:'Gray bun',       cost:24, peeps:'grayBun'},
-  // statement 30 (b76)
+  // statement 30 (Looks ceiling ≈ one clear-day haul)
   {id:'h-mohawk',   slot:'hair', name:'Mohawk',         cost:30, peeps:'mohawk'},
   {id:'h-mohawk2',  slot:'hair', name:'Mohawk 2',       cost:30, peeps:'mohawk2'},
   {id:'h-bear',     slot:'hair', name:'Bear',           cost:30, peeps:'bear'},
@@ -1109,7 +1120,7 @@ const LOOK_ITEMS = [
   {id:'fh-mous8',   slot:'facial', name:'Moustache 8',  cost:12, peeps:'moustache8'},
   {id:'fh-mous9',   slot:'facial', name:'Moustache 9',  cost:12, peeps:'moustache9'},
 
-  // —— Shirt colours (outfit slot) —— free + paid (b76)
+  // —— Shirt colours (outfit slot) —— free + paid (Looks ≤30)
   {id:'o-tee',     slot:'outfit', name:'Teal',         cost:0,   col:'#3f8f83'},
   {id:'o-hoodie',  slot:'outfit', name:'Slate',        cost:0,   col:'#4a5568'},
   {id:'o-navy',    slot:'outfit', name:'Navy',         cost:0,   col:'#2c3e6b'},
@@ -2080,6 +2091,7 @@ const Sync = {
     migratePairChallenges(S);
     migratePriceFloors();
     migratePriceCapB76();
+    migrateCadencePricesB79();
     save();
   },
   async pullVaultSmart(){
@@ -2333,7 +2345,7 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
 function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
-try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); migratePriceFloorsB68(); migratePriceFloorsB69(); migratePriceCapB76(); }catch(e){ console.error(e); }
+try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); migratePriceFloorsB68(); migratePriceFloorsB69(); migratePriceCapB76(); migrateCadencePricesB79(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
@@ -4160,7 +4172,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. Prices are capped at ${MAX_REWARD_PRICE} coins (Looks too). You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Same-cadence rewards share that cadence's pot: weeklies split one week of the treat pot so a solid week can cover every weekly once; fortnights split two weeks of pot among themselves (adding a fortnight does not shrink weekly stickers); monthlies split about 4.33 weeks of pot. One clear day alone will not buy a weekly when you have several. The pot is still about four clear days plus three half days of coins a week from your tasks — stickers still snap into the ${MIN_REWARD_PRICE}–${MAX_REWARD_PRICE} band. Buying every occurrence of everything (including fortnights) can still push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it; <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. Reward prices follow cadence (no hard 30 ceiling) — typed prices soft-cap at ${MAX_REWARD_PRICE}. Looks stay ≤ ${MAX_LOOK_COST} coins so they cost about one clear day and rewards stay the main spend. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Same-cadence rewards share that cadence's pot: weeklies split one week of the treat pot so a solid week can cover every weekly once; fortnights split two weeks of pot among themselves (adding a fortnight does not shrink weekly stickers); monthlies split about 4.33 weeks of pot. One clear day alone will not buy a weekly when you have several. The pot is still about four clear days plus three half days of coins a week from your tasks — stickers snap to at least ${MIN_REWARD_PRICE}. Buying every occurrence of everything (including fortnights) can still push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it; <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -4415,7 +4427,7 @@ function bind(){
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
     if(n<MIN_REWARD_PRICE){ eta.textContent='Minimum '+MIN_REWARD_PRICE+' coins so nothing is free.'; return; }
-    if(n>MAX_REWARD_PRICE){ eta.textContent='Maximum '+MAX_REWARD_PRICE+' coins for anything in the shop.'; return; }
+    if(n>MAX_REWARD_PRICE){ eta.textContent='Maximum '+MAX_REWARD_PRICE+' coins for a reward.'; return; }
     eta.textContent=earnEta(n); };
   const ra2=q('#acc-rewards'); if(ra2) ra2.addEventListener('toggle',()=>{ rewOpen=ra2.open; });
   if(np) np.oninput=refreshEta;
