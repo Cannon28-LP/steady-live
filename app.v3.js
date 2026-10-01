@@ -9,7 +9,8 @@ const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b')
    public — row-level security in supabase.sql is what actually protects the data.
    Leave blank and the Friends tab runs in demo mode with a local fake friend.
    Only aggregates ever leave the device: cleared/done/expected counts, streak,
-   consistency and level. Task names, notes, miss reasons and your "why" never sync. */
+   consistency and level. Task names, notes, miss reasons and your "why" are never shared with friends
+   (the signed-in account backup holds everything, readable only by you — see stripForVault). */
 /* Paste your VAPID public key here to turn on server-sent reminders (see push.sql). */
 const PUSH = { vapidPublic: '' };
 const SYNC = {
@@ -1367,7 +1368,7 @@ function crewName(c){
   return n.length?(n.length<=2?n.join(' & '):n.slice(0,2).join(', ')+' +'+(n.length-2)):'Empty crew';
 }
 function makeCrew(memberIds,name){
-  const c={id:uid(),name:name||'',memberIds:[...new Set(memberIds)].slice(0,CREW_MAX-1),createdAt:Date.now()};
+  const c={id:uid(),name:name||'',memberIds:[...new Set(memberIds)].slice(0,CREW_MAX-1),createdAt:Date.now(),ownerId:S.me?.id||null};
   crewList().push(c); S.msgs[c.id]=[]; save(); return c;
 }
 function msgsOf(id){ return (S.msgs[id]||(S.msgs[id]=[])); }
@@ -1529,7 +1530,9 @@ function liveQuest(c){
   const def=findChallenge(c.questId||c.id);
   if(!def) return null;
   const members=(c.memberIds||[]).map(id=>S.friends[id]).filter(Boolean);
-  return {...def,...c,tier:c.tier||def.tier,members};
+  /* A member we can't see (friend cache empty after a restore, or removed) must not count as done. */
+  const unresolved=members.length<(c.memberIds||[]).length;
+  return {...def,...c,tier:c.tier||def.tier,members,unresolved};
 }
 function friendChallenge(fid){ return chalList().find(c=>(c.memberIds||[]).includes(fid)); }
 function partyNames(members){
@@ -1589,6 +1592,7 @@ function buysSince(from,to){
 }
 function challengeProgress(ch){
   const members=ch.members||(ch.memberIds||[]).map(id=>S.friends[id]).filter(Boolean);
+  if(ch.unresolved || members.length<(ch.memberIds||[]).length) return {have:0,need:questNeed({...ch,members}),waiting:true};
   const from=ch.startedAt||today(), k=today();
   const inRange=x=>x>=from&&x<=k;
   const need=questNeed({...ch,members});
@@ -1678,9 +1682,12 @@ function challengeBroken(raw){
   const from=raw.startedAt, k=today();
   /* Past days in the run must stay perfect for streak types. */
   if(ch.type==='bothClearStreak'||ch.type==='bothOpenStreak'){
+    if(ch.unresolved) return null;
     const hit=ch.type==='bothClearStreak'?(x=>allClearedOn(members,x)):(x=>allOpenedOn(members,x));
     for(let x=from;x<k;x=addDays(x,1)){
       if(isAway(x)) continue;                               // Away does not auto-fail a challenge
+      if((S.pendingMisses||[]).some(p=>p.date===x)) return null;   // you haven't said yet whether you did it
+      if(members.some(f=>!f.days?.[x])) return null;              // no data from a friend yet — unknown, not a miss
       if(!hit(x)) return ch.type==='bothClearStreak'?'Clear streak broken — challenge over':'Open streak broken — challenge over';
     }
     return null;
@@ -1691,7 +1698,7 @@ function challengeBroken(raw){
   }
   if(ch.type==='coinsEarned'&&ch.window){
     const end=addDays(from,ch.window-1);
-    if(k>end){
+    if(k>end && !ch.unresolved){
       const pr=challengeProgress(ch);
       if(pr.have<pr.need) return 'Coin window closed — challenge over';
     }
@@ -1712,7 +1719,8 @@ function pullFriendFromChallenges(fid){
 }
 function claimChest(cid){
   const raw=chalList().find(c=>c.id===cid); if(!raw||!chalIsActive(raw)) return null;
-  const ch=liveQuest(raw); if(!ch) return null;
+  if((S.chalClaimed||[]).includes(cid)) return null;
+  const ch=liveQuest(raw); if(!ch||ch.unresolved) return null;
   const pr=challengeProgress(ch); if(pr.have<pr.need) return null;
   const t=TIERS_C[ch.tier];
   const heads=(ch.memberIds||[]).length+1;
@@ -1732,6 +1740,7 @@ function claimChest(cid){
     p.chests.push({tier:ch.tier,questId:qid,amount,at:today(),name:ch.name,crew:ch.members.map(x=>x.name),extras:extras||undefined});
   }
   lockQuestUntil(qid, nextMonth());
+  S.chalClaimed=[...(S.chalClaimed||[]),cid].slice(-200);   // the next sync would otherwise bring it back to claim again
   S.challenges=chalList().filter(c=>c.id!==cid); save();
   const mult=crewMultiplier(heads);
   return {tier:ch.tier,amount,name:ch.name,colour:t.colour,heads,extras,
@@ -1893,6 +1902,8 @@ function vaultWeight(s){
   const coins=s.points?.coins||0;
   return days*3 + tasks*2 + notes + todos + (coins>0?1:0);
 }
+/* Anything from the server that ends up inside markup or an attribute must look like an id. */
+const okId = v => typeof v==='string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
 function stripForVault(){
   const {friends,outbox,inbox,syncError,demo,session,...rest}=S;   // never back up the auth token or cached friend data
   return rest;
@@ -1920,7 +1931,9 @@ const Sync = {
     try{ await api('/rest/v1/profiles?on_conflict=id',{method:'POST',body:{id,code,display_name:name},
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}}); }
     catch(e){ throw new Error(readableSyncError(e)); }
-    S.me={id,email:email.trim(),name,code}; S.auth='in'; S.syncError=null; save();
+    const av=S.me?.avatar||null;
+    S.me={id,email:email.trim(),name,code,avatar:av}; S.auth='in'; S.syncError=null; save();
+    if(av) setMyAvatar(av).catch(()=>{});            // a picture set before the account existed never reached friends
     await this.backup();
   },
   /* Sends a reset link. Supabase needs this exact address in
@@ -1946,7 +1959,13 @@ const Sync = {
       S.syncError=decodeURIComponent(String(err).replace(/\+/g,' ')); save(); return false; }
     const at=grab('access_token');
     if(at && (grab('type')==='recovery' || !S.session)){
-      setSession({access_token:at,refresh_token:grab('refresh_token'),expires_in:Number(grab('expires_in'))||3600});
+      /* A link is just text anyone can write: if this device already belongs to an account,
+         only accept a token for that same account. */
+      let sub=null; try{ sub=JSON.parse(atob(at.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).sub; }catch(e){}
+      const known=S.me?.email ? S.me.id : null;          // signed in here before (even if signed out now)
+      if(!sub || (known && sub!==known)){ history.replaceState(null,'',location.pathname);
+        S.syncError='That link is for a different account, so it was ignored.'; save(); return false; }
+      setSession({access_token:at,refresh_token:grab('refresh_token'),expires_in:Number(grab('expires_in'))||3600,user:{id:sub}});
       history.replaceState(null,'',location.pathname);
       return true;
     }
@@ -1965,7 +1984,7 @@ const Sync = {
     try{ const d=await api('/auth/v1/user',{method:'PUT',body:{password:pw}});
       const id=d?.id||S.session?.user_id;
       let prof=null; try{ prof=(await api(`/rest/v1/profiles?id=eq.${id}&select=code,display_name`))?.[0]; }catch(e){}
-      S.me={id,email:d?.email||S.me?.email||'',name:prof?.display_name||S.me?.name||'Me',code:prof?.code||me().code};
+      S.me={id,email:d?.email||S.me?.email||'',name:prof?.display_name||S.me?.name||'Me',code:prof?.code||me().code,avatar:S.me?.avatar||null};
       S.auth='in'; S.syncError=null; save();
       return await this.restore();
     }catch(e){ throw new Error(readableSyncError(e)); }
@@ -1977,7 +1996,7 @@ const Sync = {
     if(!setSession(d)) throw new Error('Signed in but no session came back.');
     const id=d.user?.id||S.session.user_id;
     let prof=null; try{ prof=(await api(`/rest/v1/profiles?id=eq.${id}&select=code,display_name`))?.[0]; }catch(e){}
-    S.me={id,email:email.trim(),name:prof?.display_name||'Me',code:prof?.code||me().code};
+    S.me={id,email:email.trim(),name:prof?.display_name||'Me',code:prof?.code||me().code,avatar:S.me?.avatar||null};
     S.auth='in'; S.syncError=null; save();
     if(!prof){ try{ await api('/rest/v1/profiles?on_conflict=id',{method:'POST',body:{id,code:S.me.code,display_name:S.me.name},
       headers:{Prefer:'resolution=merge-duplicates,return=minimal'}}); }catch(e){} }
@@ -2011,20 +2030,18 @@ const Sync = {
     try{
       const remote=await this.fetchVault();
       const localAt=S.vaultAt||0;
-      if(remote && remote.updatedAt > localAt+5000 && vaultWeight(remote.blob) > vaultWeight(S)){
-        /* Cloud is newer and richer — pull it instead of wiping it. */
-        this.applyVault(remote.blob, remote.updatedAt);
-        return;
-      }
       if(remote && remote.updatedAt > localAt+5000 && vaultWeight(remote.blob) >= vaultWeight(S)){
-        /* Same richness but cloud newer: still don't clobber; wait for explicit restore. */
-        return;
+        /* Cloud is newer and at least as full: don't clobber it, and don't swap this device's data out
+           from under you mid-use either (it used to apply silently, even after you'd said Cancel).
+           Settings → Restore from account brings it in when you choose. */
+        return 'skipped';
       }
       await api('/rest/v1/vault?on_conflict=user_id',{method:'POST',
         body:{user_id:S.me.id,blob:stripForVault(),updated_at:new Date().toISOString()},
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
       S.vaultAt=Date.now(); S.syncError=null; save();
-    }catch(e){ S.syncError=readableSyncError(e); save(); }
+      return 'saved';
+    }catch(e){ S.syncError=readableSyncError(e); save(); return 'error'; }
   },
   async restore(){
     const v=await this.fetchVault();
@@ -2049,7 +2066,7 @@ const Sync = {
     const newer=remote.updatedAt > localAt+5000;
     const richer=vaultWeight(remote.blob) > vaultWeight(S);
     if(thin && remote.blob){ this.applyVault(remote.blob, remote.updatedAt); return true; }
-    if(newer && richer){ this.applyVault(remote.blob, remote.updatedAt); return true; }
+    if(newer && richer && !(S.flags.vaultDeclined && remote.updatedAt<=S.flags.vaultDeclined)){ this.applyVault(remote.blob, remote.updatedAt); return true; }
     return false;
   },
 
@@ -2072,7 +2089,11 @@ const Sync = {
     await this.pull(); return S.friends[row.id];
   },
   async removeFriend(id){
+    const had=chalList().filter(c=>(c.memberIds||[]).includes(id)).map(c=>c.id);
     pullFriendFromChallenges(id);
+    /* Tell the server too, or the next sync puts them straight back on the challenge. */
+    had.forEach(cid=>{ const c=chalList().find(x=>x.id===cid);
+      if(c) this.pushChallenge(c).catch(()=>{}); else this.removeChallenge(cid).catch(()=>{}); });
     S.friends=Object.fromEntries(Object.entries(S.friends).filter(([k])=>k!==id));
     if(S.pairs) delete S.pairs[id];
     save();
@@ -2096,8 +2117,8 @@ const Sync = {
   async _pull(){
     // 1. discover anyone who added US, so pairing works from either side
     const links=await api('/rest/v1/rpc/my_friends',{method:'POST',body:{}});
-    (links||[]).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{},avatar:p.avatar||null,chalLocks:p.chal_locks||{}};
-      else { S.friends[p.id].name=p.display_name; S.friends[p.id].avatar=p.avatar||S.friends[p.id].avatar||null; if(p.chal_locks) S.friends[p.id].chalLocks=p.chal_locks; } });
+    (links||[]).filter(p=>okId(p.id)).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{},avatar:p.avatar||null,chalLocks:p.chal_locks||{}};
+      else { S.friends[p.id].name=p.display_name; S.friends[p.id].avatar=p.avatar!==undefined?(p.avatar||null):(S.friends[p.id].avatar||null); if(p.chal_locks) S.friends[p.id].chalLocks=p.chal_locks; } });
     const ids=Object.keys(S.friends).filter(id=>!id.startsWith('demo-'));
     if(ids.length){
       try{
@@ -2131,9 +2152,9 @@ const Sync = {
       else inbox.push({id:x.id,text:`${from} nudged you`,coins:0,date:x.date});
     }
     if(ch?.length){
+      await api(`/rest/v1/cheers?id=in.(${ch.map(x=>x.id).join(',')})`,{method:'PATCH',body:{applied:true},headers:{Prefer:'return=minimal'}});
       S.points.coins+=coins;
       S.inbox=[...inbox,...(S.inbox||[])].slice(0,10);
-      await api(`/rest/v1/cheers?id=in.(${ch.map(x=>x.id).join(',')})`,{method:'PATCH',body:{applied:true},headers:{Prefer:'return=minimal'}});
       S.flags.pendingToast=inbox.length===1?inbox[0].text+(coins?` · +${coins} coins`:''):`${inbox.length} messages from friends`;
     }
     save();
@@ -2152,8 +2173,9 @@ const Sync = {
       S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
   },
-  async upsertCrew(c){
+  async upsertCrew(c, removed=[]){
     if(!this.live()||!this.signedIn()) return;
+    if(c.ownerId && c.ownerId!==S.me.id) return;     // only the owner can write the chat row; members' pushes just failed RLS
     try{
       await api('/rest/v1/crews?on_conflict=id',{method:'POST',
         body:{id:c.id,owner_id:S.me.id,name:c.name||null},
@@ -2161,8 +2183,16 @@ const Sync = {
       const rows=[S.me.id,...(c.memberIds||[])].map(uid=>({crew_id:c.id,user_id:uid}));
       await api('/rest/v1/crew_members?on_conflict=crew_id,user_id',{method:'POST',body:rows,
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+      const gone=(removed||[]).filter(okId);
+      if(gone.length) await api(`/rest/v1/crew_members?crew_id=eq.${c.id}&user_id=in.(${gone.join(',')})`,{method:'DELETE',headers:{Prefer:'return=minimal'}});
       S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  /* Deleting a chat on this phone: drop our membership so the next sync doesn't bring it back. */
+  async leaveCrew(id){
+    if(!this.live()||!this.signedIn()||!okId(id)) return;
+    try{ await api(`/rest/v1/crew_members?crew_id=eq.${id}&user_id=eq.${S.me.id}`,{method:'DELETE',headers:{Prefer:'return=minimal'}}); }
+    catch(e){ S.syncError=readableSyncError(e); save(); }
   },
   /* Re-upload crews that only exist on this device (e.g. created while tables were missing). */
   async pushCrews(){
@@ -2175,11 +2205,11 @@ const Sync = {
     if(!this.live()||!this.signedIn()) return;
     try{
       const rows=await api('/rest/v1/rpc/my_crews',{method:'POST',body:{}});
-      (rows||[]).forEach(r=>{
-        const others=(r.members||[]).filter(id=>id!==S.me.id);
+      (rows||[]).filter(r=>okId(r.id)).forEach(r=>{
+        const others=(r.members||[]).filter(id=>id!==S.me.id && okId(id));
         const have=crewList().find(c=>c.id===r.id);
-        if(have){ have.name=r.name||have.name; have.memberIds=others; }
-        else { crewList().push({id:r.id,name:r.name||'',memberIds:others,createdAt:Date.now()}); S.msgs[r.id]=S.msgs[r.id]||[]; }
+        if(have){ have.name=r.name||have.name; have.memberIds=others; have.ownerId=r.owner_id||have.ownerId||null; }
+        else { crewList().push({id:r.id,name:r.name||'',memberIds:others,createdAt:Date.now(),ownerId:r.owner_id||null}); S.msgs[r.id]=S.msgs[r.id]||[]; }
       });
       save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
@@ -2195,10 +2225,10 @@ const Sync = {
     try{ await api('/rest/v1/coop?on_conflict=id',{method:'POST',
       body:{id:ch.id,owner_id:ch.hostId||S.me.id,crew_id:ch.crewId||null,tier:ch.tier,
             quest_id:ch.questId,started_at:ch.startedAt||null,
-            members:[ch.hostId||S.me.id,...(ch.memberIds||[])].filter((v,i,a)=>a.indexOf(v)===i),
+            members:[ch.hostId||S.me.id,S.me.id,...(ch.memberIds||[])].filter((v,i,a)=>a.indexOf(v)===i),
             status:ch.status||'active', accepted:ch.accepted||[]},
       headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
-      S.syncError=null; save();
+      ch.synced=true; S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
   },
   async removeChallenge(id){
@@ -2208,18 +2238,22 @@ const Sync = {
   async pullChallenges(){
     if(!this.live()||!this.signedIn()) return;
     try{
-      const rows=await api('/rest/v1/rpc/my_coop',{method:'POST',body:{}});
-      const mine=chalList();
-      (rows||[]).forEach(r=>{
+      const rows=(await api('/rest/v1/rpc/my_coop',{method:'POST',body:{}})||[])
+        .filter(r=>okId(r.id) && TIERS_C[r.tier] && !(S.chalClaimed||[]).includes(r.id));
+      const seen=new Set(rows.map(r=>r.id));
+      /* Declined, cancelled or failed on the server: drop our copy too, or it gets pushed back up.
+         Copies that never reached the server (made offline) stay until they do. */
+      const mine=chalList().filter(c=>seen.has(c.id) || !c.synced);
+      rows.forEach(r=>{
         const host=r.owner_id;
-        const others=(r.members||[]).filter(id=>id!==S.me.id);
+        const others=(r.members||[]).filter(id=>id!==S.me.id && okId(id));
         const mapped={id:r.id,questId:r.quest_id,tier:r.tier,startedAt:r.started_at,
           memberIds:others,crewId:r.crew_id||null, status:r.status||'active',
-          hostId:host, accepted:r.accepted||[]};
+          hostId:host, accepted:r.accepted||[], synced:true};
         const have=mine.find(c=>c.id===r.id);
         if(have){
           have.status=mapped.status; have.accepted=mapped.accepted; have.startedAt=mapped.startedAt;
-          have.hostId=mapped.hostId; have.memberIds=mapped.memberIds; have.crewId=mapped.crewId;
+          have.hostId=mapped.hostId; have.memberIds=mapped.memberIds; have.crewId=mapped.crewId; have.synced=true;
         } else mine.push(mapped);
       });
       S.challenges=mine; save();
@@ -2586,7 +2620,7 @@ function rollover(){
   if(last){ for(let m=weekOf(last); m<=lastMon; m=addDays(m,7)){ if(!S.chests[m]){ const msg=settleChest(m); if(msg) notes.push(msg); } } }
   if(notes.length) S.flags.pendingToast=notes.join(' · ');
   S.flags.lastOpen=t; S.undo=null; sel.clear(); save();
-  try{ checkChallenges(); }catch(e){}
+  /* Challenges are judged in friendsTick, after fresh friend data arrives — not here on yesterday's cache. */
 }
 function finalize(k){
   const d=day(k); if(d.finalized) return;
@@ -3116,6 +3150,17 @@ function render(){
   try{ updateTabDots(); }catch(e){}
 }
 
+/* Re-render without losing words typed into a box that hasn't been submitted yet
+   (picking "Tomorrow" or a time used to wipe the list item you were writing). */
+function renderKeepingDrafts(){
+  const keep=[...($app?.querySelectorAll('input[id],textarea[id]')||[])]
+    .filter(el=>!['checkbox','radio','file','time','date'].includes(el.type) && el.value!==el.defaultValue)
+    .map(el=>({id:el.id,v:el.value,focus:document.activeElement===el,ss:el.selectionStart,se:el.selectionEnd}));
+  render();
+  for(const k of keep){ const el=document.getElementById(k.id); if(!el || el.value===k.v) continue;
+    el.value=k.v; if(k.focus){ el.focus(); try{ el.setSelectionRange(k.ss,k.se); }catch(e){} } }
+}
+
 /* ---------- Today ---------- */
 
 /* ---------- Week story (Progress → Overview) ---------- */
@@ -3186,7 +3231,7 @@ function weekStoryCard(){
     <div class="week-story-body">
       <p class="week-story-text">${esc(story)}</p>
       ${roughList}
-      <p class="tiny muted" style="margin-top:10px">Private on this device — away, rough days and miss reasons stay here.</p>
+      <p class="tiny muted" style="margin-top:10px">Private — away, rough days and miss reasons are never shared with friends.</p>
     </div>
   </details>`;
 }
@@ -3198,7 +3243,7 @@ function roughSheet(editId){
   const text0=existing?.text||'';
   const o=overlay(`<div class="sheet rough-sheet"><div class="grab"></div>
     <h2>${existing?'Edit rough day':'Rough day'}</h2>
-    <p class="muted small" style="margin-bottom:12px">What happened — and how does it land? Kept private on this device.</p>
+    <p class="muted small" style="margin-bottom:12px">What happened — and how does it land? Private — never shared with friends.</p>
     <p class="tiny muted" style="margin-bottom:8px">Optional feel</p>
     <div class="chips" data-feels>${ROUGH_FEELS.map(f=>`<button type="button" class="chip ${feel0===f?'on':''}" data-feel="${f}">${f}</button>`).join('')}<button type="button" class="chip ${!feel0?'on':''}" data-feel="">Skip</button></div>
     <textarea id="roughtext" maxlength="${ROUGH_TEXT_MAX}" rows="5" placeholder="Write freely…" style="margin-top:14px;width:100%;resize:vertical">${esc(text0)}</textarea>
@@ -3216,7 +3261,7 @@ function roughSheet(editId){
     const text=ta.value.trim();
     if(!text && !feel){ toast('Write a little, or pick a feel'); return; }
     saveRoughDay({text, feel:feel||null, id:existing?.id, date:existing?.date||today()});
-    close(o); haptic('success'); render(); toast('Kept private on this device.');
+    close(o); haptic('success'); render(); toast('Saved · never shared with friends');
   };
   setTimeout(()=>ta.focus(),200);
 }
@@ -3685,7 +3730,7 @@ function challengeCard(raw){
       <div class="row between" style="align-items:flex-start">
         <div><span class="tierbadge">Invite</span><b style="display:block;margin-top:6px;font-size:1.1rem">${esc(ch.name)}</b>
           <p class="small muted" style="margin-top:2px">${esc(t.label)} · ${esc(liveDesc(ch))}</p>
-          <p class="tiny muted" style="margin-top:6px">${needMe?'Needs your accept':waiting.length?('Waiting on '+waiting.map(f=>f.name).join(', ')):'Starting…'}</p></div>
+          <p class="tiny muted" style="margin-top:6px">${needMe?'Needs your accept':waiting.length?('Waiting on '+waiting.map(f=>esc(f.name)).join(', ')):'Starting…'}</p></div>
         <div class="chestmini">${chestSVG(ch.tier)}</div></div>
       ${needMe?`<div class="row" style="gap:8px;margin-top:12px"><button class="btn primary" style="flex:1" data-acceptchal="${raw.id}">Accept</button>
         <button class="btn ghost" style="flex:1" data-declinechal="${raw.id}">Decline</button></div>`:
@@ -3794,7 +3839,7 @@ function vFriends(){
         <button class="btn primary block" id="authgo">${authState.mode==='up'?'Create account':'Sign in'}</button>
         ${authState.mode==='in'?`<button class="btn ghost block" id="forgotpw">Forgotten your password?</button>`:''}
       </div>
-      <p class="tiny muted" style="margin-top:12px">${authState.mode==='up'?'An account backs up everything — tasks, history, coins — so a new phone restores it all. Only aggregates are ever shared with friends.':'Signing in on a new phone restores your tasks, history and coins.'}</p>
+      <p class="tiny muted" style="margin-top:12px">${authState.mode==='up'?'An account keeps a private backup of everything — tasks, history, coins, notes, rough days — so a new phone restores it all. Only you can read it; friends only ever see totals.':'Signing in on a new phone restores your tasks, history and coins.'}</p>
     </div>
     <div class="card empty"><b>Why an account?</b>Without one, clearing your browser data loses everything. Your habits stay on the device either way — this is just the safety net.</div>`;
 
@@ -4164,7 +4209,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Away.</b> Settings → Away pauses habits for a stretch you choose (1, 3, 7, 14 days or any number). Away days ask for nothing, create no misses, and bridge your clear-streak without counting as a clear. Login streak still counts if you open the app. Challenges won’t fail only because you were away. If notifications are allowed, a calm return reminder fires on the end day — change the length or end early and it reschedules or cancels.</p>
     <p><b style="color:var(--fg)">Rough day.</b> A quiet private note on Today — how the day felt, optional feel chip. No coins, no XP, never shared with Friends. Edit anytime the same day.</p>
     <p><b style="color:var(--fg)">Week story.</b> Progress → Overview stitches clears, away days, top miss reasons and rough-day notes into a short private paragraph for the current week.</p>
-    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons, rough days and your affirmation never leave this device.</p>
+    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons, rough days and your affirmations are never shared with friends. If you sign in, a private backup of everything is kept in your account so a new phone can restore it — only you can read it.</p>
     <p class="tiny">Build ${BUILD}</p>
     <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="replayonb">Replay setup</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
   </div></details>`;
@@ -4187,11 +4232,11 @@ function bind(){
   qa('[data-acceptchal]').forEach(b=>b.onclick=()=>acceptChallenge(b.dataset.acceptchal));
   qa('[data-declinechal]').forEach(b=>b.onclick=()=>declineChallenge(b.dataset.declinechal));
   qa('[data-when]').forEach(b=>b.onclick=()=>{ const v=b.dataset.when;
-    if(v==='pick'){ promptDate('When?', planState.when&&planState.when.includes('-')?planState.when:addDays(today(),2), d=>{ planState.when=d; render(); }); return; }
-    planState.when=v; haptic(); render(); });
+    if(v==='pick'){ promptDate('When?', planState.when&&planState.when.includes('-')?planState.when:addDays(today(),2), d=>{ planState.when=d; renderKeepingDrafts(); }); return; }
+    planState.when=v; haptic(); renderKeepingDrafts(); });
   const whenDay=()=>{ const w=planState.when; return w==='today'?today():w==='tomorrow'?addDays(today(),1):w==='someday'?null:w; };
-  const nta=q('#newtodoat'); if(nta) nta.onchange=()=>{ planState.at=nta.value; render(); };
-  const cat=q('#clearat'); if(cat) cat.onclick=()=>{ planState.at=''; render(); };
+  const nta=q('#newtodoat'); if(nta) nta.onchange=()=>{ planState.at=nta.value; renderKeepingDrafts(); };
+  const cat=q('#clearat'); if(cat) cat.onclick=()=>{ planState.at=''; renderKeepingDrafts(); };
   const nl=q('#newtodo'); if(nl){ const add=()=>{const v=nl.value.trim(); if(!v) return;
       addTodo(v,whenDay(),document.getElementById('newtodoat')?.value||null); haptic(); render(); document.getElementById('newtodo')?.focus();};
     q('#addtodo').onclick=add; nl.onkeydown=e=>{if(e.key==='Enter')add();}; }
@@ -4255,7 +4300,8 @@ function bind(){
         const localHeavy=vaultWeight(S)>=3;
         if(blob && localHeavy && vaultWeight(blob) > 0){
           render();
-          modal('<h2>Restore your backup?</h2><p class="muted">Your account has a backup (likely from your other device). Restoring replaces what is on <b>this</b> device with that backup. Cancel keeps this device as it is — but will not upload over a newer cloud backup.</p>','Restore',()=>{ Sync.applyVault(blob); render(); toast('Restored from account'); friendsTick(); });
+          S.flags.vaultDeclined=Date.now(); save();      // cleared if you tap Restore; otherwise boot won't sneak it in later
+          modal('<h2>Restore your backup?</h2><p class="muted">Your account has a backup (likely from your other device). Restoring replaces what is on <b>this</b> device with that backup. Cancel keeps this device as it is — the cloud copy is only replaced if this device ends up with more in it.</p>','Restore',()=>{ Sync.applyVault(blob); S.flags.vaultDeclined=null; save(); render(); toast('Restored from account'); friendsTick(); });
         } else {
           if(blob) Sync.applyVault(blob);
           render(); toast(blob?'Signed in · backup restored':'Signed in'); friendsTick();
@@ -4278,7 +4324,7 @@ function bind(){
   };
   const bn=q('#backupnow'); if(bn) bn.onclick=async()=>{
     bn.disabled=true; bn.textContent='…';
-    try{ await Sync.backup(); toast(S.syncError||'Backup saved'); render(); }
+    try{ const r=await Sync.backup(); toast(r==='skipped'?'Your account has a newer backup — nothing uploaded. Use Restore from account to bring it here.':S.syncError||'Backup saved'); render(); }
     catch(e){ toast(e.message||'Backup failed'); }
     finally{ bn.disabled=false; bn.textContent='Backup now'; }
   };
@@ -4316,8 +4362,9 @@ function bind(){
   const sn2=q('#syncnow'); if(sn2) sn2.onclick=async()=>{ sn2.textContent='…';
     try{
       await Sync.pushCrews().catch(()=>{});
+      await Sync.pull(); await Sync.pullCrews(); await Sync.pullChallenges();
       await Promise.all(chalList().map(c=>Sync.pushChallenge(c).catch(()=>{})));
-      await Sync.pull(); await Sync.pullCrews(); await Sync.pullChallenges(); await Sync.pullMessages();
+      await Sync.pullMessages();
     }catch(e){}
     try{
       if(navigator.serviceWorker){
@@ -4375,7 +4422,7 @@ function bind(){
   qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
   const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); document.getElementById('newwhy')?.focus();};
     q('#addwhy').onclick=add; nw.onkeydown=e=>{ if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); add(); } }; }
-  const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ planState.affQ=asearch.value; render(); const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
+  const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ planState.affQ=asearch.value; renderKeepingDrafts(); const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
   qa('[data-afftog]').forEach(b=>b.onclick=e=>{
     if(e.target.closest('[data-delwhy]')) return;
     e.preventDefault(); e.stopPropagation();
@@ -5287,7 +5334,8 @@ function crewSheet(existing){
   o.querySelector('[data-ok]').onclick=()=>{
     if(!picked.size){ toast('Pick at least one person'); return; }
     const name=o.querySelector('#crewname').value.trim();
-    if(existing){ existing.memberIds=[...picked]; existing.name=name; save(); Sync.upsertCrew(existing).catch(()=>{}); close(o); render(); }
+    if(existing){ const removed=(existing.memberIds||[]).filter(id=>!picked.has(id));
+      existing.memberIds=[...picked]; existing.name=name; save(); Sync.upsertCrew(existing,removed).catch(()=>{}); close(o); render(); }
     else { const c=makeCrew([...picked],name); Sync.upsertCrew(c).catch(()=>{}); close(o); render(); chatView(c.id); }
   };
 }
@@ -5402,7 +5450,7 @@ function chatInfo(c,onLeave){
   o.querySelector('[data-mute]').onclick=()=>{ toggleMute(c.id); close(o); toast(isMuted(c.id)?'Muted':'Unmuted'); };
   o.querySelector('[data-leave]').onclick=()=>modal('<h2>Delete this chat?</h2><p class="muted">The messages go. Any challenge running in it is dropped.</p>','Delete',()=>{
     (S.challenges||[]).filter(x=>x.crewId===c.id).forEach(x=>dropChallenge(x.id));
-    S.crews=crewList().filter(x=>x.id!==c.id); delete S.msgs[c.id]; save(); close(o); onLeave&&onLeave(); },true);
+    S.crews=crewList().filter(x=>x.id!==c.id); delete S.msgs[c.id]; save(); Sync.leaveCrew(c.id).catch(()=>{}); close(o); onLeave&&onLeave(); },true);
 }
 
 /* ---------- Full-clear streak reward ---------- */
@@ -5623,19 +5671,26 @@ function maybeRecap(){ const r=earnRecap(); if(r){ haptic('success'); recapView(
 /* ---------- Boot ---------- */
 let _bkT;
 function scheduleBackup(){ clearTimeout(_bkT); _bkT=setTimeout(()=>Sync.backup().catch(()=>{}),8000); }
+let _ticking=false;
 function friendsTick(){
   if(Sync.live()&&Sync.signedIn()) scheduleBackup();
   if(!friendList().length && !Sync.signedIn()) return;
+  if(_ticking) return;                    // two overlapping chains could both pay the same cheers
+  _ticking=true;
   const pushLocalChals=()=>Promise.all(chalList().map(c=>Sync.pushChallenge(c).catch(()=>{})));
+  /* Pull before pushing challenges: pushing first sent stale copies up (a host's old "pending"
+     overwrote an accepted challenge, and declined invites were re-created). Challenges are only
+     judged after a successful pull, so a friend's late clear isn't read as a miss. */
   Sync.pushCrews().catch(()=>{})
-    .then(()=>pushLocalChals())
     .then(()=>Sync.pull())
     .then(()=>Sync.pullCrews())
     .then(()=>Sync.pullChallenges())
+    .then(()=>pushLocalChals())
     .then(()=>{ try{ checkChallenges(); }catch(e){} })
     .then(()=>Sync.pullMessages())
-    .then(()=>{ if(tab==='friends'||tab==='shop') render(); else { try{ updateTabDots(); }catch(e){} } })
-    .catch(()=>{});
+    .then(()=>{ if(tab==='friends'||tab==='shop') renderKeepingDrafts(); else { try{ updateTabDots(); }catch(e){} } })
+    .catch(()=>{})
+    .finally(()=>{ _ticking=false; });
   Sync.push().catch(()=>{});
 }
 function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); }
@@ -5679,11 +5734,11 @@ export function bootSteady(){
       if(mq.addEventListener) mq.addEventListener('change',on);
       else if(mq.addListener) mq.addListener(on);
     }catch(e){}
-    setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); render(); maybeGates(); } try{ reminderTick(); }catch(e){} },30000);
+    setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); catchUpSnooze=false; renderKeepingDrafts(); maybeGates(); friendsTick(); } try{ reminderTick(); }catch(e){} },30000);
     setTimeout(()=>{ try{ reminderTick(); }catch(e){} },4000);
     document.addEventListener('visibilitychange',()=>{ if(document.hidden) return;
       const rolled=S.flags.lastOpen!==today();
-      if(rolled){ rollover(); render(); }
+      if(rolled){ rollover(); renderKeepingDrafts(); friendsTick(); }
       const wasSnoozed=catchUpSnooze;
       catchUpSnooze=false;               // Ask me later only lasts until next show
       if(rolled || wasSnoozed) maybeGates();
