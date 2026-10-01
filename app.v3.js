@@ -42,11 +42,13 @@ const round10 = n => Math.round(n/10)*10;
 const round5 = n => Math.round(n/5)*5;
 /* b64 day-quality earn: per-task base TASK_BASE (3) + miss-streak bump on base only;
    half-day bonus at ≥50% done; clear bonus at 100% (delta if half already paid). */
+/* A typical day's task count: the 7-day average, not today's — otherwise prices and the chest
+   swing with the weekday (Mon/Wed/Fri tasks made Monday's pot ~4× Tuesday's). */
 function typicalN(k){
-  const due = (typeof dueTasks==='function') ? dueTasks(k||today()).length : 0;
-  if(due>0) return due;
-  const act = (typeof activeTasks==='function') ? activeTasks(k||today()).length : 0;
-  return act;
+  const base=k||today();
+  let sum=0; for(let i=0;i<7;i++) sum+=dueTasks(addDays(base,i)).length;
+  const avg=Math.round(sum/7);
+  return avg>0 ? avg : activeTasks(base).length;
 }
 function halfDayBonusAmt(n){ return round5(2*Math.max(0,n)); }
 function clearDayBonusAmt(n){ return round10(5.5*Math.max(0,n)); }
@@ -264,8 +266,9 @@ function nextAvailable(r){
   const f=rewardFreq(r), k=today();
   if(f==='weekly') return addDays(weekOf(k),7);
   if(f==='fortnight'){
-    const last=(S.locker||[]).filter(l=>l.rewardId===r.id).map(l=>l.boughtAt).sort().pop();
-    return last?addDays(last,14):k;
+    const from=addDays(k,-13);
+    const inWin=(S.locker||[]).filter(l=>l.rewardId===r.id && l.boughtAt>=from).map(l=>l.boughtAt).sort();
+    return inWin.length?addDays(inWin[0],14):k;
   }
   const d=parse(k); let y=d.getFullYear(), m=d.getMonth()+2;
   if(m>12){ m=1; y++; }
@@ -475,88 +478,11 @@ function fresh(){
     rough:[],
   };
 }
+/* b60–b69 were one-off reprices that b79 cadence pricing supersedes (and b79 respects typed prices).
+   They never actually ran — they were called before dueTasks existed and threw — so retire them for good. */
 function migratePriceFloors(){
-  if(S._priceFloorB60) return;
-  const rate = clearDayPay() || (TASK_BASE + CLEAR_PER_TASK);
-  const weekFloor = round10(rate*5.5);
-  const fortFloor = round10(rate*11);
-  let bumped = false;
-  for(const r of (S.rewards||[])){
-    if(!r || !r.active) continue;
-    const weekly = r.freq==='weekly' || (!r.freq && r.tier==='week');
-    const fortnight = r.freq==='fortnight' || (!r.freq && r.tier==='fortnight');
-    const price = Math.round(Number(r.price)||0);
-    if(weekly && price>0 && price < weekFloor){
-      r.price = weekFloor; bumped = true;
-    } else if(fortnight && price>0 && price < fortFloor){
-      r.price = fortFloor; bumped = true;
-    }
-  }
-  S._priceFloorB60 = 1;
-  save(); // persist flag once so we never re-bump
-}
-/* b61: unified week pool across ALL actives (overrides b60 per-item 5.5×).
-   Pot-fit only — no hard floor (same rule as b63). */
-function migratePriceFloorsB61(){
-  if(S._priceFloorB61) return;
-  const active = (S.rewards||[]).filter(r => r && r.active);
-  if(active.length){
-    const unit = pricedUnit(active, 0);
-    active.forEach(r => { r.price = unit; });
-  }
-  S._priceFloorB61 = 1;
-  save();
-}
-/* b63: force-reprice actives to pot-fit unit once (overrides b61 floors ~200). */
-function migratePriceFloorsB63(){
-  if(S._priceFloorB63) return;
-  const active = (S.rewards||[]).filter(r => r && r.active);
-  if(active.length){
-    const unit = pricedUnit(active, 0);
-    active.forEach(r => { r.price = unit; });
-  }
-  S._priceFloorB63 = 1;
-  save();
-}
-/* b64: reprice after pot change (4 clears + 3 half-days / week). */
-function migratePriceFloorsB64(){
-  if(S._priceFloorB64) return;
-  const active = (S.rewards||[]).filter(r => r && r.active);
-  if(active.length){
-    const unit = pricedUnit(active, 0);
-    active.forEach(r => { r.price = unit; });
-  }
-  S._priceFloorB64 = 1;
-  save();
-}
-/* b65: cadence-scaled stickers (week share × window weeks; Option B if over pot). */
-function migratePriceFloorsB65(){
-  if(S._priceFloorB65) return;
-  const active = (S.rewards||[]).filter(r => r && r.active);
-  if(active.length){
-    for(const x of cadencePlan(active)) x.r.price = x.to;
-  }
-  S._priceFloorB65 = 1;
-  save();
-}
-/* b68: sticker = full week pot × weight (no divide-by-actives). Reprice once. */
-function migratePriceFloorsB68(){
-  if(S._priceFloorB68) return;
-  const active = (S.rewards||[]).filter(r => r && r.active);
-  if(active.length){
-    for(const x of cadencePlan(active)) x.r.price = x.to;
-  }
-  S._priceFloorB68 = 1;
-  save();
-}
-/* b69: per-cadence cohort split (weeklies among weeklies, fortnights among fortnights). */
-function migratePriceFloorsB69(){
   if(S._priceFloorB69) return;
-  const active = (S.rewards||[]).filter(r => r && r.active);
-  if(active.length){
-    for(const x of cadencePlan(active)) x.r.price = x.to;
-  }
-  S._priceFloorB69 = 1;
+  S._priceFloorB60=S._priceFloorB61=S._priceFloorB63=S._priceFloorB64=S._priceFloorB65=S._priceFloorB68=S._priceFloorB69=1;
   save();
 }
 /* b76: shop max 30 — cap every active reward (incl. locked), then resync unlocked cohorts.
@@ -607,6 +533,7 @@ function load(){
     if(!THEMES[m.settings.theme]) m.settings.theme='teal';
     if(!MOTIFS.some(x=>x.id===m.settings.motif)) m.settings.motif='none';
     if(!m.whys.length && m.flags.why) m.whys=[{id:uid(),text:m.flags.why}];
+    m.flags.why='';                                   // migrated once — otherwise deleting every affirmation brought it back
     m.quotes=(m.quotes||[]).filter(q=>q.custom);
     migratePairChallenges(m);
     return m;
@@ -630,7 +557,7 @@ function moveTodosToTomorrow(items){
   for(const t of items){ if(t&&!t.done){ t.day=tom; n++; } }
   if(n) save(); return n;
 }
-function whenLabel(k){ if(!k) return 'Someday'; const d=(parse(k)-parse(today()))/86400000;
+function whenLabel(k){ if(!k) return 'Someday'; const d=daysBetween(today(),k);   // rounded — a clock change made it 0.96 days
   if(d<0) return 'Overdue'; if(d===0) return 'Today'; if(d===1) return 'Tomorrow';
   if(d<7) return parse(k).toLocaleDateString(undefined,{weekday:'long'});
   return fmt(k,{day:'numeric',month:'short'}); }
@@ -805,7 +732,7 @@ function buildWeekRecap(mon){
     missTotal:sorted.reduce((a,x)=>a+x[1],0)};
 }
 function firstDay(){ const ks=Object.keys(S.days).filter(k=>S.days[k].finalized||k===today()).sort(); return ks[0]||today(); }
-function daysSinceStart(){ return Math.floor((parse(today())-parse(firstDay()))/86400000)+1; }
+function daysSinceStart(){ return daysBetween(firstDay(),today())+1; }
 function dueRecap(){ for(const [n,name] of MILESTONES){ if(daysSinceStart()>=n && !S.recaps.some(r=>r.n===n)) return {n,name}; } return null; }
 function buildRecap(n,name){
   const start=firstDay(), k=today();
@@ -850,6 +777,8 @@ const motionOK = () => !prefersCalm();
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
 const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent||'');
 const pushCapable = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+/* Safe everywhere: iPhone Safari (not installed) and in-app browsers have no Notification at all. */
+const notifPerm = () => ('Notification' in window) ? Notification.permission : 'unsupported';
 function notifyState(){
   if(!('Notification' in window)) return 'unsupported';
   if(isIOS() && !isStandalone()) return 'ios-needs-install';   // Safari only allows this once it's on the home screen
@@ -888,7 +817,7 @@ async function subscribePush(){
 }
 async function showLocal(title,body,tag){
   try{
-    if(Notification.permission!=='granted') return false;
+    if(notifPerm()!=='granted') return false;
     const reg=await navigator.serviceWorker.ready;
     await reg.showNotification(title,{body,tag,icon:'./icon.svg',badge:'./icon.svg',
       data:{url:location.pathname},vibrate:S.settings.haptics?[60,40,60]:undefined});
@@ -897,7 +826,7 @@ async function showLocal(title,body,tag){
 }
 function reminderBody(){
   const k=today(), st=dayStats(k), left=st.expected-st.done;
-  if(!st.expected) return 'No tasks set yet — add a couple to get going.';
+  if(!st.expected) return activeTasks().length ? 'Nothing due today — a rest day.' : 'No tasks set yet — add a couple to get going.';
   if(left<=0) return 'Everything is ticked. Nice one.';
   const nx=nextClearReward();
   return `${left} task${left===1?'':'s'} left today${nx.streak?` · ${nx.days} more full ${nx.days===1?'day':'days'} for +${nx.amount}`:''}`;
@@ -909,12 +838,12 @@ function reminderTick(){
      Does not require the morning-reminders switch; cancel/reschedule with Away. */
   try{
     const a=S.away;
-    if(a && a.remindOn && k>=a.remindOn && a.remindFired!==a.remindOn && Notification.permission==='granted'){
+    if(a && a.remindOn && k>=a.remindOn && a.remindFired!==a.remindOn && notifPerm()==='granted'){
       a.remindFired=a.remindOn; save();
-      showLocal('Welcome back', "Away ends today — Steady's ready when you are.", 'steady-away-end');
+      if(k===a.remindOn) showLocal('Welcome back', "Away ends today — Steady's ready when you are.", 'steady-away-end');   // a later first open isn't "today"
     }
   }catch(e){}
-  const c=remindCfg(); if(!c.on||Notification.permission!=='granted') return;
+  const c=remindCfg(); if(!c.on||notifPerm()!=='granted') return;
   const now=new Date(); const hm=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
   c.fired=c.fired||{};
   /* Plan items with a time on them */
@@ -929,8 +858,9 @@ function reminderTick(){
     }
   }
   const due=(slot,at)=>at && hm>=at && c.fired[slot]!==k;
+  const restDay = awayActive() || (!dayStats(k).expected && activeTasks().length>0);   // away, or nothing due today
   if(due('morning',c.morning)){ c.fired.morning=k; save();
-    showLocal('Steady', reminderBody(), 'steady-morning'); return; }
+    if(!restDay){ showLocal('Steady', reminderBody(), 'steady-morning'); return; } }
   /* Just your own words, nothing else. */
   if(c.affOn && due('aff',c.aff)){
     const a=randomAffirmation();
@@ -949,7 +879,9 @@ function reminderTick(){
    and it gets squashed to 128px JPEG — about 5KB, small enough to sit in your
    profile row so friends see it too. */
 const AV_SIZE = 128, AV_MAX_BYTES = 20000;
-function avatarOf(who){ return who?.avatar || null; }
+/* Friends' pictures arrive from the server: only ever render a plain image data URL, never markup. */
+const AV_SAFE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+function avatarOf(who){ const a=who?.avatar; return typeof a==='string' && AV_SAFE.test(a) ? a : null; }
 function avatarHtml(who,cls){
   const src=avatarOf(who);
   /* Explicit chip mode keeps mechip on the zoomed-out crop even if CSS width ≥52. */
@@ -2359,7 +2291,6 @@ function haptic(kind='light'){ if(!S.settings.haptics||!navigator.vibrate) retur
 /* ---------- Task helpers ---------- */
 function activeOn(t,k){ return t.createdAt<=k && (!t.archived || (t.archivedAt && t.archivedAt>k)); }
 function activeTasks(k=today()){ return S.tasks.filter(t=>activeOn(t,k)).sort((a,b)=>a.order-b.order); }
-try{ migratePriceFloors(); migratePriceFloorsB61(); migratePriceFloorsB63(); migratePriceFloorsB64(); migratePriceFloorsB65(); migratePriceFloorsB68(); migratePriceFloorsB69(); migratePriceCapB76(); migrateCadencePricesB79(); }catch(e){ console.error(e); }
 /* Cadence: daily (default), everyOther (due when daysBetween(anchor,k)%2===0),
    or weekdays (due when date's getDay() is in t.weekdays).
    weekdays values are JS Date.getDay() style: 0=Sun … 6=Sat (native). Empty array = daily fallback.
@@ -2515,11 +2446,14 @@ function cadenceTagHtml(t){
   }
   return '';
 }
-const dueTasks = (k=today()) => activeTasks(k).filter(t=>taskExpectedOn(t,k));
+function dueTasks(k=today()){ return activeTasks(k).filter(t=>taskExpectedOn(t,k)); }
+/* Price migrations need dueTasks — run them only once it exists (they used to throw here on every load). */
+try{ migratePriceFloors(); migratePriceCapB76(); migrateCadencePricesB79(); }catch(e){ console.error(e); }
 function day(k){ return S.days[k] || (S.days[k]={tasks:{},points:0,bonus:0,note:'',perfect:false}); }
 function statusOf(k,tid){ return S.days[k]?.tasks?.[tid]?.status || 'open'; }
 function expectedOn(k){ // task ids expected that day
-  const d=S.days[k]; if(d && d.finalized) return Object.keys(d.tasks);
+  const d=S.days[k]; if(d && d.away) return [];      // Away: nothing expected (it used to count a half-done day as perfect)
+  if(d && d.finalized) return Object.keys(d.tasks);
   return dueTasks(k).map(t=>t.id);
 }
 function dayStats(k){
@@ -2604,7 +2538,17 @@ function weakLink(){
   const worst=Object.entries(dows).sort((a,b)=>b[1]-a[1])[0];
   return {name:t.name,strength:s,day:worst&&worst[1]>=2?worst[0]:null};
 }
-function weekCleared(mon){ let c=0,any=false; for(let i=0;i<7;i++){const s=dayStats(addDays(mon,i)); if(s.expected)any=true; if(s.perfect)c++;} return {cleared:c,any}; }
+/* Weekly chest: clear every day that had tasks bar one (6 of 7 normally; 4 of 5 for weekday-only tasks or two away days). */
+function weekCleared(mon){ let c=0,taskDays=0; for(let i=0;i<7;i++){const s=dayStats(addDays(mon,i)); if(s.expected)taskDays++; if(s.perfect)c++;}
+  return {cleared:c,any:taskDays>0,taskDays,need:Math.min(CHEST_DAYS,Math.max(1,taskDays-(7-CHEST_DAYS)))}; }
+function settleChest(mon){
+  const w=weekCleared(mon); if(!w.any) return null;
+  const won=w.cleared>=w.need;
+  S.chests[mon]=won?'won':'missed';
+  if(!won) return null;
+  const cc=chestCoins(); S.points.coins+=cc; S.points.xp+=cc;
+  return `Weekly chest: ${w.cleared} days cleared · +${cc}`;
+}
 /* One affirmation, picked fresh each time a tab is opened. With only one saved
    you always get that one; with several you get a different one each time. */
 let tabAff=null;
@@ -2637,8 +2581,9 @@ function rollover(){
   const lb=loginBonus(S.streak.login);
   if(lb && !d.bonusGiven){ d.bonus=lb; d.bonusGiven=true; S.points.coins+=lb; S.points.xp+=lb; }
   // weekly chest for the week that just finished
+  // weekly chest for every week that finished since the last open (not just last week)
   const lastMon=addDays(weekOf(t),-7);
-  if(last && !S.chests[lastMon]){ const w=weekCleared(lastMon); if(w.any){ S.chests[lastMon]=w.cleared>=CHEST_DAYS?'won':'missed'; if(w.cleared>=CHEST_DAYS){ const cc=chestCoins(); S.points.coins+=cc; S.points.xp+=cc; notes.push(`Weekly chest: ${w.cleared} days cleared · +${cc}`); } } }
+  if(last){ for(let m=weekOf(last); m<=lastMon; m=addDays(m,7)){ if(!S.chests[m]){ const msg=settleChest(m); if(msg) notes.push(msg); } } }
   if(notes.length) S.flags.pendingToast=notes.join(' · ');
   S.flags.lastOpen=t; S.undo=null; sel.clear(); save();
   try{ checkChallenges(); }catch(e){}
@@ -2653,48 +2598,36 @@ function finalize(k){
   d.finalized=true;
 }
 
-function clearedStreak(){
-  let n=0,k=today();
-  while(true){
-    if(isAway(k)){ k=addDays(k,-1); continue; }          // bridge — neither clear nor break
-    if(S.days[k]?.cleared){ n++; k=addDays(k,-1); continue; }
+/* A full-clear run ending at `end`. Away days and past days with nothing due (weekday-only or
+   every-other-day tasks) bridge it — neither clear nor break — so weekend rest never resets the run. */
+function clearedRun(end){
+  let n=0,k=end,start=null; const stop=firstDay(), t=today();
+  while(k>=stop){
+    if(S.days[k]?.cleared){ n++; start=k; k=addDays(k,-1); continue; }
+    if(isAway(k) || (k<t && expectedOn(k).length===0)){ k=addDays(k,-1); continue; }
     break;
   }
-  return n;
+  return {n,start};
 }
+/* Until today is cleared the run is still alive from yesterday — don't show 0 every morning. */
+function clearedStreak(){ const k=today(); return clearedRun(S.days[k]?.cleared?k:addDays(k,-1)).n; }
 function clearWeekBonus(block){ return Math.min(CLEAR_WEEK_CAP, CLEAR_WEEK_BONUS*Math.pow(2,block-1)); }
 function nextClearReward(){
   const n=clearedStreak(), block=Math.floor(n/7)+1;
   return {days:7-(n%7), amount:clearWeekBonus(block), streak:n};
 }
-/* Pays once per completed 7-day block; resets when the run breaks. */
-function payClearStreak(){
-  const n=clearedStreak(), block=Math.floor(n/7);
-  if(block < (S.clearPaidBlock||0)) S.clearPaidBlock=block;   // run broke — climb again
-  if(block>=1 && (S.clearPaidBlock||0)<block){
-    const amount=clearWeekBonus(block);
-    S.clearPaidBlock=block; S.points.coins+=amount; S.points.xp+=amount; save();
-    return {amount,block,days:block*7,capped:amount>=CLEAR_WEEK_CAP};
-  }
-  save(); return null;
-}
-function clearedStreakAt(end){
-  let n=0,k=end;
-  while(true){
-    if(isAway(k)){ k=addDays(k,-1); continue; }
-    if(S.days[k]?.cleared){ n++; k=addDays(k,-1); continue; }
-    break;
-  }
-  return n;
-}
+function clearedStreakAt(end){ return clearedRun(end).n; }
+/* Pays once per completed 7-day block of a run. Paid blocks are remembered per run (keyed by the run's
+   first day), so a run that breaks and is later re-joined by a catch-up can't pay the same block twice. */
+function payClearStreak(){ return payClearStreakAt(today()); }
 function payClearStreakAt(end){
-  const n=clearedStreakAt(end), block=Math.floor(n/7);
-  if(block < (S.clearPaidBlock||0)) S.clearPaidBlock=block;
-  if(block>=1 && (S.clearPaidBlock||0)<block){
+  const {n,start}=clearedRun(end), block=Math.floor(n/7);
+  if(!S.clearPaidByStart){ S.clearPaidByStart={}; if(start) S.clearPaidByStart[start]=Math.min(S.clearPaidBlock||0, block); } // old single counter → the run in progress
+  if(block>=1 && start && (S.clearPaidByStart[start]||0)<block){
     const amount=clearWeekBonus(block);
-    S.clearPaidBlock=block; S.points.coins+=amount; S.points.xp+=amount;
+    S.clearPaidByStart[start]=block; S.points.coins+=amount; S.points.xp+=amount;
     const d=day(end);
-    d.clearStreakPay=(d.clearStreakPay||0)+amount; d.clearStreakBlock=block;
+    d.clearStreakPay=(d.clearStreakPay||0)+amount; d.clearStreakBlock=block; d.clearStreakStart=start;
     save();
     return {amount,block,days:block*7,capped:amount>=CLEAR_WEEK_CAP};
   }
@@ -2725,6 +2658,22 @@ function syncDayQualityBonuses(d, N, done){
   d.perfect = t.cleared;
   return delta;
 }
+/* Today's task list changed (a task removed or re-scheduled): pay any half/clear bonus that is now
+   earned, so "all done" really is a cleared day. Never claws — what was paid stays paid. */
+function resyncToday(){
+  const k=today(), d=day(k); if(d.away || d.cleared) return null;
+  const tasks=dueTasks(k), n=tasks.length, done=tasks.filter(t=>d.tasks[t.id]?.status==='done').length;
+  const tg=dayQualityTargets(n,done);
+  const delta=Math.max(0,tg.half-(d.halfBonus||0)) + Math.max(0,tg.clearStep-(d.clearBonus||0));
+  if(!delta && !tg.cleared) return null;
+  d.halfBonus=Math.max(d.halfBonus||0,tg.half); d.clearBonus=Math.max(d.clearBonus||0,tg.clearStep);
+  d.points=(d.points||0)+delta; S.points.coins+=delta; S.points.xp+=delta;
+  let streakWin=null;
+  if(tg.cleared){ d.cleared=d.perfect=true; streakWin=payClearStreakAt(k); }
+  save();
+  if(tg.cleared){ setTimeout(()=>{ toast(`Day clear +${delta}`); if(streakWin) setTimeout(()=>streakScene(streakWin),900); },400); }
+  return {delta,cleared:tg.cleared};
+}
 /* Mark a task done on a past day (yesterday catch-up). Same economy as same-day; no double award. */
 function completeOnDate(k,id){
   const d=day(k);
@@ -2744,9 +2693,11 @@ function completeOnDate(k,id){
   d.points=(d.points||0)+coins; S.points.coins+=coins; S.points.xp+=xp;
   let streakWin=null;
   if(cleared){ streakWin=payClearStreakAt(k); if(streakWin){ coins+=streakWin.amount; } }
+  let chestMsg=null;
+  if(cleared && S.chests[weekOf(k)]==='missed') chestMsg=settleChest(weekOf(k));   // Monday decided before Sunday was caught up
   S.pendingMisses=(S.pendingMisses||[]).filter(p=>!(p.date===k && p.taskId===id));
   save();
-  return {coins,cleared,streakWin,name:t.name};
+  return {coins,cleared,streakWin,chestMsg,name:t.name};
 }
 function dropPending(date,taskId){
   S.pendingMisses=(S.pendingMisses||[]).filter(p=>!(p.date===date && p.taskId===taskId));
@@ -2785,7 +2736,6 @@ function completeSelected(mins){
   changed.forEach(id=>document.querySelector(`[data-task="${id}"]`)?.classList.add('leaving'));
   const streakWin = cleared ? payClearStreak() : null;
   const streakPay=streakWin?.amount||0;
-  if(streakPay){ d.clearStreakPay=(d.clearStreakPay||0)+streakPay; d.clearStreakBlock=streakWin.block; }
   S.undo={date:k,ids:changed,coins:coins+streakPay,xp:xp+streakPay,cleared,streakPay,streakBlock:streakWin?.block||null,
     halfBonus:d.halfBonus||0, clearBonus:d.clearBonus||0};
   save();
@@ -2800,8 +2750,11 @@ function completeSelected(mins){
 function clawClearStreak(d){
   /* Clear day streak fields + rewind block. Return pay — callers subtract once from wallet/XP. */
   const pay=d.clearStreakPay||0; if(!pay) return 0;
-  if(d.clearStreakBlock) S.clearPaidBlock=Math.max(0,d.clearStreakBlock-1);
-  d.clearStreakPay=0; d.clearStreakBlock=null;
+  if(d.clearStreakBlock){
+    if(d.clearStreakStart && S.clearPaidByStart) S.clearPaidByStart[d.clearStreakStart]=Math.max(0,d.clearStreakBlock-1);
+    else S.clearPaidBlock=Math.max(0,d.clearStreakBlock-1);
+  }
+  d.clearStreakPay=0; d.clearStreakBlock=null; d.clearStreakStart=null;
   return pay;
 }
 function undoLast(){
@@ -3292,7 +3245,7 @@ function vToday(){
   };
   const circ=2*Math.PI*52, pct=n?st.done/n:0;
   const mon=weekOf(k); const wk=Array.from({length:7},(_,i)=>{const dk=addDays(mon,i);const s=dayStats(dk);const away=isAway(dk);return {dk,cleared:s.perfect,away,fut:dk>k||(!s.expected&&!away),frozen:S.days[dk]?.frozen}});
-  const wc=wk.filter(x=>x.cleared).length;
+  const wc=wk.filter(x=>x.cleared).length, wcw=weekCleared(mon), need=wcw.need;
   const awayNow=isAway(k);
   const lb=loginBonus(S.streak.login+1);
   return `
@@ -3320,7 +3273,7 @@ function vToday(){
     return `<div class="card clearstreak"><div class="row between"><div><b class="small">${nx.streak?`${nx.streak} day full-clear streak`:'Full-clear streak'}</b>
       <p class="tiny muted">${nx.streak?`${nx.days} more full ${nx.days===1?'day':'days'} for +${nx.amount} coins`:`Tick everything 7 days running for +${nx.amount} coins`}</p></div>
       <span class="pill ${nx.streak>=7?'accent':''}">${ICON.flame} ${nx.streak}</span></div></div>`;})()}
-  <div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=CHEST_DAYS?`Earned · +${chestCoins()} lands Monday`:`Clear ${CHEST_DAYS} of 7 for +${chestCoins()} · ${wc} so far`}</p></div>
+  <div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=need?`Earned · +${chestCoins()} lands Monday`:`Clear ${need} of ${wcw.taskDays||7} for +${chestCoins()} · ${wc} so far`}</p></div>
     <div class="dots big">${wk.map(x=>`<i class="${x.away?'a':x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}${x.away?' · away':''}"></i>`).join('')}</div></div></div>
   ${a?`<p class="whisper">${esc(a.text)}</p>`:''}
   <div class="row" style="margin:6px 2px 0;justify-content:flex-start">
@@ -4144,7 +4097,7 @@ function vSettings(){
     <div class="row between" style="align-items:flex-start;gap:12px">
       <div style="flex:1;min-width:0">
         <b class="small">Away</b>
-        <p class="tiny muted" style="margin-top:4px">Pause habits while you’re off. Pick how many days. No misses, no reason prompts, clear-streak holds.${Notification.permission==='granted'?' A gentle return nudge on the end day.':''}</p>
+        <p class="tiny muted" style="margin-top:4px">Pause habits while you’re off. Pick how many days. No misses, no reason prompts, clear-streak holds.${notifPerm()==='granted'?' A gentle return nudge on the end day.':''}</p>
         ${awayActive()?`<p class="tiny" style="margin-top:6px;color:var(--accent)">${esc(awayStatusLabel())}</p>`:''}
       </div>
       <button class="toggle ${awayActive()?'on':''}" data-away-toggle role="switch" aria-checked="${awayActive()}"></button>
@@ -4169,7 +4122,7 @@ function vSettings(){
       ${awayActive()
         ? `<button class="btn sm primary block" style="margin-top:12px" data-away-save>Update Away</button>`
         : `<button class="btn sm primary block" style="margin-top:12px" data-away-start>Start Away</button>`}
-      <p class="tiny muted" style="margin-top:8px">${Notification.permission==='granted'
+      <p class="tiny muted" style="margin-top:8px">${notifPerm()==='granted'
         ? 'Return reminder set for the end day (cancel or change length anytime).'
         : 'Tip: allow Reminders if you’d like a gentle nudge when Away ends.'}</p>
     </div>`;
@@ -4184,7 +4137,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a ${TASK_BASE}-coin task pays ${Math.max(1,Math.round(TASK_BASE*(TIME_FLOOR+(1-TIME_FLOOR)*0.5)))}, not half. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
     <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
     <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
-    <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday.</p>
+    <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday. Days with no tasks and away days don't count against you — the target shrinks to match (e.g. 4 of 5 for weekday-only tasks).</p>
 
     <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. Reward prices follow cadence (no hard 30 ceiling) — typed prices soft-cap at ${MAX_REWARD_PRICE}. Looks stay ≤ ${MAX_LOOK_COST} coins so they cost about one clear day and rewards stay the main spend. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Same-cadence rewards share that cadence's pot: weeklies split one week of the treat pot so a solid week can cover every weekly once; fortnights split two weeks of pot among themselves (adding a fortnight does not shrink weekly stickers); monthlies split about 4.33 weeks of pot. One clear day alone will not buy a weekly when you have several. The pot is still about four clear days plus three half days of coins a week from your tasks — stickers snap to at least ${MIN_REWARD_PRICE}. Buying every occurrence of everything (including fortnights) can still push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it; <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
@@ -4412,11 +4365,12 @@ function bind(){
   const nt=q('#newtask'); const addT=()=>{ const v=nt.value.trim(); if(!v) return;
     if(S.tasks.filter(t=>!t.archived).length>=MAX_TASKS){ toast("That's the "+MAX_TASKS+" task cap."); return; }
     const tg=clamp(Math.round(Number(q('#newtarget').value)||0),0,600);
-    S.tasks.push({id:uid(),name:v,createdAt:today(),order:S.tasks.length,archived:false,target:tg||null}); save(); syncCadencePrices(); haptic(); render(); document.getElementById('acc-tasks').open=true; document.getElementById('newtask')?.focus();
-    toast('Task added'); };
+    const clearedToday=!!S.days[today()]?.cleared;          // today's already won — the new task starts tomorrow
+    S.tasks.push({id:uid(),name:v,createdAt:clearedToday?addDays(today(),1):today(),order:S.tasks.length,archived:false,target:tg||null}); save(); syncCadencePrices(); haptic(); render(); document.getElementById('acc-tasks').open=true; document.getElementById('newtask')?.focus();
+    toast(clearedToday?'Task added · starts tomorrow (today’s already cleared)':'Task added'); };
   if(nt){ q('#addtask').onclick=addT; nt.onkeydown=e=>{if(e.key==='Enter')addT();}; q('#newtarget').onkeydown=e=>{if(e.key==='Enter')addT();}; }
   qa('[data-rename]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.rename); editTask(t);});
-  qa('[data-deltask]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.deltask); modal(`<h2>Remove “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. Past days stay in Progress.</p>`,'Remove',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();syncCadencePrices();render();document.getElementById('acc-tasks').open=true;toast('Removed');},true);});
+  qa('[data-deltask]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.deltask); modal(`<h2>Remove “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. Past days stay in Progress.</p>`,'Remove',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();syncCadencePrices();resyncToday();render();document.getElementById('acc-tasks').open=true;toast('Removed');},true);});
   // rewards
   qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
   const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); document.getElementById('newwhy')?.focus();};
@@ -4647,7 +4601,7 @@ function editTask(t){
     if(cad!=='everyOther') delete t.cadenceAnchor;
     if(cad==='weekdays') t.weekdays=[...wdays].sort((a,b)=>a-b);
     else delete t.weekdays;
-    save(); close(o); render(); document.getElementById('acc-tasks').open=true; };
+    save(); resyncToday(); close(o); render(); document.getElementById('acc-tasks').open=true; };
 }
 
 
@@ -4855,7 +4809,7 @@ function catchUpGate(){
       if(!res){ removeCard(card); return; }
       if(res.already){ dropPending(date,tid); save(); removeCard(card); return; }
       haptic(res.cleared?'success':'light');
-      const msg=res.cleared?`Yesterday cleared · +${res.coins}`:`${res.name} · +${res.coins}`;
+      const msg=(res.cleared?`Yesterday cleared · +${res.coins}`:`${res.name} · +${res.coins}`)+(res.chestMsg?` · ${res.chestMsg}`:'');
       if(list.querySelectorAll('.catchup-card').length>1){
         card.remove();
         toast(msg);
