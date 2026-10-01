@@ -37,16 +37,17 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
   var s=JSON.parse(localStorage.getItem('steady.v2')||'{}').settings||{};
   var A={pink:'rose',grey:'ink',black:'ink',blue:'ocean',green:'moss'};
   var T={
-    teal: [['#061411','#e7faf4','#7dcebf','#2ee6c8'],['#e6f4ef','#0c2924','#2f6b60','#0f766e']],
-    dusk: [['#120c1c','#f5eeff','#c6b0e4','#c4a6ff'],['#f3eef9','#2a1640','#5c3d78','#7c3aed']],
-    rose: [['#1a0810','#ffeff4','#f0a8bc','#ff6b8a'],['#fceef2','#3c101c','#8c3850','#e11d48']],
-    ocean:[['#061018','#e8f4fc','#80c0e0','#3ec8f0'],['#e8f2fa','#0c2038','#2c5880','#0284c7']],
-    moss: [['#0a140c','#eaf6e8','#9cd49a','#5ee89a'],['#eef6ea','#142414','#3c6438','#15803d']],
-    sand: [['#14100a','#faf4e6','#e0c078','#f5c542'],['#faf4e8','#2c2414','#6c5830','#b45309']],
-    ink:  [['#0c0c0e','#f4f4f5','#b0b0b8','#e8e8ec'],['#f2f2f4','#141418','#4a4a52','#18181b']]
+    teal: [['#0b1211','#ecf4f2','#a3b5b1','#2dd4bf'],['#f3f7f6','#10201d','#4f625e','#0f766e']],
+    dusk: [['#100e17','#f1eef8','#b2abc4','#a78bfa'],['#f6f5fa','#1c1630','#5c5470','#6d28d9']],
+    rose: [['#140d10','#f8eef1','#c2aab2','#fb7185'],['#faf5f6','#2a1219','#6e525a','#e11d48']],
+    ocean:[['#0a1017','#ecf2f8','#a1b1c2','#38bdf8'],['#f4f7fa','#0f1c2b','#4b5d70','#0369a1']],
+    moss: [['#0c110c','#eef5ee','#a8b8a6','#4ade80'],['#f5f8f4','#142213','#52634f','#15803d']],
+    sand: [['#13100b','#f7f2e9','#c1b6a3','#fbbf24'],['#faf7f1','#272013','#6a5f4b','#b45309']],
+    ink:  [['#0e0e10','#f4f4f5','#a9a9b0','#e4e4e7'],['#f6f6f7','#151518','#55555c','#18181b']]
   };
   var t=T[A[s.theme]||s.theme]||T.teal;
-  var c=t[matchMedia('(prefers-color-scheme: light)').matches?1:0];
+  var ap=s.appearance||'auto';
+  var c=t[ap==='light'?1:ap==='dark'?0:(matchMedia('(prefers-color-scheme: light)').matches?1:0)];
   var r=document.documentElement.style;
   r.setProperty('--bg',c[0]); r.setProperty('--fg',c[1]); r.setProperty('--fg2',c[2]); r.setProperty('--accent',c[3]);
   var m=document.querySelector('meta[name=theme-color]');

@@ -363,27 +363,29 @@ const xpToNext = L => Math.round(60*Math.pow(L,1.2));
 const loginBonus = s => s<2?0:s<7?5:s<30?10:15;
 const DEFAULT_REASONS = ['Forgot','No time','Not feeling it','Something came up'];
 const THEMES = {
+  /* b81: calmer surfaces (low-chroma, so text reads as text, not as more teal) and a single vivid accent.
+     Light accents are deep enough for white button text. */
   teal:{label:'Teal',
-    dark: {bg:'#061411',surface:'#0e241f',surface2:'#16352e',line:'#2a564c',fg:'#e7faf4',fg2:'#7dcebf',fg3:'#3d7a70',accent:'#2ee6c8'},
-    light:{bg:'#e6f4ef',surface:'#ffffff',surface2:'#d2ebe3',line:'#b0d4c8',fg:'#0c2924',fg2:'#2f6b60',fg3:'#6a9a90',accent:'#0f766e'}},
+    dark: {bg:'#0b1211',surface:'#111a19',surface2:'#182422',line:'#24332f',fg:'#ecf4f2',fg2:'#a3b5b1',fg3:'#6b7e7a',accent:'#2dd4bf'},
+    light:{bg:'#f3f7f6',surface:'#ffffff',surface2:'#e9f0ee',line:'#d8e3df',fg:'#10201d',fg2:'#4f625e',fg3:'#84948f',accent:'#0f766e'}},
   dusk:{label:'Dusk',
-    dark: {bg:'#120c1c',surface:'#1e162c',surface2:'#2c2140',line:'#46355e',fg:'#f5eeff',fg2:'#c6b0e4',fg3:'#7a6498',accent:'#c4a6ff'},
-    light:{bg:'#f3eef9',surface:'#ffffff',surface2:'#e7dcf3',line:'#d0bce4',fg:'#2a1640',fg2:'#5c3d78',fg3:'#9478ac',accent:'#7c3aed'}},
+    dark: {bg:'#100e17',surface:'#17141f',surface2:'#1f1b2a',line:'#2c2738',fg:'#f1eef8',fg2:'#b2abc4',fg3:'#77708a',accent:'#a78bfa'},
+    light:{bg:'#f6f5fa',surface:'#ffffff',surface2:'#eeebf6',line:'#e0dbec',fg:'#1c1630',fg2:'#5c5470',fg3:'#908aa3',accent:'#6d28d9'}},
   rose:{label:'Rose',
-    dark: {bg:'#1a0810',surface:'#2c101c',surface2:'#3e1828',line:'#5e2840',fg:'#ffeff4',fg2:'#f0a8bc',fg3:'#a05870',accent:'#ff6b8a'},
-    light:{bg:'#fceef2',surface:'#ffffff',surface2:'#f6dce4',line:'#ecc0cc',fg:'#3c101c',fg2:'#8c3850',fg3:'#b87888',accent:'#e11d48'}},
+    dark: {bg:'#140d10',surface:'#1c1317',surface2:'#26191f',line:'#35242b',fg:'#f8eef1',fg2:'#c2aab2',fg3:'#866f77',accent:'#fb7185'},
+    light:{bg:'#faf5f6',surface:'#ffffff',surface2:'#f6ebee',line:'#ecdce1',fg:'#2a1219',fg2:'#6e525a',fg3:'#a08990',accent:'#e11d48'}},
   ocean:{label:'Ocean',
-    dark: {bg:'#061018',surface:'#0e1e2e',surface2:'#162c40',line:'#244860',fg:'#e8f4fc',fg2:'#80c0e0',fg3:'#4a7898',accent:'#3ec8f0'},
-    light:{bg:'#e8f2fa',surface:'#ffffff',surface2:'#d4e6f4',line:'#b0cce0',fg:'#0c2038',fg2:'#2c5880',fg3:'#6a90b0',accent:'#0284c7'}},
+    dark: {bg:'#0a1017',surface:'#10171f',surface2:'#16202a',line:'#222e3a',fg:'#ecf2f8',fg2:'#a1b1c2',fg3:'#687a8c',accent:'#38bdf8'},
+    light:{bg:'#f4f7fa',surface:'#ffffff',surface2:'#e9eff5',line:'#d9e2eb',fg:'#0f1c2b',fg2:'#4b5d70',fg3:'#8191a2',accent:'#0369a1'}},
   moss:{label:'Moss',
-    dark: {bg:'#0a140c',surface:'#142218',surface2:'#1e3022',line:'#324c38',fg:'#eaf6e8',fg2:'#9cd49a',fg3:'#588060',accent:'#5ee89a'},
-    light:{bg:'#eef6ea',surface:'#ffffff',surface2:'#dcecdc',line:'#b8d4b4',fg:'#142414',fg2:'#3c6438',fg3:'#789c74',accent:'#15803d'}},
+    dark: {bg:'#0c110c',surface:'#121912',surface2:'#182219',line:'#243124',fg:'#eef5ee',fg2:'#a8b8a6',fg3:'#6f806d',accent:'#4ade80'},
+    light:{bg:'#f5f8f4',surface:'#ffffff',surface2:'#ebf1e9',line:'#dce6da',fg:'#142213',fg2:'#52634f',fg3:'#879784',accent:'#15803d'}},
   sand:{label:'Sand',
-    dark: {bg:'#14100a',surface:'#241e14',surface2:'#342c1c',line:'#504828',fg:'#faf4e6',fg2:'#e0c078',fg3:'#8c7848',accent:'#f5c542'},
-    light:{bg:'#faf4e8',surface:'#ffffff',surface2:'#f0e6d0',line:'#e0d0b0',fg:'#2c2414',fg2:'#6c5830',fg3:'#a09068',accent:'#b45309'}},
+    dark: {bg:'#13100b',surface:'#1b1711',surface2:'#241f17',line:'#342d22',fg:'#f7f2e9',fg2:'#c1b6a3',fg3:'#857a68',accent:'#fbbf24'},
+    light:{bg:'#faf7f1',surface:'#ffffff',surface2:'#f3eee4',line:'#e7dfd0',fg:'#272013',fg2:'#6a5f4b',fg3:'#9d927e',accent:'#b45309'}},
   ink:{label:'Ink',
-    dark: {bg:'#0c0c0e',surface:'#18181c',surface2:'#242428',line:'#3a3a40',fg:'#f4f4f5',fg2:'#b0b0b8',fg3:'#6a6a72',accent:'#e8e8ec'},
-    light:{bg:'#f2f2f4',surface:'#ffffff',surface2:'#e6e6ea',line:'#d0d0d6',fg:'#141418',fg2:'#4a4a52',fg3:'#8a8a92',accent:'#18181b'}},
+    dark: {bg:'#0e0e10',surface:'#161618',surface2:'#1e1e21',line:'#2b2b2f',fg:'#f4f4f5',fg2:'#a9a9b0',fg3:'#6e6e76',accent:'#e4e4e7'},
+    light:{bg:'#f6f6f7',surface:'#ffffff',surface2:'#ededef',line:'#e0e0e3',fg:'#151518',fg2:'#55555c',fg3:'#8b8b92',accent:'#18181b'}},
 };
 const THEME_ALIAS = {pink:'rose', grey:'ink', black:'ink', blue:'ocean', green:'moss'};
 const INKS = [
@@ -436,7 +438,10 @@ function applyMotif(st, acc){
   el.classList.toggle('on', !!img);
 }
 /* Follows the phone's own light/dark setting — one less switch to find. */
-function isDarkMode(){
+function isDarkMode(st=S.settings){
+  const a=st?.appearance||'auto';
+  if(a==='light') return false;
+  if(a==='dark') return true;
   return !matchMedia('(prefers-color-scheme: light)').matches;
 }
 function themePalette(st=S.settings){
@@ -461,7 +466,7 @@ function fresh(){
     days:{}, streak:{login:0,best:0}, points:{coins:0,xp:0}, freezes:0, chests:{},
     clearPaidBlock:0, advice:{}, recaps:[], me:null, auth:'out', session:null, friends:{}, pairs:{}, challenges:[], demo:false, outbox:[], inbox:[], todos:[], notes:[], whys:[], vaultAt:null, chalCooldownUntil:null, chalLocks:{},
     crews:[], msgs:{}, muted:[],
-    settings:{theme:'teal',mode:'dark',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true,
+    settings:{theme:'teal',mode:'dark',appearance:'auto',ink:null,motif:'none',font:'system',textSize:100,motion:true,haptics:true,glow:true,
       remind:{on:false,morning:'08:00',evening:'20:00',eveningOn:true,affOn:false,aff:'12:00',fired:{}}},
     flags:{onboarded:false,why:'',lastOpen:null,quoteDate:null,tours:{}},
     tabSeen:{},
@@ -2337,8 +2342,15 @@ function applyTheme(){
   r.setProperty('--accent',acc);
   r.setProperty('--accent-fg', luminance(acc)>0.5?'#0b0f0e':'#ffffff');
   r.setProperty('--accent-on-dark', isDarkMode(st)? acc : lighten(acc));
-  r.setProperty('--accent-soft',`color-mix(in srgb, ${acc} ${isDarkMode(st)?22:16}%, transparent)`);
-  r.setProperty('--danger','#f87171');
+  const dark=isDarkMode(st);
+  r.setProperty('--accent-soft',`color-mix(in srgb, ${acc} ${dark?18:12}%, transparent)`);
+  r.setProperty('--card',p.surface);
+  /* Coins get their own warm colour everywhere, so money never looks like progress. */
+  r.setProperty('--coin', dark?'#f5c451':'#a16207');
+  r.setProperty('--warn', dark?'#fbbf24':'#c2410c');
+  r.setProperty('--danger', dark?'#f87171':'#dc2626');
+  r.setProperty('--shadow', dark?'none':'0 1px 2px rgba(16,24,40,.05), 0 2px 8px rgba(16,24,40,.05)');
+  r.setProperty('--shadow-lg', dark?'0 12px 32px rgba(0,0,0,.45)':'0 12px 32px rgba(16,24,40,.14)');
   r.setProperty('--glow', st.glow?`0 6px 24px color-mix(in srgb, ${acc} 35%, transparent)`:'none');
   r.setProperty('--glow-f', st.glow?`drop-shadow(0 0 6px color-mix(in srgb, ${acc} 60%, transparent))`:'none');
   r.setProperty('--font',`var(--font-${st.font})`);
@@ -3347,10 +3359,10 @@ function vToday(){
       <button class="btn primary sm" style="margin-top:12px" data-away-back>I'm back</button></div>`:
     n===0?`<div class="card empty"><b>No tasks yet</b>Pick two or three things you want to keep doing.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="tasks">Add tasks</button></div>`:
     open.length===0?`<div class="card empty"><b>All done</b>Everything's ticked. See you tomorrow.</div>`:`
-    ${nearBanner?`<p class="tiny muted earn-near">${nearBanner}</p>`:''}
+    <h2 class="sechead">To do <span class="muted">${open.length} left</span></h2>
     <ul class="tasks" data-tour="tasks">${open.map(row).join('')}</ul>
-    <p class="tiny muted" style="margin:10px 4px 0">Tap to pick, then confirm below.</p>`}
-    ${!awayNow && done.length?`<details class="fold" open><summary><span>Done today (${done.length})</span><span class="tiny">undo anytime today</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id];
+    <p class="tiny muted hint">Tap to pick, then confirm below.</p>`}
+    ${!awayNow && done.length?`<details class="fold" open><summary><span>Done today <span class="count">${done.length}</span></span><span class="tiny sumhint">undo anytime today</span></summary><ul class="tasks" style="margin-top:8px">${done.map(t=>{ const e=d.tasks[t.id];
       return `<li class="donerow"><button class="task done" data-donetap="${t.id}"><span class="box">${ICON.check}</span><span class="name">${esc(t.name)}</span><span class="val">+${(e?.value||0)+(e?.bonus||0)}${e?.minutes!=null?`<span class="tiny muted" style="display:block;text-align:right;font-weight:400">${e.minutes}m</span>`:''}</span></button>
         <div class="donerow-acts">${t.target?`<button class="btn sm ghost" data-edittime="${t.id}">Edit</button>`:''}<button class="btn sm" data-undone="${t.id}">Undo</button></div></li>`; }).join('')}</ul></details>`:''}
   </div>
@@ -3401,7 +3413,7 @@ function vPlan(){
       const n = sub==='notes'?notesFiltered().length:whysFiltered().length;
       return n?`${n} match${n===1?'':'es'}`:'No matches';
     })()}</p></div>`:'';
-  return `<div class="head"><div><div class="eyebrow">Outside the points — nothing here can be failed</div><h1>Plan</h1></div>${headTrailHtml()}</div>
+  return `<div class="head"><div><div class="eyebrow">Nothing here can be failed</div><h1>Plan</h1></div>${headTrailHtml()}</div>
   ${affirmationLine()}
   <div class="seg" style="margin-bottom:14px">${[['list','List'],['notes','Notes'],['affirmations','Affirmations']].map(([v,l])=>`<button class="${sub===v?'on':''}" data-psub="${v}">${l}</button>`).join('')}</div>
   ${search}
@@ -3942,7 +3954,7 @@ function vShop(){
     ${active.length?(()=>{const newAff=new Set(shopNewAffordIds()); return active.map(x=>{const cost=rewardPrice(x); const afford=S.points.coins>=cost; const ok=afford&&canRate; const fresh=newAff.has(x.id); return `<div class="card reward ${ok?'':'locked'}${fresh?' has-attn':''}">${fresh?'<i class="attn-dot" aria-hidden="true"></i>':''}<div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">${earnEta(cost)}</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
       ${(()=>{const al=allowanceState(x); const can=ok&&!al.maxed; const mp=monthlyPlanned(x);
         return `<div class="row between" style="margin:8px 0 2px">
-          <span class="tiny ${al.monthUsed>mp?'':'muted'}" style="${al.monthUsed>mp?'color:#f59e0b':''}">${al.monthUsed} of ${mp} this month</span>
+          <span class="tiny ${al.monthUsed>mp?'':'muted'}" style="${al.monthUsed>mp?'color:var(--warn)':''}">${al.monthUsed} of ${mp} this month</span>
           <span class="tiny muted">${al.maxed?`back ${fmt(al.next,{day:'numeric',month:'short'})}`
             :al.intoExtra?'chest extra left'
             :al.over?'one spare left'
@@ -4080,7 +4092,8 @@ function vSettings(){
       <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
       <button class="iconbtn" data-editreward="${x.id}" aria-label="Edit">${ICON.edit}</button><button class="iconbtn" data-delreward="${x.id}" aria-label="Remove">${ICON.trash}</button></div>`).join('')
       ||'<p class="muted small">Tell it how often you want something and it works out the price from what you earn.</p>'}</div></details>
-  <details class="acc" id="acc-look" data-tour="look"><summary>Customise <span class="muted">${(THEMES[st.theme]||THEMES.teal).label} · ${isDarkMode()?'dark':'light'}</span></summary><div class="body">
+  <details class="acc" id="acc-look" data-tour="look"><summary>Customise <span class="muted">${(THEMES[st.theme]||THEMES.teal).label} · ${({auto:'auto',light:'light',dark:'dark'})[st.appearance||'auto']}</span></summary><div class="body">
+    <div class="opt"><label>Appearance <span class="hint">Auto matches your phone</span></label>${segS('appearance',[['auto','Auto'],['light','Light'],['dark','Dark']])}</div>
     <div class="opt" style="flex-direction:column;align-items:stretch;gap:10px"><label>Theme</label>
       <div class="themes">${Object.entries(THEMES).map(([n,t])=>{ const p=t[isDarkMode(st)?'dark':'light']; return `<button class="themechip ${st.theme===n?'on':''}" data-set="theme" data-val="${n}" aria-label="${t.label}"><span class="preview" style="background:${p.bg};border-color:${p.line}"><i style="background:${p.accent}"></i></span><span class="tiny">${t.label}</span></button>`; }).join('')}</div></div>
     <div class="opt" style="flex-direction:column;align-items:stretch;gap:10px"><label>Design</label>
