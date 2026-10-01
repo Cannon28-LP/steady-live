@@ -3,7 +3,7 @@
 import { createPeepsSvg } from './vendor/open-peeps-avatar.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-09-28'; }catch(e){ return '2026-09-28'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-10-01'; }catch(e){ return '2026-10-01'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -1519,10 +1519,10 @@ function canStartChallenge(){
 function slotSummary(){
   const n=chalCounts();
   const bits=[];
+  /* The tiers run side by side (see tierSlotOpen): one legendary, one rare and two commons. */
   bits.push(n.legendary?'Legendary taken':'Legendary open');
-  if(n.rare) bits.push('Rare taken');
-  else if(n.common) bits.push(n.common===1?'1 common · 1 left':'2 commons taken');
-  else bits.push('Rare or 2 commons open');
+  bits.push(n.rare?'Rare taken':'Rare open');
+  bits.push(n.common>=2?'Commons taken':`${2-n.common} common${2-n.common===1?'':'s'} open`);
   bits.push(n.people+' of '+CHAL_PEOPLE_MAX+' people');
   return bits.join(' · ');
 }
@@ -2182,7 +2182,7 @@ const Sync = {
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
       const rows=[S.me.id,...(c.memberIds||[])].map(uid=>({crew_id:c.id,user_id:uid}));
       await api('/rest/v1/crew_members?on_conflict=crew_id,user_id',{method:'POST',body:rows,
-        headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+        headers:{Prefer:'resolution=ignore-duplicates,return=minimal'}});   // rows are just (crew, person): nothing to update, and there's no update policy
       const gone=(removed||[]).filter(okId);
       if(gone.length) await api(`/rest/v1/crew_members?crew_id=eq.${c.id}&user_id=in.(${gone.join(',')})`,{method:'DELETE',headers:{Prefer:'return=minimal'}});
       S.syncError=null; save();
@@ -2280,7 +2280,7 @@ const Sync = {
     if(!this.live()||!this.signedIn()) return;
     try{ await api('/rest/v1/cheers?on_conflict=from_id,to_id,date',{method:'POST',
         body:{from_id:S.me.id,to_id:f.id,kind,date:today(),applied:false},
-        headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+        headers:{Prefer:'resolution=ignore-duplicates,return=minimal'}});   // a second cheer the same day must not reset 'applied' and pay again
       S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
   },
@@ -3138,7 +3138,7 @@ function updateTabDots(){
   });
 }
 
-function setTab(t){ if(t!=='progress') progState.taskId=null; if(t!==tab) endNoteEdit(); endTour(true); rollTabAff(); tab=t; sel.clear(); render(); markTabSeen(t); updateTabDots(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+function setTab(t){ if(t!=='progress') progState.taskId=null; if(t!==tab) endNoteEdit(); endTour(true); rollTabAff(); tab=t; sel.clear(); render(); markTabSeen(t); updateTabDots(); window.scrollTo({top:0}); setTimeout(()=>{ if(tab===t) tour(t); },350); }
 function render(){
   if(!$app || !document.body.contains($app)) $app=document.getElementById('app');
   if(!$app) return;
@@ -3208,7 +3208,7 @@ function weekStoryParagraph(ws){
     const r=ws.topReasons.map(x=>`‘${x}’`).join(', ');
     head = head ? `${head}, and a pile of ${r}` : `A pile of ${r}`;
   } else if(ws.missedDays){
-    head = head ? `${head}, and ${ws.missedDays===1?'a miss':'a few misses'}` : (ws.missedDays===1?'A miss landed.':'A few misses landed.');
+    head = head ? `${head}, and ${ws.missedDays===1?'a miss':'a few misses'}` : (ws.missedDays===1?'A miss landed':'A few misses landed');
   }
   if(head) head = head[0].toUpperCase()+head.slice(1);
   let line=head||'This week is still writing itself';
@@ -3308,6 +3308,7 @@ function vToday(){
         if(d.cleared) return `Clear bonus +${hb+cb} banked.`;
         if(hb) return `${open.length} left · clear for +${Math.max(0,clear-hb)} more`;
         const needHalf=Math.ceil(n/2)-st.done;
+        if(!half) return `${open.length} left · clear for +${clear}`;          // one task: there's no half-day bonus
         if(needHalf>0) return `${open.length} left · ${needHalf} more for half-day +${half}`;
         return `${open.length} left · half-day +${half} ready at 50%`;
       })()}</p>
@@ -3381,7 +3382,7 @@ function vPlan(){
   const search = (sub==='notes'||sub==='affirmations')?`<div class="card" style="margin-bottom:12px;padding:12px">
     <input type="search" id="${sub==='notes'?'notesearch':'affsearch'}" placeholder="${sub==='notes'?'Search notes by a word…':'Search affirmations by a word…'}" value="${esc(q)}" autocomplete="off">
     <p class="tiny muted" style="margin-top:8px">${(()=>{
-      if(!(q||'').trim()) return 'Last opened sits at the top.';
+      if(!(q||'').trim()) return sub==='notes'?'Last opened or edited sits at the top.':'Last brought to the top sits first.';
       const n = sub==='notes'?notesFiltered().length:whysFiltered().length;
       return n?`${n} match${n===1?'':'es'}`:'No matches';
     })()}</p></div>`:'';
@@ -3532,7 +3533,7 @@ function pOverview(){
   const wd=weekdayPattern(), tod=timeOfDay(), todMax=Math.max(1,...tod);
   const wl=weakLink(), rb=reasonBreakdown(), rec=records();
   const chests=Object.values(S.chests).filter(x=>x==='won').length;
-  const label={day:'yesterday',week:'previous 7 days',month:'previous 30 days',year:'previous year'}[progState.range];
+  const label={day:'day before',week:'previous 7 days',month:'previous 30 days',year:'previous year'}[progState.range];
   const hrs=R.minutes>=60?`${(R.minutes/60).toFixed(1)}h`:`${R.minutes}m`;
   return `
   <div class="card hero" data-tour="hero">
@@ -3563,7 +3564,7 @@ function pOverview(){
     ${rb.items.map(([r,pc])=>`<div class="tod"><span class="small">${esc(r)}</span><div class="todbar"><i class="warn" style="width:${pc}%"></i></div><span class="tiny muted">${pc}%</span></div>`).join('')}</div>`:''}
 
   ${S.recaps.length?`<div class="card"><div class="section" style="margin:0"><h2>Recaps</h2></div>
-    ${S.recaps.slice().reverse().map(r=>`<button class="noterow" data-recap="${r.week||r.n}" style="padding:12px 0"><div class="grow"><b>${esc(r.name)}${r.weekly?' <span class="tiny muted">week</span>':''}</b><p class="tiny muted">${fmt(r.at,{day:'numeric',month:'short',year:'numeric'})} · ${r.rate}% · ${r.cleared} cleared${r.missTotal?` · ${r.missTotal} missed`:''}</p></div><span class="chev">›</span></button>`).join('')}</div>`:
+    ${S.recaps.slice().reverse().map(r=>`<button class="noterow" data-recap="${r.week||r.n}" style="padding:12px 0"><div class="grow"><b>${r.weekly&&r.week?`Week of ${fmt(r.week,{day:'numeric',month:'short'})}`:esc(r.name)}</b><p class="tiny muted">${fmt(r.at,{day:'numeric',month:'short',year:'numeric'})} · ${r.rate}% · ${r.cleared} cleared${r.missTotal?` · ${r.missTotal} miss reason${r.missTotal===1?'':'s'}`:''}</p></div><span class="chev">›</span></button>`).join('')}</div>`:
     `<div class="card"><div class="row between"><div><b class="small">Next recap</b><p class="tiny muted">${(()=>{const nx=MILESTONES.find(([n])=>daysSinceStart()<n); return nx?`${nx[0]-daysSinceStart()} day${nx[0]-daysSinceStart()===1?'':'s'} to ${nx[1].toLowerCase()}`:'All milestones reached';})()}</p></div>
       <span class="pill">day ${daysSinceStart()}</span></div></div>`}
   <div class="card"><div class="row between" style="margin-bottom:8px"><b class="small">Note for today</b><span class="tiny muted">${fmt(today(),{weekday:'short',day:'numeric',month:'short'})}</span></div>
@@ -3755,7 +3756,7 @@ function challengeCard(raw){
     ${counts}
     <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${pills}</div>
     ${done?`<button class="btn primary block" style="margin-top:12px" data-chest="${ch.id}">Open the chest</button>`:
-      `<div class="row between" style="margin-top:10px"><p class="tiny muted">${ch.members.length>1?'One chest for the pair, not one each.':'One chest when you finish.'}</p>
+      `<div class="row between" style="margin-top:10px"><p class="tiny muted">${ch.members.length?'Everyone on it opens a chest when it’s done.':'One chest when you finish.'}</p>
         <button class="btn sm ghost" data-dropchal="${ch.id}">Drop</button></div>`}
   </div>`;
 }
@@ -3912,7 +3913,7 @@ function vFriends(){
   const pending=chalList().filter(chalIsPending);
   const chalPane=`<div class="section" data-tour="friend">
     <p class="tiny muted" style="margin:-4px 0 10px">${slotSummary()}${chalOnCooldown()?` · Cooldown until ${fmt(S.chalCooldownUntil,{day:'numeric',month:'short'})}`:''}</p>
-    <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':chalOnCooldown()?'Cooldown after last challenge':peopleLeft()<1?'Four people already on a challenge':'No slot free'}</button>
+    <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':chalOnCooldown()?'Cooldown after last challenge':peopleLeft()<1?`${CHAL_PEOPLE_MAX} people already on challenges`:'No slot free'}</button>
     ${pending.length?`<h2 style="margin:8px 0 10px">Waiting <span class="muted">${pending.length}</span></h2>${pending.map(c=>challengeCard(c)).join('')}`:''}
     <h2 style="margin:8px 0 10px">Running <span class="muted">${active.length}</span></h2>
     ${active.map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>Invite someone — the clock starts only after they accept.<br><span class="tiny muted" style="display:block;margin-top:10px">Invites show under Active challenges → Waiting, and at the top of the chat.</span></div>`}
@@ -3957,7 +3958,7 @@ function vShop(){
         ${al.extras?`<p class="tiny muted" style="margin:0 0 4px">+${al.extras} chest extra${al.extras===1?'':'s'} this week</p>`:''}
         <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
         <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
-          al.maxed?`That is it ${al.period}` : al.intoExtra?'Buy with a chest extra' : al.over?'Buy the spare one' : ok?'Buy' : !afford?`${cost-S.points.coins} more coins`:'Buy'}</button>`;})()}</div>`}).join('');})():`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+          al.maxed?`That is it ${al.period}` : !afford?`${cost-S.points.coins} more coins` : al.intoExtra?'Buy with a chest extra' : al.over?'Buy the spare one' : 'Buy'}</button>`;})()}</div>`}).join('');})():`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
   <div class="section"><h2>Looks <span class="muted">${looks().owned.filter(id=>lookItem(id)&&!lookItem(id).legacy).length} of ${LOOK_ITEMS.filter(i=>!i.legacy).length}</span></h2>
     <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
       <span class="avatar big img">${charSVG(myChar(),64)}</span>
@@ -4050,6 +4051,7 @@ function buy(id){
       : `This is one past what you planned. It is allowed once — after this it waits until ${fmt(al.next,{day:'numeric',month:'short'})}.`)
     : after>0 ? `${after} more ${al.period} after this.` : `That is your last planned one ${al.period}. You would have one spare after it.`;
   modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. ${note}</p>`,'Buy',()=>{
+    if(S.points.coins<cost || allowanceState(r).maxed) return;     // re-check: state may have moved since the sheet opened
     S.points.coins-=cost; S.locker.push({id:uid(),rewardId:id,name:r.name,boughtAt:today()}); save(); try{ checkChallenges(); }catch(e){} haptic('success'); render(); toast('Bought · in your locker'); });
 }
 
@@ -4119,7 +4121,7 @@ function vSettings(){
         <div class="opt"><label>Affirmation <span class="hint">sends one of your own lines</span></label><button class="toggle ${c.affOn?'on':''}" data-remind-aff role="switch" aria-checked="${c.affOn}"></button></div>
         ${c.affOn?`<div class="opt"><label>Affirmation time</label><input type="time" id="remaff" value="${c.aff}" style="width:130px"></div>`:''}
         <div class="opt"><label>List reminders <span class="hint">for Plan items with a time</span></label><button class="toggle ${c.todos!==false?'on':''}" data-remind-todos role="switch" aria-checked="${c.todos!==false}"></button></div>
-        <p class="tiny muted" style="margin-top:10px">${PUSH.vapidPublic?'Reminders arrive whether the app is open or not.':'These fire while the app is open. For reminders when it is closed, the server side needs setting up — see push.sql.'}</p>`;
+        <p class="tiny muted" style="margin-top:10px">${PUSH.vapidPublic?'Reminders arrive whether the app is open or not.':'These fire while the app is open (or recently open in the background).'}</p>`;
     })()}
   </div></details>
   ${(()=>{ const live=Sync.live(), inn=Sync.signedIn();
@@ -4197,7 +4199,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses. On Today or Overdue you can push unfinished list items to tomorrow in one tap — only when you ask; nothing rolls over on its own.</p>
     <p><b style="color:var(--fg)">Tab dots.</b> A dot on a tab means something new is waiting there.</p>
     <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title or the text. Delete from the bin in the full editor; an empty note removes itself when you leave.</p>
-    <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
+    <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap one to read it all, and Bring to top to move it up.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
 
     <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only — nothing free-typed, so there is nothing to moderate. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest — Rare and Legendary can also unlock an extra Shop buy for the week. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
@@ -4241,7 +4243,8 @@ function bind(){
       addTodo(v,whenDay(),document.getElementById('newtodoat')?.value||null); haptic(); render(); document.getElementById('newtodo')?.focus();};
     q('#addtodo').onclick=add; nl.onkeydown=e=>{if(e.key==='Enter')add();}; }
   qa('[data-todo]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const el=b.closest('.todo')||b.closest('summary'); const id=b.dataset.todo; const t=S.todos.find(x=>x.id===id);
-    haptic(); if(!t.done&&S.settings.motion){ el.classList.add('ticking'); setTimeout(()=>{toggleTodo(id);render();},200); } else { toggleTodo(id); render(); } });
+    if(!t || el?.classList.contains('ticking')) return;            // a double-tap ticked it and then unticked it
+    haptic(); if(!t.done&&S.settings.motion){ el.classList.add('ticking'); setTimeout(()=>{ if(!t.done){ toggleTodo(id); render(); } },200); } else { toggleTodo(id); render(); } });
   qa('[data-tmove]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tmove);
     moveSheet(t); });
   qa('[data-moveall]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
@@ -4449,7 +4452,9 @@ function bind(){
   qa('[data-touchwhy]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const w=S.whys.find(x=>x.id===b.dataset.touchwhy); if(!w) return; touchWhy(w); haptic(); render(); });
   qa('[data-delwhy]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
     if(planState.openAff===b.dataset.delwhy){ planState.openAff=null; planState.editAff=null; }
-    S.whys=S.whys.filter(w=>w.id!==b.dataset.delwhy); save(); render(); });
+    const gone=S.whys.find(w=>w.id===b.dataset.delwhy); if(!gone) return;
+    S.whys=S.whys.filter(w=>w.id!==gone.id); save(); haptic(); render();
+    toast('Affirmation deleted','Undo',()=>{ if(!S.whys.some(w=>w.id===gone.id)){ S.whys.push(gone); save(); render(); } }); });   // your own words — one stray tap shouldn't lose them
   const nr=q('#newreward'); const np=q('#newprice');
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
@@ -4545,13 +4550,15 @@ function bind(){
   qa('[data-rough]').forEach(b=>b.onclick=()=>roughSheet());
   qa('[data-rough-edit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); roughSheet(b.dataset.roughEdit); });
   qa('[data-size]').forEach(b=>b.onclick=()=>{S.settings.textSize=clamp(S.settings.textSize+Number(b.dataset.size),80,130);save();applyTheme();render();keepLook();});
-  const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings=fresh().settings;save();applyTheme();render();keepLook();toast('Customise reset');};
+  const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings={...fresh().settings,remind:S.settings.remind}; /* the look only — keep reminders */ save();applyTheme();render();keepLook();toast('Customise reset');};
   const runCheck=async(btn)=>{ const old=btn.textContent; btn.textContent='…';
     const L=await connectionReport(); btn.textContent=old;
     modal(`<h2>Connection check</h2><ul class="list" style="margin-top:8px">${L.map(([k,v])=>`<li><span class="small muted">${esc(k)}</span><span class="small" style="text-align:right;max-width:62%">${esc(v)}</span></li>`).join('')}</ul>`,'Copy',()=>{
       navigator.clipboard?.writeText(L.map(([k,v])=>k+': '+v).join('\n')); toast('Copied'); }); };
   const ck=q('#conncheck'); if(ck) ck.onclick=()=>runCheck(ck);
   const ck2=q('#conncheck2'); if(ck2) ck2.onclick=()=>runCheck(ck2);
+  const rs=q('#retrysync'); if(rs) rs.onclick=()=>{ rs.disabled=true; rs.textContent='…'; S.syncError=null; save(); friendsTick();   // the Retry button had no handler
+    setTimeout(()=>{ if(tab==='friends') render(); if(S.syncError) toast(S.syncError); },2500); };
   const keepRem=()=>{ const a=document.getElementById('acc-remind'); if(a) a.open=true; };
   const ra=q('#acc-remind'); if(ra) ra.addEventListener('toggle',()=>{ remOpen=ra.open; });
   const an=q('#asknotify'); if(an) an.onclick=async()=>{ an.textContent='…';
@@ -4571,7 +4578,7 @@ function bind(){
   const ii=q('[data-iosinstall]'); if(ii) ii.onclick=()=>iosInstallSheet();
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
   const rob=q('#replayonb'); if(rob) rob.onclick=()=>{ haptic(); onboarding(()=>{ render(); toast('Setup replayed'); }, true); };
-  const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(S,null,2));a.download=`steady-${today()}.json`;a.click();};
+  const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(stripForVault(),null,2));a.download=`steady-${today()}.json`;a.click();};
   const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, points and rewards. This cannot be undone.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
 }
 function updateConfirm(){
@@ -4581,8 +4588,14 @@ function updateConfirm(){
 }
 
 /* ---------- Modal & sheet ---------- */
-function overlay(html,cls=''){ const o=document.createElement('div'); o.className='overlay '+cls; o.innerHTML=html; document.body.appendChild(o); requestAnimationFrame(()=>o.classList.add('show')); return o; }
-function close(o){ o.classList.remove('show'); setTimeout(()=>o.remove(),250); }
+function overlay(html,cls=''){ const o=document.createElement('div'); o.className='overlay '+cls; o.innerHTML=html; document.body.appendChild(o);
+  /* While it fades in or out, swallow taps: a double-tap on "Buy" charged twice, and the second
+     tap of a double-tap that opened a sheet landed on its backdrop and shut it again. */
+  o._at=Date.now();
+  o.addEventListener('click',e=>{ if(o._closing || Date.now()-o._at<300){ e.stopPropagation(); e.preventDefault(); } },true);
+  requestAnimationFrame(()=>o.classList.add('show')); return o; }
+function close(o){ o._closing=true; o.classList.remove('show'); setTimeout(()=>{ o.remove();
+  if(_gatesPending && !document.querySelector('.gate,.overlay')) setTimeout(maybeGates,300); },250); }
 function modal(html,ok,fn,danger){
   const o=overlay(`<div class="modal">${html}<div class="foot" style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn ${danger?'danger':'primary'}" style="flex:1" data-ok>${esc(ok)}</button></div></div>`,'center');
   o.querySelector('[data-x]').onclick=()=>close(o); o.onclick=e=>{if(e.target===o)close(o)}; o.querySelector('[data-ok]').onclick=()=>{close(o);fn();};
@@ -4773,7 +4786,7 @@ function timeSheet(timed, edit){
     if(ti<0) ti=-1;
     return `<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
     <div class="timerow">${list.map((m,i)=>`<button class="chip ${i===ti?'on':''}" data-m="${m}">${m}m</button>`).join('')}${extra}<button class="chip add" data-other>Other</button></div></div>`; };
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot"><button class="btn" data-skip>${edit?'Cancel':'Skip'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot">${edit?'':'<button class="btn ghost" data-x>Cancel</button>'}<button class="btn" data-skip>${edit?'Cancel':'Skip time'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
   const refresh=()=>{ let left=room();
     timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
       const pay=paidValue(t,mins[t.id]);
@@ -4788,6 +4801,7 @@ function timeSheet(timed, edit){
     el.querySelector('[data-other]').onclick=()=>promptNum('Minutes on “'+t.name+'”',mins[t.id],v=>{ const b=document.createElement('button'); b.className='chip on'; b.textContent=v+'m'; b.dataset.m=v; b.onclick=()=>pick(v,b); el.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); el.querySelector('[data-other]').before(b); mins[t.id]=v; refresh(); });
   });
   o.querySelector('[data-skip]').onclick=()=>{ close(o); if(!edit) completeSelected(); };
+  const cx=o.querySelector('[data-x]'); if(cx) cx.onclick=()=>close(o);     // back out without marking anything
   o.querySelector('[data-ok]').onclick=()=>{ close(o); if(edit) timed.forEach(t=>recastDone(t.id,mins[t.id])); else completeSelected(mins); };
   refresh();
 }
@@ -4853,7 +4867,7 @@ function catchUpGate(){
     const tid=card.dataset.tid, date=card.dataset.date;
     card.querySelector('[data-did]').onclick=()=>{
       const res=completeOnDate(date,tid);
-      if(!res){ removeCard(card); return; }
+      if(!res){ dropPending(date,tid); save(); removeCard(card,{msg:'That task wasn’t due that day any more — nothing to log.'}); return; }
       if(res.already){ dropPending(date,tid); save(); removeCard(card); return; }
       haptic(res.cleared?'success':'light');
       const msg=(res.cleared?`Yesterday cleared · +${res.coins}`:`${res.name} · +${res.coins}`)+(res.chestMsg?` · ${res.chestMsg}`:'');
@@ -5013,7 +5027,7 @@ function missGate(){
       });
     });
     S.pendingMisses=(S.pendingMisses||[]).filter(p=>!answered.has(p.date+'|'+p.taskId));
-    save(); close(o); haptic(); render();
+    save(); _gatesPending=true; close(o); haptic(); render();      // then advice / recap, in order
     toast(days.length===1?'Noted. Fresh day.':`Noted · ${days.length} days.`);
   };
   return true;
@@ -5026,7 +5040,8 @@ function quoteGate(next){
   const g=document.createElement('div'); g.className='gate';
   g.innerHTML=`<p class="q">${esc(a.text)}<span class="qend">&rdquo;</span></p><div class="actions"><button class="btn primary block" id="startday">Start the day</button></div>`;
   document.body.appendChild(g);
-  g.querySelector('#startday').onclick=()=>{ S.flags.quoteDate=today(); save(); haptic(); g.style.transition='opacity .3s'; g.style.opacity=0; setTimeout(()=>{g.remove();next();},300); };
+  g.querySelector('#startday').onclick=e=>{ if(g._went) return; g._went=true;   // a double-tap ran reveal() twice
+    S.flags.quoteDate=today(); save(); haptic(); g.style.transition='opacity .3s'; g.style.opacity=0; setTimeout(()=>{g.remove();next();},300); };
 }
 
 /* ---------- Onboarding ---------- */
@@ -5066,6 +5081,17 @@ function onboarding(next, force){
     if(!replaying){
       if(line){ const now=Date.now(); S.whys=[{id:uid(),text:line,createdAt:now,touchedAt:now}]; }
       [...picks].forEach((n,i)=>S.tasks.push({id:uid(),name:n,createdAt:today(),order:i,archived:false,target:targets[n]||null}));
+    } else {
+      /* Replaying used to silently throw away what you entered. Add it alongside what you already have. */
+      const now=Date.now(), txt=(line||'').trim();
+      if(txt && !(S.whys||[]).some(w=>w.text.trim()===txt)) S.whys=[...(S.whys||[]),{id:uid(),text:txt,createdAt:now,touchedAt:now}];
+      const have=new Set(S.tasks.filter(t=>!t.archived).map(t=>t.name.trim().toLowerCase()));
+      const start=S.days[today()]?.cleared?addDays(today(),1):today();
+      for(const n of picks){
+        if(have.has(n.trim().toLowerCase()) || S.tasks.filter(t=>!t.archived).length>=MAX_TASKS) continue;
+        S.tasks.push({id:uid(),name:n,createdAt:start,order:S.tasks.length,archived:false,target:targets[n]||null});
+      }
+      try{ syncCadencePrices(); }catch(e){}
     }
     S.flags.onboarded=true; save(); g.remove(); next();
   };
@@ -5693,7 +5719,11 @@ function friendsTick(){
     .finally(()=>{ _ticking=false; });
   Sync.push().catch(()=>{});
 }
-function maybeGates(){ if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); }
+let _gatesPending=false;
+function maybeGates(){
+  if(document.querySelector('.gate,.overlay')){ _gatesPending=true; return; }   // a sheet is open — try again when it closes
+  _gatesPending=false;
+  if(S.flags.pendingToast){ toast(S.flags.pendingToast); S.flags.pendingToast=null; save(); }
   if(catchUpGate()) return;              // yesterday: I did it | Missed
   if(missGate()) return;                 // older slips → reasons, then advice, then recap
   const st=stuckTask(); if(st){ adviceSheet(st); return; }
@@ -5741,11 +5771,14 @@ export function bootSteady(){
       if(rolled){ rollover(); renderKeepingDrafts(); friendsTick(); }
       const wasSnoozed=catchUpSnooze;
       catchUpSnooze=false;               // Ask me later only lasts until next show
-      if(rolled || wasSnoozed) maybeGates();
+      if(rolled || wasSnoozed || _gatesPending) maybeGates();
     });
     /* Arriving back from a password-reset email takes priority over everything. */
     Sync.claimRecovery().then(rec=>{
-      if(rec){ document.querySelectorAll('.gate').forEach(g=>g.remove()); newPasswordGate(); return null; }
+      if(rec){ document.querySelectorAll('.gate').forEach(g=>g.remove());
+        const tb=document.getElementById('tabbar'); if(tb) tb.hidden=false;   // the removed gate was what would have revealed it
+        if(S.flags?.onboarded){ try{ rollover(); }catch(e){} }
+        newPasswordGate(); return null; }
       return Sync.session();
     }).catch(()=>null).then(async()=>{
       try{

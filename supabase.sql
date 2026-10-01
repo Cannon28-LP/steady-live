@@ -89,10 +89,16 @@ language sql security definer set search_path = public as $$
 $$;
 
 -- Everyone you're paired with, so both sides see each other after one add.
-create or replace function my_friends()
-returns table (id uuid, display_name text, code text)
+-- One canonical my_friends() (avatar.sql and chal-locks.sql define the same thing). Postgres can't
+-- change a function's return columns with "create or replace", so drop it first — that's what made
+-- re-running these scripts fail.
+alter table profiles add column if not exists avatar text;
+alter table profiles add column if not exists chal_locks jsonb not null default '{}'::jsonb;
+drop function if exists my_friends();
+create function my_friends()
+returns table (id uuid, display_name text, code text, avatar text, chal_locks jsonb)
 language sql security definer stable set search_path = public as $$
-  select p.id, p.display_name, p.code
+  select p.id, p.display_name, p.code, p.avatar, coalesce(p.chal_locks, '{}'::jsonb)
   from friendships f join profiles p on p.id = f.b_id
   where f.a_id = auth.uid();
 $$;
@@ -103,6 +109,9 @@ $$;
 drop policy if exists "read profiles"  on profiles;
 drop policy if exists "write own"      on profiles;
 drop policy if exists "update own"     on profiles;
+drop policy if exists "read self or friends" on profiles;
+drop policy if exists "insert own profile"   on profiles;
+drop policy if exists "update own profile"   on profiles;
 create policy "read self or friends" on profiles for select using (id = auth.uid() or is_friend(id));
 create policy "insert own profile"   on profiles for insert with check (id = auth.uid());
 create policy "update own profile"   on profiles for update using (id = auth.uid());
@@ -123,10 +132,16 @@ create policy "update own stats" on daily_stats for update using (user_id = auth
 drop policy if exists "read my cheers"   on cheers;
 drop policy if exists "send cheers"      on cheers;
 drop policy if exists "mark cheers read" on cheers;
+drop policy if exists "update my cheers" on cheers;
 create policy "read my cheers"   on cheers for select using (to_id = auth.uid() or from_id = auth.uid());
 create policy "send cheers"      on cheers for insert with check (from_id = auth.uid() and is_friend(to_id));
-create policy "update my cheers" on cheers for update using (to_id = auth.uid() or from_id = auth.uid());
+-- Only the person a cheer is FOR can update it (to mark it applied). Letting the sender update too
+-- meant re-sending reset applied=false and paid the coins again.
+create policy "update my cheers" on cheers for update using (to_id = auth.uid());
 
+drop policy if exists "own vault read"   on vault;
+drop policy if exists "own vault write"  on vault;
+drop policy if exists "own vault update" on vault;
 create policy "own vault read"   on vault for select using (user_id = auth.uid());
 create policy "own vault write"  on vault for insert with check (user_id = auth.uid());
 create policy "own vault update" on vault for update using (user_id = auth.uid());

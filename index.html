@@ -32,25 +32,32 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 <!-- Match the saved theme before first paint, so there's no flash of the wrong colours. -->
 <script>
 (function(){try{
+  /* Same colours as THEMES in app.v3.js ([bg, fg, fg2, accent], dark then light). Light/dark follows the
+     phone, like the app does — this used to know only old theme names and always painted dark teal. */
   var s=JSON.parse(localStorage.getItem('steady.v2')||'{}').settings||{};
-  var T={teal:[175,22],pink:[340,22],grey:[220,6],black:[0,0],blue:[222,24],green:[145,20]};
-  var t=T[s.theme]||T.teal, h=t[0], sat=t[1];
-  var dark = s.mode==='light' ? false : (s.mode==='dark'||!s.mode) ? true
-           : !matchMedia('(prefers-color-scheme: light)').matches;
+  var A={pink:'rose',grey:'ink',black:'ink',blue:'ocean',green:'moss'};
+  var T={
+    teal: [['#061411','#e7faf4','#7dcebf','#2ee6c8'],['#e6f4ef','#0c2924','#2f6b60','#0f766e']],
+    dusk: [['#120c1c','#f5eeff','#c6b0e4','#c4a6ff'],['#f3eef9','#2a1640','#5c3d78','#7c3aed']],
+    rose: [['#1a0810','#ffeff4','#f0a8bc','#ff6b8a'],['#fceef2','#3c101c','#8c3850','#e11d48']],
+    ocean:[['#061018','#e8f4fc','#80c0e0','#3ec8f0'],['#e8f2fa','#0c2038','#2c5880','#0284c7']],
+    moss: [['#0a140c','#eaf6e8','#9cd49a','#5ee89a'],['#eef6ea','#142414','#3c6438','#15803d']],
+    sand: [['#14100a','#faf4e6','#e0c078','#f5c542'],['#faf4e8','#2c2414','#6c5830','#b45309']],
+    ink:  [['#0c0c0e','#f4f4f5','#b0b0b8','#e8e8ec'],['#f2f2f4','#141418','#4a4a52','#18181b']]
+  };
+  var t=T[A[s.theme]||s.theme]||T.teal;
+  var c=t[matchMedia('(prefers-color-scheme: light)').matches?1:0];
   var r=document.documentElement.style;
-  r.setProperty('--bg', dark?'hsl('+h+' '+sat+'% '+(s.theme==='black'?0:7)+'%)':'hsl('+h+' '+sat+'% 96%)');
-  r.setProperty('--fg', dark?'hsl('+h+' '+sat+'% 96%)':'hsl('+h+' '+sat+'% 10%)');
-  r.setProperty('--fg2',dark?'hsl('+h+' '+sat+'% 62%)':'hsl('+h+' '+sat+'% 42%)');
-  if(s.accent) r.setProperty('--accent', s.accent);
+  r.setProperty('--bg',c[0]); r.setProperty('--fg',c[1]); r.setProperty('--fg2',c[2]); r.setProperty('--accent',c[3]);
   var m=document.querySelector('meta[name=theme-color]');
-  if(m) m.content=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  if(m) m.content=c[0];
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.v3.js?b=79"/>
+<link rel="modulepreload" href="./app.v3.js?b=80"/>
 <link rel="modulepreload" href="./vendor/open-peeps-avatar.js"/>
-<link rel="preload" href="./app.v3.css?b=79" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.v3.css?b=79"/></noscript>
+<link rel="preload" href="./app.v3.css?b=80" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v3.css?b=80"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
@@ -91,7 +98,7 @@ window.__steadyBootTimer = setTimeout(function(){
 }, 20000);
 </script>
 <script type="module">
-const src = '/steady-live/app.v3.js?b=79';
+const src = '/steady-live/app.v3.js?b=80';
 const clear = () => { const boot=document.getElementById('boot');
   if(boot){ boot.classList.add('gone'); setTimeout(()=>boot.remove(),350); } };
 const fail = (e) => {

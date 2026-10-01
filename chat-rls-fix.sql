@@ -23,13 +23,12 @@ create policy "read crew members" on crew_members for select
     or exists (select 1 from crews c where c.id = crew_id and c.owner_id = auth.uid())
   );
 
+-- Only the chat's owner adds people (themselves, or friends). Letting anyone add themselves meant
+-- whoever learned a chat id could join it and read the messages.
 create policy "add crew members" on crew_members for insert
   with check (
-    user_id = auth.uid()
-    or (
-      exists (select 1 from crews c where c.id = crew_id and c.owner_id = auth.uid())
-      and is_friend(user_id)
-    )
+    exists (select 1 from crews c where c.id = crew_id and c.owner_id = auth.uid())
+    and (user_id = auth.uid() or is_friend(user_id))
   );
 
 create policy "drop crew members" on crew_members for delete
