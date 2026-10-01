@@ -29,12 +29,15 @@ const CHAL_PARTY = {legendary:CHAL_PARTY_MAX, rare:CHAL_PARTY_MAX, common:CHAL_P
 /* Rare challenge chests: chance of +1 shop allowance for the week. Legendary always gets 2. */
 const RARE_EXTRA_CHANCE = 0.4;
 /* Rewards are priced in coins you set. Week/fortnight chips suggest your real earn rate. */
-const OT_PER = 5, OT_TASK_CAP = 10, OT_DAY_CAP = 20; // 1 coin per 5 min over target, capped per task and per day
+const OT_PER = 5, OT_TASK_CAP = 10, OT_DAY_CAP = 20; // 1 coin per 5 min over target, capped per task and per day (day cap scales: otDayCap)
+/* b81: no reward costs less than this many full-clear days per week of its cadence —
+   weekly ≥ 2 days, fortnightly ≥ 4, monthly ≥ ~9. One great day can never buy a weekly. */
+const REWARD_FLOOR_DAYS = 2;
 /* Turning up earns most of the value; the rest scales with the time you actually did.
    A short session is still DONE — streak, day clear and habit strength never see it. */
 const TIME_FLOOR = 0.6;
-/* Full-clear streak: a bonus every 7 consecutive cleared days, doubling but capped. */
-const CLEAR_WEEK_BONUS = 20, CLEAR_WEEK_CAP = 320;
+/* Full-clear streak: a bonus every 7 consecutive cleared days — half a day's coins, then one day, then
+   two days and it holds there (clearWeekBonus). It used to be a flat 20→320, which at one task was 25 days' pay. */
 /* After this many misses in a row on one task, offer some advice. */
 const STUCK_MISSES = 5, ADVICE_COOLDOWN = 14;
 const TIER_DAYS = {week:7, fortnight:14};
@@ -67,6 +70,12 @@ const chestCoins = () => round10(dayRate());
 /* Clear-day haul used for ETAs / pot (base×N + clear bonus; no miss-streak, no OT). */
 function clearDayPay(){ return clearDayHaul(typicalN()); }
 function typicalDayEarn(){ return Math.max(TASK_BASE, clearDayPay()); }
+function rewardFloor(weight){ const d=clearDayPay(); return d>0 ? Math.ceil(REWARD_FLOOR_DAYS*Math.max(weight,0.25)*d/10)*10 : MIN_REWARD_PRICE; }
+function rewardFloorOf(r){ return rewardFloor(weightOf(r)); }
+function floorFor(freqId, perMonth){ return rewardFloor(weightFor(freqId, perMonth)); }
+/* Flat bonuses scale with what a day pays, so they never dwarf a short task list. */
+function otDayCap(){ return Math.min(OT_DAY_CAP, Math.max(5, round5(0.3*clearDayPay()))); }
+function fullDays(cost){ const d=clearDayPay(); if(!(d>0)) return null; const x=cost/d; return x<1.95?`${Math.round(x*10)/10}`:`${Math.round(x)}`; }
 function coinsNeeded(cost){
   return Math.max(0, (Number(cost)||0) - (S.points.coins||0));
 }
@@ -77,21 +86,25 @@ function daysToEarn(cost){
   if(rate<1) return Infinity;
   return Math.ceil(need/rate);
 }
+/* Says what a price is worth in full days from zero (the old hint subtracted your savings,
+   so anyone with coins saw "1 day" and priced everything too low). */
 function earnEta(cost){
   const n=activeTasks().length;
   const rate=clearDayPay();
   if(!n) return 'Add a task first — a clear day is what this is based on.';
   const pay=n===1?`1 task pays ${rate} a day`:`${n} tasks pay ${rate} a day`;
+  const worth=`About ${fullDays(cost)} full days`;
   const need=coinsNeeded(cost);
-  if(need<=0) return 'You already have enough · '+pay;
+  if(need<=0) return `${worth} · you have enough now · ${pay}`;
   const days=Math.ceil(need/rate);
-  const d=days===1?'1 day':days+' days';
-  return `${d} · ${pay} when you clear`;
+  return `${worth} · ${days===1?'1 more day':days+' more days'} from your balance · ${pay}`;
 }
+/* The floor applies at read time too, so it holds even for typed prices when your tasks change. */
 function rewardPrice(r){
   const n=Math.round(Number(r && r.price));
-  if(n>0) return Math.max(MIN_REWARD_PRICE, n);
-  return Math.max(MIN_REWARD_PRICE, tierCost((r && r.tier) || 'week'));
+  const floor=r?rewardFloorOf(r):MIN_REWARD_PRICE;
+  if(n>0) return Math.max(MIN_REWARD_PRICE, n, floor);
+  return Math.max(MIN_REWARD_PRICE, tierCost((r && r.tier) || 'week'), floor);
 }
 /* ---------- Reward budgeting ----------
    You say how often you want a thing; the app works out the price from what you
@@ -135,12 +148,9 @@ function monthlyRewardBudget(){ return Math.max(MIN_REWARD_PRICE, round10(weekly
 function buysPerWeekOf(r){ return perMonthOf(r) / WEEKS_PER_MONTH; }
 function buysPerWeekFor(freqId, perMonth){ return perFor(freqId, perMonth) / WEEKS_PER_MONTH; }
 function snapRewardPrice(n){ return Math.max(MIN_REWARD_PRICE, round10(Number(n)||0)); }
-/* b72: one weekly treat sticker — pot split across active weeklies (fallback 4). */
-function weeklyTreatUnit(){
-  const n = Math.max(1, (S.rewards||[]).filter(r=>r.active && rewardFreq(r)==='weekly').length || 4);
-  return snapRewardPrice(weeklyTreatPot() / n);
-}
-/* Chest bands ≈ half / 1 / 2 weeklies (common / rare / legendary). */
+/* One weekly treat's worth — the weekly floor. Chests no longer shrink as you add rewards. */
+function weeklyTreatUnit(){ return rewardFloor(1); }
+/* Chest bands ≈ half / 1 / 2 weekly treats (common / rare / legendary) ≈ 1 / 2 / 4 full days. */
 const CHEST_ROLL_MUL = {
   common:    [0.4, 0.5, 0.6],
   rare:      [0.9, 1.0, 1.1],
@@ -172,19 +182,17 @@ function cohortKey(r){
   if(f==='custom') return 'custom:' + Math.round(weightOf(r)*100);
   return f;
 }
-/* price(r) = snap(weeklyTreatPot() * weight(r) / countInCohort). */
+/* b81: price(r) = max(snap(pot × weight(r) / allRewards), floor(weight)).
+   Every reward takes an equal share of a typical week's pot, scaled by how many weeks its window is —
+   so a month of typical earnings buys everything once per its cadence, and the budget card reads ~100%.
+   The floor stops any reward being worth less than REWARD_FLOOR_DAYS full days a week. */
 function cadencePlan(list){
   const active = (list||[]).slice();
   const weekPot = weeklyTreatPot();
-  const counts = {};
-  for(const r of active){
-    const k = cohortKey(r);
-    counts[k] = (counts[k]||0) + 1;
-  }
+  const n = Math.max(1, active.length);
   return active.map(r=>{
     const w = weightOf(r);
-    const n = Math.max(1, counts[cohortKey(r)]||1);
-    return {r, weight:w, to:snapRewardPrice(weekPot * w / n)};
+    return {r, weight:w, to:Math.max(snapRewardPrice(weekPot * w / n), rewardFloor(w))};
   });
 }
 function priceForDraft(freqId, others, perMonth){
@@ -192,7 +200,7 @@ function priceForDraft(freqId, others, perMonth){
   if(freqId==='custom') draft.perMonth = perFor('custom', perMonth);
   const list = (others||[]).concat([draft]);
   const hit = cadencePlan(list).find(x=>x.r===draft);
-  return hit ? hit.to : snapRewardPrice(weeklyTreatPot() * weightFor(freqId, perMonth));
+  return hit ? hit.to : Math.max(snapRewardPrice(weeklyTreatPot() * weightFor(freqId, perMonth)), floorFor(freqId, perMonth));
 }
 /* Weekly-weight sticker for a set; optional draft buy-weight via buysPerWeek (legacy). */
 function pricedUnit(list, extraBuysPerWeek){
@@ -324,12 +332,15 @@ function budgetState(){
   const pot=monthlyRewardBudget();
   const active=S.rewards.filter(x=>x.active);
   const spend=active.reduce((a,r)=>a+monthlyCostOf(r),0);
-  /* Shop fit vs the 4-clear + 3-half treat pot (not full monthly income). */
+  /* Two yardsticks: the treat pot (a normal week — 4 clears + 3 half days) and a fully cleared month
+     (every day cleared + the weekly chest). Floors mean three or four rewards can outgrow the normal
+     pot; that's fine as long as clearing every day pays for them. Only past a perfect month is it red. */
+  const full=Math.max(MIN_REWARD_PRICE, round10((7*clearDayPay()+chestCoins())*WEEKS_PER_MONTH));
   const pct=pot?Math.round(100*spend/pot):0;
   const redemptions=active.reduce((a,r)=>a+perMonthOf(r),0);
-  return {pot, spend:Math.round(spend), pct,
+  return {pot, full, spend:Math.round(spend), pct,
     redemptions:Math.round(redemptions*10)/10, active,
-    level: pct>100?'over' : pct>90?'tight' : 'ok'};
+    level: spend>full?'over' : spend>pot?'tight' : 'ok'};
 }
 /* Reprice each active reward: cohort split (weeklies share 1× pot, fortnights share 2×). */
 function rebalancePlan(){
@@ -360,7 +371,7 @@ function suggestedPrices(excludeId){
 }
 const TITLES = [['Drifter',1],['Steady',5],['Committed',12],['Relentless',20]]; // by level
 const xpToNext = L => Math.round(60*Math.pow(L,1.2));
-const loginBonus = s => s<2?0:s<7?5:s<30?10:15;
+const loginBonus = s => s<2?0:Math.max(1,Math.round(clearDayPay()*(s<7?0.08:s<30?0.16:0.24)));
 const DEFAULT_REASONS = ['Forgot','No time','Not feeling it','Something came up'];
 const THEMES = {
   /* b81: calmer surfaces (low-chroma, so text reads as text, not as more teal) and a single vivid accent.
@@ -492,6 +503,13 @@ function migratePriceCapB76(){
     if(p > MAX_REWARD_PRICE) r.price = MAX_REWARD_PRICE;
   }
   S._priceCapB76 = 1;
+  save();
+  try{ syncCadencePrices(); }catch(e){}
+}
+/* b81: shared pot + floors — reprice unlocked rewards once (typed prices are kept, but never read below the floor). */
+function migrateFloorB81(){
+  if(S._floorB81) return;
+  S._floorB81 = 1;
   save();
   try{ syncCadencePrices(); }catch(e){}
 }
@@ -2084,6 +2102,7 @@ const Sync = {
     migratePriceFloors();
     migratePriceCapB76();
     migrateCadencePricesB79();
+    migrateFloorB81();
     save();
   },
   async pullVaultSmart(){
@@ -2347,7 +2366,7 @@ function applyTheme(){
   r.setProperty('--card',p.surface);
   /* Coins get their own warm colour everywhere, so money never looks like progress. */
   r.setProperty('--coin', dark?'#f5c451':'#a16207');
-  r.setProperty('--warn', dark?'#fbbf24':'#c2410c');
+  r.setProperty('--warn', dark?'#fbbf24':'#b45309');
   r.setProperty('--danger', dark?'#f87171':'#dc2626');
   r.setProperty('--shadow', dark?'none':'0 1px 2px rgba(16,24,40,.05), 0 2px 8px rgba(16,24,40,.05)');
   r.setProperty('--shadow-lg', dark?'0 12px 32px rgba(0,0,0,.45)':'0 12px 32px rgba(16,24,40,.14)');
@@ -2529,7 +2548,7 @@ function cadenceTagHtml(t){
 }
 function dueTasks(k=today()){ return activeTasks(k).filter(t=>taskExpectedOn(t,k)); }
 /* Price migrations need dueTasks — run them only once it exists (they used to throw here on every load). */
-try{ migratePriceFloors(); migratePriceCapB76(); migrateCadencePricesB79(); }catch(e){ console.error(e); }
+try{ migratePriceFloors(); migratePriceCapB76(); migrateCadencePricesB79(); migrateFloorB81(); }catch(e){ console.error(e); }
 function day(k){ return S.days[k] || (S.days[k]={tasks:{},points:0,bonus:0,note:'',perfect:false}); }
 function statusOf(k,tid){ return S.days[k]?.tasks?.[tid]?.status || 'open'; }
 function expectedOn(k){ // task ids expected that day
@@ -2695,7 +2714,7 @@ function clearedRun(end){
 }
 /* Until today is cleared the run is still alive from yesterday — don't show 0 every morning. */
 function clearedStreak(){ const k=today(); return clearedRun(S.days[k]?.cleared?k:addDays(k,-1)).n; }
-function clearWeekBonus(block){ return Math.min(CLEAR_WEEK_CAP, CLEAR_WEEK_BONUS*Math.pow(2,block-1)); }
+function clearWeekBonus(block){ return Math.max(10, Math.ceil(clearDayPay()*Math.min(2, 0.5*Math.pow(2,block-1))/10)*10); }
 function nextClearReward(){
   const n=clearedStreak(), block=Math.floor(n/7)+1;
   return {days:7-(n%7), amount:clearWeekBonus(block), streak:n};
@@ -2713,7 +2732,7 @@ function payClearStreakAt(end){
     const d=day(end);
     d.clearStreakPay=(d.clearStreakPay||0)+amount; d.clearStreakBlock=block; d.clearStreakStart=start;
     save();
-    return {amount,block,days:block*7,capped:amount>=CLEAR_WEEK_CAP};
+    return {amount,block,days:block*7,capped:block>=3};
   }
   save(); return null;
 }
@@ -2799,7 +2818,7 @@ const sel=new Set();
 function completeSelected(mins, skipTime){
   const k=today(), ids=[...sel]; if(!ids.length) return;
   const d=day(k), tasks=dueTasks(k), n=tasks.length;
-  let coins=0, xp=0; const changed=[]; let otRoom=OT_DAY_CAP-overtimeToday(k);
+  let coins=0, xp=0; const changed=[]; let otRoom=otDayCap()-overtimeToday(k);
   for(const id of ids){
     if(d.tasks[id]?.status==='done') continue;
     const t=tasks.find(x=>x.id===id);
@@ -2892,7 +2911,7 @@ function recastDone(id,mins){
   const oldCoins=(e.value||0)+(e.bonus||0), oldXp=e.value||0;
   const others=overtimeToday(k)-(e.bonus||0);
   const v=paidValue(t,mins);
-  const bonus=clamp(overtimeFor(t,mins),0,Math.max(0,OT_DAY_CAP-others));
+  const bonus=clamp(overtimeFor(t,mins),0,Math.max(0,otDayCap()-others));
   e.minutes=mins; e.value=v; e.bonus=bonus; e.full=!t.target||!mins||mins>=t.target;
   const dc=(v+bonus)-oldCoins, dx=v-oldXp;
   d.points+=dc; S.points.coins+=dc; S.points.xp+=dx;
@@ -4086,7 +4105,7 @@ function vSettings(){
       <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" max="${MAX_REWARD_PRICE}" step="5" value="${suggestFromFreq(newRewardFreq,null,newRewardPer)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
         <button class="btn primary grow" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
       <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq,null,newRewardPer))}</p>
-      <p class="tiny muted">Suggested as your treat pot split across your weekly rewards (or two weeks of pot across your fortnightly ones). Type over a price to keep it; Rebalance resets to the pot split.</p>
+      <p class="tiny muted">Suggested as an equal share of your weekly treat pot, scaled by how often it can be bought — never under ${REWARD_FLOOR_DAYS} full days per week of its cadence. Type over a price to keep it; Rebalance resets to the pot split.</p>
     </div>
     ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}
       <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
@@ -4187,12 +4206,12 @@ function vSettings(){
     <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and XP. Miss two expected days in a row and the next tick pays ${TASK_BASE+1}, then +1 per further miss day up to ${TASK_BASE+5}. One miss alone does not raise pay. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
     <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
     <p><b style="color:var(--fg)">Day quality.</b> On a normal day with N tasks due: each done task pays its base (shown as +${TASK_BASE} on the row). At half done (≥50%) you get a one-time half-day bonus of about ${halfDayBonusAmt(8)} for N=8. Clear the day (100%) for a clear bonus of about ${clearDayBonusAmt(8)} — if the half was already paid, only the difference is added. When you are one tick from half or clear, Today shows a calm “1 more for …” line and a tiny bonus hint under that row’s +${TASK_BASE}. Rough day and Away earn nothing. Undo claws back task coins and any day bonus you drop below.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a ${TASK_BASE}-coin task pays ${Math.max(1,Math.round(TASK_BASE*(TIME_FLOOR+(1-TIME_FLOOR)*0.5)))}, not half. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${OT_DAY_CAP} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
-    <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for +${CLEAR_WEEK_BONUS} coins, doubling each further week — ${[1,2,3,4,5].map(x=>clearWeekBonus(x)).join(', ')} — then holding at ${CLEAR_WEEK_CAP}. Miss a clear and it starts again from ${CLEAR_WEEK_BONUS}.</p>
-    <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +5 from day two, +10 from day seven, +15 from day thirty.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a ${TASK_BASE}-coin task pays ${Math.max(1,Math.round(TASK_BASE*(TIME_FLOOR+(1-TIME_FLOOR)*0.5)))}, not half. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${otDayCap()} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
+    <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for a bonus — ${[1,2,3,4].map(x=>clearWeekBonus(x)).join(', ')} for each further week, then holding there (half a day's coins, then a day, then two). Miss a clear and it starts again.</p>
+    <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +${loginBonus(2)} from day two, +${loginBonus(7)} from day seven, +${loginBonus(30)} from day thirty (it grows with what your tasks pay).</p>
     <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday. Days with no tasks and away days don't count against you — the target shrinks to match (e.g. 4 of 5 for weekday-only tasks).</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. Reward prices follow cadence (no hard 30 ceiling) — typed prices soft-cap at ${MAX_REWARD_PRICE}. Looks stay ≤ ${MAX_LOOK_COST} coins so they cost about one clear day and rewards stay the main spend. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Same-cadence rewards share that cadence's pot: weeklies split one week of the treat pot so a solid week can cover every weekly once; fortnights split two weeks of pot among themselves (adding a fortnight does not shrink weekly stickers); monthlies split about 4.33 weeks of pot. One clear day alone will not buy a weekly when you have several. The pot is still about four clear days plus three half days of coins a week from your tasks — stickers snap to at least ${MIN_REWARD_PRICE}. Buying every occurrence of everything (including fortnights) can still push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it; <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. Reward prices follow cadence (no hard 30 ceiling) — typed prices soft-cap at ${MAX_REWARD_PRICE}. Looks stay ≤ ${MAX_LOOK_COST} coins so they cost about one clear day and rewards stay the main spend. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Every reward takes an equal share of a typical week's treat pot (about four clear days plus three half days of coins), scaled by its window — a fortnightly costs about twice a weekly, a monthly about 4.3×. Nothing costs less than ${REWARD_FLOOR_DAYS} full-clear days per week of its cadence, so one great day never buys a weekly — not even with a price you typed. A typical month then buys everything once per its cadence; lots of rewards or the floor can push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it (above the floor); <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
     <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
 
     <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
@@ -4461,6 +4480,8 @@ function bind(){
     if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
     if(n<MIN_REWARD_PRICE){ eta.textContent='Minimum '+MIN_REWARD_PRICE+' coins so nothing is free.'; return; }
     if(n>MAX_REWARD_PRICE){ eta.textContent='Maximum '+MAX_REWARD_PRICE+' coins for a reward.'; return; }
+    const fl=floorFor(newRewardFreq,newRewardPer);
+    if(n<fl){ eta.textContent=`At least ${fl} for this one — ${REWARD_FLOOR_DAYS} full days per week of its cadence, so a single day can't buy it.`; return; }
     eta.textContent=earnEta(n); };
   const ra2=q('#acc-rewards'); if(ra2) ra2.addEventListener('toggle',()=>{ rewOpen=ra2.open; });
   if(np) np.oninput=refreshEta;
@@ -4476,6 +4497,8 @@ function bind(){
     let price=Math.round(Number(np?.value)||0); if(!price) price=suggest;
     if(price<MIN_REWARD_PRICE){ toast('Minimum '+MIN_REWARD_PRICE+' coins'); return; }
     if(price>MAX_REWARD_PRICE){ toast('Maximum '+MAX_REWARD_PRICE+' coins'); return; }
+    const fl=floorFor(newRewardFreq,newRewardPer);
+    if(price<fl){ price=fl; toast(`Raised to ${fl} — the least this cadence can cost`); }
     price=Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, price));
     const rec={id:uid(),name:v,active:true,tier:'custom',price,freq:newRewardFreq};
     if(newRewardFreq==='custom') rec.perMonth=clamp(Math.round(Number(q('#newper')?.value)||newRewardPer),1,MAX_PER_MONTH);
@@ -4689,12 +4712,12 @@ function editReward(r){
     o.querySelector('#ep').value=suggestFromFreq(ef,others,epv()); upd(); haptic(); });
   if(eper) eper.oninput=()=>{ const others=S.rewards.filter(x=>x.active&&x.id!==r.id);
     o.querySelector('#ep').value=suggestFromFreq('custom',others,epv()); upd(); };
-  const upd=()=>{ const n=Math.round(Number(i.value)||0); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):n>MAX_REWARD_PRICE?('Maximum '+MAX_REWARD_PRICE+' coins'):earnEta(n); };
+  const upd=()=>{ const n=Math.round(Number(i.value)||0), fl=floorFor(ef,epv()); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):n>MAX_REWARD_PRICE?('Maximum '+MAX_REWARD_PRICE+' coins'):n<fl?`At least ${fl} for this cadence — ${REWARD_FLOOR_DAYS} full days per week of it.`:earnEta(n); };
   i.oninput=upd;
   o.querySelectorAll('[data-epreset]').forEach(b=>b.onclick=()=>{ i.value=b.dataset.epreset; o.querySelectorAll('[data-epreset]').forEach(x=>x.classList.toggle('on',x===b)); upd(); });
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelector('[data-ok]').onclick=()=>{
-    const n=Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, Math.round(Number(i.value)||0)));
+    const n=Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, floorFor(ef,epv()), Math.round(Number(i.value)||0)));
     const commit=()=>{
       r.price=n; r.tier='custom'; r.freq=ef;
       if(ef==='custom') r.perMonth=epv(); else delete r.perMonth;
@@ -4772,7 +4795,7 @@ function timeSheet(timed, edit){
   const room=()=>{
     let used=overtimeToday();
     if(edit) timed.forEach(t=>{ used-=(day(today()).tasks[t.id]?.bonus||0); });
-    return OT_DAY_CAP-used;
+    return otDayCap()-used;
   };
   const opts=t=>{
     const tg=t.target;
@@ -4786,7 +4809,7 @@ function timeSheet(timed, edit){
     if(ti<0) ti=-1;
     return `<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
     <div class="timerow">${list.map((m,i)=>`<button class="chip ${i===ti?'on':''}" data-m="${m}">${m}m</button>`).join('')}${extra}<button class="chip add" data-other>Other</button></div></div>`; };
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins, and skipping the time pays the turn-up rate. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot">${edit?'':'<button class="btn ghost" data-x>Cancel</button>'}<button class="btn" data-skip>${edit?'Cancel':'Skip time'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins, and skipping the time pays the turn-up rate. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${otDayCap()} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot">${edit?'':'<button class="btn ghost" data-x>Cancel</button>'}<button class="btn" data-skip>${edit?'Cancel':'Skip time'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
   const refresh=()=>{ let left=room();
     timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
       const pay=paidValue(t,mins[t.id]);
@@ -5148,15 +5171,15 @@ function iosInstallSheet(){
 function budgetCard(){
   const b=budgetState();
   if(!b.active.length) return `<div class="card" style="padding:12px"><b class="small">Your monthly budget</b>
-    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (four clears + three half days a week from your tasks). A solid week's pot is meant to cover every weekly once; fortnights share two weeks of pot among themselves. Add a reward and this shows whether it fits.</p></div>`;
+    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (four clears + three half days a week from your tasks). Your rewards share it, each scaled by how often it can be bought. Add a reward and this shows whether it fits.</p></div>`;
   const msg = b.level==='over'
-    ? `That does not fit the treat pot. Something will have to give — fewer rewards, or rarer ones.`
-    : b.level==='tight' ? `That is just about the whole treat pot. Little slack left.`
+    ? `More than even a perfect month earns (~${b.full}). Something will have to give — fewer rewards, or rarer ones.`
+    : b.level==='tight' ? `More than a normal month, but a month of clearing every day (~${b.full}) covers it.`
     : `That fits the treat pot, with room for challenges.`;
   return `<div class="card budget ${b.level}" style="padding:12px">
-    <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'#f59e0b':'var(--accent)'}">${b.pct}%</span></div>
+    <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'var(--warn)':'var(--accent)'}">${b.pct}%</span></div>
     <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
-    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (four clears + three half days a week) · weeklies share one week of pot · fortnights share two · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
+    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (four clears + three half days a week) · shared by every reward · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
     <p class="tiny muted" style="margin-top:4px">Type over a price to keep it; Rebalance resets to the pot split.</p>
     ${rebalancePlan().length?`<button class="btn sm block" style="margin-top:10px" data-rebalance>Balance these for me</button>`:''}
   </div>`;
