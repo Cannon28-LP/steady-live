@@ -662,6 +662,9 @@ button.taskrow .chev{color:var(--fg3);font-size:1.2rem}
 
 .planfold.open>.noterow .chev,.planfold.open .chev{transform:rotate(90deg)}
 .planfold[data-affrow] .editrow[data-afftog],.planfold[data-noterow]>.noterow{cursor:pointer;width:100%;text-align:left;background:none;border:0;color:inherit}
+/* Note/affirmation bodies hold markup, not raw text — pre-wrap there turned template indentation into blank gaps. */
+.planfold-body[data-notebody],.planfold-body[data-affbody]{white-space:normal}
+.planfold[data-noterow]>.planfold-body{padding:0 16px 14px}
 .planfold-body [data-affedit],.planfold-body [data-note-body]{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
 
 

@@ -654,6 +654,7 @@ function migrateNote(n){
   }
   if(n.title===undefined) n.title='';
   if(!n.createdAt) n.createdAt=n.updatedAt||Date.now();
+  if(!n.updatedAt) n.updatedAt=n.createdAt;           // old notes had none — the sort went NaN
   return n;
 }
 function noteTitle(n){
@@ -704,6 +705,18 @@ function addNote(){
 function touchNote(n){ n.updatedAt=Date.now(); save(); }
 function dropNote(id){ S.notes=S.notes.filter(n=>n.id!==id); save(); }
 function noteEmpty(n){ migrateNote(n); return !n.title.trim() && !n.body.trim(); }
+/* Leaving inline edit — whichever way — keeps what was typed; an empty note removes itself, like the full editor. */
+function endNoteEdit(){
+  const id=planState.editNote; planState.editNote=null; planState.noteSnap=null;
+  const n=id&&S.notes.find(x=>x.id===id);
+  if(n&&noteEmpty(n)){ dropNote(id); if(planState.openNote===id) planState.openNote=null; return true; }
+  return false;
+}
+function beginNoteEdit(n){
+  endNoteEdit();
+  planState.openNote=n.id; planState.editNote=n.id; planState.openAff=planState.editAff=null;
+  planState.noteSnap={id:n.id,title:n.title,body:n.body,updatedAt:n.updatedAt};
+}
 /* Most recently opened or edited first. */
 function notesSorted(){ S.notes.forEach(migrateNote); return [...S.notes].sort((a,b)=>b.updatedAt-a.updatedAt); }
 /* Keyword search: every space-separated word must appear somewhere in the text (not an exact title match). */
@@ -721,7 +734,8 @@ function migrateWhy(w){
 }
 function touchWhy(w){ migrateWhy(w); w.touchedAt=Date.now(); save(); }
 function whysSorted(){ (S.whys||[]).forEach(migrateWhy); return [...(S.whys||[])].sort((a,b)=>(b.touchedAt||0)-(a.touchedAt||0)); }
-function notesFiltered(){ const q=planState.noteQ||''; return notesSorted().filter(n=>keywordMatch(noteTitle(n)+' '+ (n.body||''), q)); }
+/* The note being edited always stays visible, even if the search no longer matches it. */
+function notesFiltered(){ const q=planState.noteQ||''; return notesSorted().filter(n=>n.id===planState.editNote || keywordMatch(noteTitle(n)+' '+ (n.body||''), q)); }
 function whysFiltered(){ const q=planState.affQ||''; return whysSorted().filter(w=>keywordMatch(w.text, q)); }
 
 function toggleTodo(id){ const t=S.todos.find(x=>x.id===id); if(!t) return;
@@ -2894,7 +2908,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null,openNote:null,editNote:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null,openNote:null,editNote:null,noteSnap:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -3137,7 +3151,7 @@ function updateTabDots(){
   });
 }
 
-function setTab(t){ if(t!=='progress') progState.taskId=null; endTour(true); rollTabAff(); tab=t; sel.clear(); render(); markTabSeen(t); updateTabDots(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
+function setTab(t){ if(t!=='progress') progState.taskId=null; if(t!==tab) endNoteEdit(); endTour(true); rollTabAff(); tab=t; sel.clear(); render(); markTabSeen(t); updateTabDots(); window.scrollTo({top:0}); setTimeout(()=>tour(t),350); }
 function render(){
   if(!$app || !document.body.contains($app)) $app=document.getElementById('app');
   if(!$app) return;
@@ -3428,7 +3442,7 @@ function pNotes(){
       const open=planState.openNote===n.id;
       const editing=planState.editNote===n.id;
       const title=firstLine(noteTitle(n), 52);
-      const body=(n.body||'').trim();
+      const body=n.title.trim()?(n.body||'').trim():restAfterFirstLine(n.body||'',Infinity).trim();   // untitled: the first line is already the headline
       return `<div class="planfold noterowfold ${open?'open':''}" data-noterow="${n.id}">
         <button type="button" class="noterow" data-notetog="${n.id}">
           <div class="grow"><div class="row between" style="gap:10px;align-items:baseline">
@@ -3438,20 +3452,20 @@ function pNotes(){
         </button>
         ${open?`<div class="planfold-body" data-notebody="${n.id}">
           ${editing?`<input type="text" class="ntitle" data-note-title="${n.id}" maxlength="400" value="${esc(n.title||'')}" placeholder="Title" style="width:100%;margin-bottom:8px">
-            <textarea data-note-body="${n.id}" maxlength="5000" rows="6" placeholder="Write anything…" style="width:100%;resize:vertical">${esc(n.body||'')}</textarea>
+            <textarea data-note-body="${n.id}" rows="6" placeholder="Write anything…" style="width:100%;resize:vertical">${esc(n.body||'')}</textarea>
             <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="btn primary sm" data-notesave="${n.id}">Save</button>
               <button type="button" class="btn sm ghost" data-notecancel="${n.id}">Cancel</button>
               <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
             </div>`
-          :`<p style="white-space:pre-wrap;overflow-wrap:anywhere">${body?esc(body):'<span class="muted">No body yet</span>'}</p>
+          :`<p style="white-space:pre-wrap;overflow-wrap:anywhere">${body?esc(body):`<span class="muted">${n.title.trim()?'No text yet':'That’s the whole note.'}</span>`}</p>
             <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="btn sm primary" data-noteedit="${n.id}">Edit</button>
               <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
             </div>`}
         </div>`:''}
       </div>`; }).join('')}</div>`:
-    all.length?`<div class="card empty"><b>Nothing matched</b>Try another word from the title.</div>`:
+    all.length?`<div class="card empty"><b>Nothing matched</b>Try another word.</div>`:
     `<div class="card empty"><b>No notes</b>Somewhere to write things down.</div>`}`;
 }
 
@@ -4184,7 +4198,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Coin haul targets scale with a clear day's coins (about 3 / 5 / 10 clears in the window). Chests pay about half / one / two of a weekly treat by tier; Rare has a chance of +1 shop buy for the week, Legendary gives two — you pick which rewards. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
     <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses. On Today or Overdue you can push unfinished list items to tomorrow in one tap — only when you ask; nothing rolls over on its own.</p>
     <p><b style="color:var(--fg)">Tab dots.</b> A dot on a tab means something new is waiting there.</p>
-    <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title. Delete from the bin in the corner; an empty note removes itself when you leave.</p>
+    <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title or the text. Delete from the bin in the full editor; an empty note removes itself when you leave.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap a line to bring it to the top.</p>
     <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
 
@@ -4214,7 +4228,7 @@ function bind(){
   updateConfirm();
   // Progress
   // Plan — list
-  qa('[data-psub]').forEach(b=>b.onclick=()=>{ planState.sub=b.dataset.psub; planState.openAff=planState.editAff=planState.openNote=planState.editNote=null; haptic(); render(); window.scrollTo({top:0}); });
+  qa('[data-psub]').forEach(b=>b.onclick=()=>{ endNoteEdit(); planState.sub=b.dataset.psub; planState.openAff=planState.editAff=planState.openNote=planState.editNote=null; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-fsub]').forEach(b=>b.onclick=()=>{ friendsState.sub=b.dataset.fsub; friendsState.open=null; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-ftog]').forEach(b=>b.onclick=()=>{ const id=b.dataset.ftog; friendsState.open=friendsState.open===id?null:id; haptic(); render(); });
   qa('[data-acceptchal]').forEach(b=>b.onclick=()=>acceptChallenge(b.dataset.acceptchal));
@@ -4241,27 +4255,39 @@ function bind(){
   qa('[data-tdrop]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
     toast('Removed','Undo',()=>{ S.todos.push(t); save(); render(); }); });
   // Plan — notes
-  const nn=q('#newnote'); if(nn) nn.onclick=()=>{ const n=addNote(); planState.openNote=n.id; planState.editNote=n.id; planState.openAff=planState.editAff=null; haptic(); render(); };
-  qa('[data-note]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); noteEditor(b.dataset.note); });
+  const nn=q('#newnote'); if(nn) nn.onclick=()=>{ endNoteEdit(); planState.noteQ=''; const n=addNote(); beginNoteEdit(n); haptic(); render();
+    setTimeout(()=>document.querySelector(`[data-note-title="${n.id}"]`)?.focus(),40); };
+  qa('[data-note]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    if(planState.editNote===b.dataset.note){ planState.editNote=null; planState.noteSnap=null; }   // the full editor takes over; it keeps what was typed
+    noteEditor(b.dataset.note); });
   qa('[data-notetog]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
     const id=b.dataset.notetog;
     if(planState.editNote===id) return;
-    if(planState.openNote===id){ planState.openNote=null; planState.editNote=null; }
-    else { planState.openNote=id; planState.editNote=null; planState.openAff=planState.editAff=null; }
+    endNoteEdit();
+    if(planState.openNote===id){ planState.openNote=null; }
+    else { planState.openNote=id; planState.openAff=planState.editAff=null; }
     haptic(); render(); });
   qa('[data-notebody]').forEach(b=>b.onclick=e=>{
     if(planState.editNote===b.dataset.notebody) return;
     if(e.target.closest('button,input,textarea,a')) return;
-    planState.openNote=null; planState.editNote=null; haptic(); render();
+    planState.openNote=null; haptic(); render();
   });
-  qa('[data-noteedit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); planState.openNote=b.dataset.noteedit; planState.editNote=b.dataset.noteedit; haptic(); render();
-    setTimeout(()=>document.querySelector(`[data-note-title="${b.dataset.noteedit}"]`)?.focus(),40); });
+  qa('[data-noteedit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const n=S.notes.find(x=>x.id===b.dataset.noteedit); if(!n) return;
+    beginNoteEdit(n); haptic(); render();
+    setTimeout(()=>document.querySelector(`[data-note-title="${n.id}"]`)?.focus(),40); });
+  /* Inline edit saves as you type, like the full editor — tapping away never loses words. */
+  qa('[data-note-title],[data-note-body]').forEach(el=>el.oninput=()=>{
+    const n=S.notes.find(x=>x.id===(el.dataset.noteTitle||el.dataset.noteBody)); if(!n) return;
+    if(el.dataset.noteTitle) n.title=el.value; else n.body=el.value;
+    touchNote(n); });
+  qa('[data-note-title]').forEach(el=>el.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); document.querySelector(`[data-note-body="${el.dataset.noteTitle}"]`)?.focus(); } });
   qa('[data-notesave]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
-    const id=b.dataset.notesave; const n=S.notes.find(x=>x.id===id); if(!n) return;
-    const ti=document.querySelector(`[data-note-title="${id}"]`);
-    const ta=document.querySelector(`[data-note-body="${id}"]`);
-    n.title=ti?ti.value:''; n.body=ta?ta.value:''; touchNote(n); planState.editNote=null; haptic('success'); render(); toast('Saved'); });
-  qa('[data-notecancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); planState.editNote=null; haptic(); render(); });
+    const gone=endNoteEdit(); haptic(gone?'light':'success'); render(); toast(gone?'Empty note removed':'Saved'); });
+  qa('[data-notecancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+    const id=b.dataset.notecancel, snap=planState.noteSnap, n=S.notes.find(x=>x.id===id);
+    if(n && snap && snap.id===id){ n.title=snap.title; n.body=snap.body; n.updatedAt=snap.updatedAt; save(); }
+    endNoteEdit(); haptic(); render(); });
   const nsearch=q('#notesearch'); if(nsearch){ nsearch.oninput=()=>{ planState.noteQ=nsearch.value; render(); const el=document.getElementById('notesearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
   // Friends  // Friends
   qa('[data-authmode]').forEach(b=>b.onclick=()=>{ authState.mode=b.dataset.authmode; haptic(); render(); });
@@ -4707,18 +4733,17 @@ function noteEditor(id){
   document.body.appendChild(g);
 
   const ti=g.querySelector('#ntitle'), ta=g.querySelector('#nbody'), st=g.querySelector('#nsaved');
-  let t0;
   const flag=()=>{ st.textContent='Saved'; clearTimeout(flag.t); flag.t=setTimeout(()=>st.textContent='',1200); };
+  /* Stored on every keystroke (no delay) so closing the app mid-sentence loses nothing. */
   const store=()=>{ n.title=ti.value; n.body=ta.value; touchNote(n); flag(); };
-  const queue=()=>{ clearTimeout(t0); t0=setTimeout(store,400); };
-  ti.oninput=queue; ta.oninput=queue;
+  ti.oninput=store; ta.oninput=store;
   ti.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); ta.focus(); } };
 
-  const leave=()=>{ clearTimeout(t0); n.title=ti.value; n.body=ta.value;
+  const leave=()=>{ n.title=ti.value; n.body=ta.value;
     if(noteEmpty(n)) dropNote(id); else touchNote(n);
     g.remove(); render(); };
   g.querySelector('[data-back]').onclick=leave;
-  g.querySelector('[data-del]').onclick=()=>modal('<h2>Delete this note?</h2><p class="muted">It cannot be recovered.</p>','Delete',()=>{ clearTimeout(t0); dropNote(id); g.remove(); render(); },true);
+  g.querySelector('[data-del]').onclick=()=>modal('<h2>Delete this note?</h2><p class="muted">It cannot be recovered.</p>','Delete',()=>{ dropNote(id); if(planState.openNote===id) planState.openNote=null; g.remove(); render(); toast('Note deleted'); },true);
 
   setTimeout(()=>{ (n.title||n.body?ta:ti).focus(); },120);
 }
