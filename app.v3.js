@@ -116,14 +116,6 @@ function freqLabel(r){
 function perFor(freqId, perMonth){
   return freqId==='custom' ? clamp(Number(perMonth)||1, 0.25, MAX_PER_MONTH) : freqOf(freqId).per;
 }
-const BUDGET_SHARE = 0.8;                 // leave slack for challenges and chests
-/* Real coins a month: measured if there's history, estimated from the task list if not. */
-function monthlyIncome(){
-  const k=today(); let total=0,n=0;
-  for(let i=1;i<=28;i++){ const d=addDays(k,-i); const st=dayStats(d); if(st.expected){ total+=st.points; n++; } }
-  if(n>=5) return {coins:Math.max(1,Math.round(total/n*30.4)), real:true};
-  return {coins:Math.max(1,round10(clearDayPay()*30.4*0.75)), real:false};
-}
 function rewardFreq(r){ return r.freq || 'monthly'; }
 function monthlyCostOf(r){ return rewardPrice(r)*perMonthOf(r); }
 /* Unified treat budget (b64/b69): 4 clear-day hauls + 3 half-day hauls a week.
@@ -329,14 +321,13 @@ function boughtThisMonth(r){
 function monthlyPlanned(r){ return Math.max(1, Math.round(perMonthOf(r))); }
 
 function budgetState(){
-  const inc=monthlyIncome();
   const pot=monthlyRewardBudget();
   const active=S.rewards.filter(x=>x.active);
   const spend=active.reduce((a,r)=>a+monthlyCostOf(r),0);
   /* Shop fit vs the 4-clear + 3-half treat pot (not full monthly income). */
   const pct=pot?Math.round(100*spend/pot):0;
   const redemptions=active.reduce((a,r)=>a+perMonthOf(r),0);
-  return {income:inc.coins, pot, real:inc.real, spend:Math.round(spend), pct,
+  return {pot, spend:Math.round(spend), pct,
     redemptions:Math.round(redemptions*10)/10, active,
     level: pct>100?'over' : pct>90?'tight' : 'ok'};
 }
@@ -1570,7 +1561,16 @@ function liveDesc(ch){
   return ch.desc;
 }
 function allClearedOn(members,k){ return !!S.days[k]?.cleared && members.every(f=>clearedOn(f,k)); }
-function allOpenedOn(members,k){ return members.every(f=>!!f.days?.[k]) && (!!S.days[k] || S.flags.lastOpen===k); }
+/* Opened = you actually opened the app that day. A day record alone isn't proof: rollover creates one for
+   every skipped day, and push always sends yesterday's row too. Days before the flag existed fall back. */
+function openedOn(k){ return S.flags.openedSince && k>=S.flags.openedSince ? !!S.days[k]?.opened : (!!S.days[k] || S.flags.lastOpen===k); }
+function friendOpenedOn(f,k){ const d=f.days?.[k]; return !!d && (d.opened===undefined || d.opened===null ? true : !!d.opened); }
+function allOpenedOn(members,k){ return members.every(f=>friendOpenedOn(f,k)) && openedOn(k); }
+function partyBuysSince(members,from,to){
+  let n=buysSince(from,to);
+  for(const f of members||[]) for(let x=from;x<=to;x=addDays(x,1)) n+=Number(f.days?.[x]?.buys)||0;
+  return n;
+}
 function coinsEarnedSince(from,to){
   let n=0; for(let x=from;x<=to;x=addDays(x,1)) n+=(dayStats(x).points||0); return n;
 }
@@ -1617,9 +1617,9 @@ function challengeProgress(ch){
     return {have:Math.min(mine+theirs,need),need,mine,theirs:members.map(f=>({id:f.id,name:f.name,n:friendCoinsSince(f,from,to)}))};
   }
   if(ch.type==='noBuys'){
-    const buys=buysSince(from,k);
-    /* Progress = clean days so far (streak of no buys from start). */
-    let n=0; for(let x=from;x<=k;x=addDays(x,1)){ if(buysSince(x,x)>0) break; n++; }
+    const buys=partyBuysSince(members,from,k);
+    /* Progress = clean days so far (streak of no buys from start) — anyone's buy counts, not just yours. */
+    let n=0; for(let x=from;x<=k;x=addDays(x,1)){ if(partyBuysSince(members,x,x)>0) break; n++; }
     return {have:Math.min(n,need),need,buys};
   }
   const start=ch.window?(from>addDays(k,-(ch.window-1))?from:addDays(k,-(ch.window-1))):from;
@@ -1693,7 +1693,7 @@ function challengeBroken(raw){
     return null;
   }
   if(ch.type==='noBuys'){
-    if(buysSince(from,k)>0) return 'Someone bought a reward — challenge over';
+    if(partyBuysSince(members,from,k)>0) return 'Someone bought a reward — challenge over';
     return null;
   }
   if(ch.type==='coinsEarned'&&ch.window){
@@ -1796,7 +1796,7 @@ function allAccepted(c){
   if(chalHost(c)) acc.add(chalHost(c));
   return need.every(id=>acc.has(id));
 }
-function activateChallenge(c){
+function activateChallenge(c,{pushed}={}){
   c.status='active';
   c.startedAt=today();
   if(!c.accepted) c.accepted=[];
@@ -1807,14 +1807,18 @@ function activateChallenge(c){
     msgsOf(c.crewId).push({id:uid(),from:'me',kind:'system',code:`${TIERS_C[c.tier].label} challenge started: ${def.name}`,at:Date.now()});
     Sync.sendMessage(c.crewId,'system',`${TIERS_C[c.tier].label} challenge started: ${def.name}`).catch(()=>{});
   }
-  save(); Sync.pushChallenge(c).catch(()=>{});
+  save(); if(!pushed) Sync.pushChallenge(c).catch(()=>{});
 }
-function acceptChallenge(id){
+async function acceptChallenge(id){
   const c=chalList().find(x=>x.id===id); if(!c||!chalIsPending(c)||!S.me) return;
   c.accepted=c.accepted||[];
   if(!c.accepted.includes(S.me.id)) c.accepted.push(S.me.id);
   save();
-  if(allAccepted(c)) activateChallenge(c);
+  const row=await Sync.acceptCoop(c);
+  if(row){
+    c.accepted=row.accepted||c.accepted; c.synced=true;
+    if(row.status==='active' && chalIsPending(c)){ activateChallenge(c,{pushed:true}); c.startedAt=row.started_at||c.startedAt; save(); }
+  } else if(allAccepted(c)) activateChallenge(c);
   else Sync.pushChallenge(c).catch(()=>{});
   haptic('success'); render(); toast(chalIsActive(c)?'Challenge is on':'Accepted — waiting on the others');
 }
@@ -1828,8 +1832,14 @@ function declineChallenge(id){
   haptic(); render(); toast('Invite declined');
 }
 
-function me(){ if(!S.me){ S.me={id:uid()+uid(),name:'',code:('STDY'+Math.random().toString(36).slice(2,6)).toUpperCase()}; save(); } return S.me; }
-function myDay(k=today()){ const s=dayStats(k); return {date:k,cleared:!!S.days[k]?.cleared,done:s.done,expected:s.expected,streak:S.streak.login,consistency:avgStrength(),level:level().L,title:title().name}; }
+/* 8 characters from a 31-letter alphabet (no 0/O/1/I/L) — ~850 billion codes, so they can't be guessed. */
+function newFriendCode(){
+  const A='ABCDEFGHJKMNPQRSTUVWXYZ23456789', b=new Uint8Array(8); crypto.getRandomValues(b);
+  return 'STDY'+[...b].map(x=>A[x%A.length]).join('');
+}
+function me(){ if(!S.me){ S.me={id:uid()+uid(),name:'',code:newFriendCode()}; save(); } return S.me; }
+function myDay(k=today()){ const s=dayStats(k); return {date:k,cleared:!!S.days[k]?.cleared,done:s.done,expected:s.expected,streak:S.streak.login,consistency:avgStrength(),level:level().L,title:title().name,
+  opened:openedOn(k), buys:buysSince(k,k)}; }
 function friendList(){ return Object.values(S.friends); }
 function clearedOn(f,k){ return !!f.days?.[k]?.cleared; }
 /* Shared streak: a day counts only if you both cleared it. Today is optional so it doesn't read as broken before bedtime. */
@@ -1845,7 +1855,9 @@ function readableSyncError(e){
   const m=String(e?.message||e||'');
   if(/^network$|dynamically imported module|Failed to fetch|NetworkError|ERR_/i.test(m)) return "Can't reach the server. You're offline or the connection is blocked.";
   if(/Invalid login credentials/i.test(m)) return 'Wrong email or password.';
-  if(/Token has expired|invalid|otp_expired/i.test(m)) return 'That code has expired — send another.';
+  if(/refresh[_ ]?token/i.test(m)) return 'You were signed out — sign in again.';
+  if(/Invalid API key|apikey/i.test(m)) return 'That publishable key was rejected. Check it matches the project URL.';
+  if(/Token has expired|otp_expired|invalid.*(otp|code|link)|(otp|code|link).*invalid/i.test(m)) return 'That code has expired — send another.';
   if(/redirect|not allowed/i.test(m)) return "This address isn't in Supabase's allowed redirect list yet.";
   if(/For security purposes|rate/i.test(m)) return 'Too many tries — wait a minute and go again.';
   if(/User already registered|already been registered/i.test(m)) return 'That email already has an account — sign in instead.';
@@ -1890,7 +1902,11 @@ async function refreshSession(){
   try{ const d=await api('/auth/v1/token?grant_type=refresh_token',
         {method:'POST',body:{refresh_token:S.session.refresh_token},noAuth:true,retry:false});
     return setSession(d);
-  }catch(e){ return false; }
+  }catch(e){
+    if(/refresh[_ ]?token|invalid_grant|Invalid Refresh/i.test(String(e?.message||e))){
+      S.session=null; S.auth='out'; S.syncError='You were signed out — sign in again to keep syncing.'; save();
+    }
+    return false; }
 }
 
 function vaultWeight(s){
@@ -1919,6 +1935,7 @@ const Sync = {
     if(S.session.expires_at && Date.now()<S.session.expires_at){ S.auth='in'; S.syncError=null; save(); return S.session; }
     const ok=await refreshSession();          // expired while the app was closed
     if(ok){ S.auth='in'; S.syncError=null; save(); return S.session; }
+    if(S.auth==='out') return null;            // refreshSession found the sign-in was revoked
     S.syncError="Can't reach the server. You're offline or the connection is blocked.";
     save(); return null;                       // keep S.auth as-is: offline must not sign you out
   },
@@ -2005,6 +2022,13 @@ const Sync = {
   async signOut(){
     if(this.live()){ try{ await api('/auth/v1/logout',{method:'POST'}); }catch(e){} }
     S.auth='out'; S.session=null; S.friends={}; S.inbox=[]; save();
+  },
+  /* Accounts made before b80 have a 4-character code; swap it for a long one (friends you have stay friends). */
+  async upgradeCode(){
+    if(!this.live()||!this.signedIn()||!S.me?.code || S.me.code.length>=12) return;
+    const code=newFriendCode();
+    try{ await api(`/rest/v1/profiles?id=eq.${S.me.id}`,{method:'PATCH',body:{code},headers:{Prefer:'return=minimal'}});
+      S.me.code=code; save(); }catch(e){}
   },
   async rename(name){
     S.me.name=name; save();
@@ -2103,9 +2127,13 @@ const Sync = {
 
   async push(){
     if(!this.live()||!this.signedIn()) return;
-    try{ const rows=[myDay(),myDay(addDays(today(),-1))].map(d=>({...d,user_id:S.me.id}));
-      await api('/rest/v1/daily_stats?on_conflict=user_id,date',{method:'POST',body:rows,
+    try{ let rows=[myDay(),myDay(addDays(today(),-1))].map(d=>({...d,user_id:S.me.id}));
+      const send=()=>api('/rest/v1/daily_stats?on_conflict=user_id,date',{method:'POST',body:rows,
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
+      try{ await send(); }
+      catch(e){   // server not updated yet (update-b80.sql) — send the old columns so stats keep flowing
+        if(!/opened|buys|PGRST204|column/i.test(String(e?.message||e))) throw e;
+        rows=rows.map(({opened,buys,...r})=>r); await send(); }
       S.outbox=[]; S.syncError=null; save();
     }catch(e){ S.outbox=[myDay()]; S.syncError=readableSyncError(e); save(); }
   },
@@ -2140,7 +2168,7 @@ const Sync = {
       const since=addDays(today(),-30);
       const data=await api(`/rest/v1/daily_stats?user_id=in.(${ids.join(',')})&date=gte.${since}&select=*`);
       (data||[]).forEach(r=>{ const f=S.friends[r.user_id]; if(!f) return;
-        f.days[r.date]={cleared:r.cleared,done:r.done,expected:r.expected};
+        f.days[r.date]={cleared:r.cleared,done:r.done,expected:r.expected,opened:r.opened,buys:r.buys};
         if(r.date===today()||!f.consistency){ f.consistency=r.consistency; f.streak=r.streak; f.level=r.level; f.title=r.title; } });
     }
     // 3. cheers AND nudges addressed to us
@@ -2230,6 +2258,13 @@ const Sync = {
       headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
       ch.synced=true; S.syncError=null; save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  /* Server-side accept (update-b80.sql). Returns the updated row, or null if the function isn't there yet. */
+  async acceptCoop(c){
+    if(!this.live()||!this.signedIn()) return null;
+    try{ const r=await api('/rest/v1/rpc/accept_coop',{method:'POST',body:{p_id:c.id,p_today:today()}});
+      return Array.isArray(r)?r[0]:r; }
+    catch(e){ return null; }
   },
   async removeChallenge(id){
     if(!this.live()||!this.signedIn()) return;
@@ -2601,6 +2636,8 @@ function affirmationToday(){
 }
 
 /* ---------- Day boundary / streak ---------- */
+/* "Show up" challenges need proof you opened the app on a day — called on boot, rollover and every return. */
+function markOpened(){ const t=today(); const d=day(t); if(d.opened) return; d.opened=true; if(!S.flags.openedSince) S.flags.openedSince=t; save(); }
 function rollover(){
   const t=today(); const last=S.flags.lastOpen;
   if(last===t) return;
@@ -2619,6 +2656,7 @@ function rollover(){
   const lastMon=addDays(weekOf(t),-7);
   if(last){ for(let m=weekOf(last); m<=lastMon; m=addDays(m,7)){ if(!S.chests[m]){ const msg=settleChest(m); if(msg) notes.push(msg); } } }
   if(notes.length) S.flags.pendingToast=notes.join(' · ');
+  markOpened();
   S.flags.lastOpen=t; S.undo=null; sel.clear(); save();
   /* Challenges are judged in friendsTick, after fresh friend data arrives — not here on yesterday's cache. */
 }
@@ -2746,7 +2784,7 @@ function saveMissReason(date,taskId,reason){
 
 /* ---------- Completing ---------- */
 const sel=new Set();
-function completeSelected(mins){
+function completeSelected(mins, skipTime){
   const k=today(), ids=[...sel]; if(!ids.length) return;
   const d=day(k), tasks=dueTasks(k), n=tasks.length;
   let coins=0, xp=0; const changed=[]; let otRoom=OT_DAY_CAP-overtimeToday(k);
@@ -2754,9 +2792,10 @@ function completeSelected(mins){
     if(d.tasks[id]?.status==='done') continue;
     const t=tasks.find(x=>x.id===id);
     const m=mins?.[id]||null;
-    const v=paidValue(t,m);                              // short session pays less, still counts as done
+    /* Skipping the time pays the turn-up rate — it used to pay full, more than an honest short session. */
+    const v=(skipTime&&t.target)?Math.max(1,Math.round(taskValue(t)*TIME_FLOOR)):paidValue(t,m);   // short session pays less, still counts as done
     const bonus=clamp(overtimeFor(t,m),0,Math.max(0,otRoom)); otRoom-=bonus;
-    d.tasks[id]={status:'done',doneAt:Date.now(),value:v,bonus,minutes:m,full:!t.target||!m||m>=t.target};
+    d.tasks[id]={status:'done',doneAt:Date.now(),value:v,bonus,minutes:m,full:!t.target||(!skipTime&&(!m||m>=t.target))};
     coins+=v+bonus; xp+=v; changed.push(id);
   }
   const allDone=tasks.filter(t=>d.tasks[t.id]?.status==='done').length;
@@ -2790,30 +2829,6 @@ function clawClearStreak(d){
   }
   d.clearStreakPay=0; d.clearStreakBlock=null; d.clearStreakStart=null;
   return pay;
-}
-function undoLast(){
-  const u=S.undo; if(!u) return; const d=day(u.date);
-  let taskCoins=0, taskXp=0;
-  u.ids.forEach(id=>{
-    const e=d.tasks[id];
-    if(e){ taskCoins+=(e.value||0)+(e.bonus||0); taskXp+=(e.value||0); }
-    delete d.tasks[id];
-  });
-  const tasks=dueTasks(u.date);
-  const n=tasks.length;
-  const done=tasks.filter(t=>d.tasks[t.id]?.status==='done').length;
-  const wasCleared=!!d.cleared;
-  const bonusDelta=syncDayQualityBonuses(d, n, done); // ≤0 when clawing
-  let streakClaw=0;
-  if(wasCleared && !d.cleared) streakClaw=clawClearStreak(d);
-  const refund = taskCoins - bonusDelta + streakClaw;
-  const xpClaw = taskXp - bonusDelta + streakClaw;
-  d.points -= (taskCoins - bonusDelta);
-  S.points.coins -= refund; S.points.xp -= xpClaw;
-  /* Coins may go negative: if you spent the reward then undid the tick, you owe the refund. */
-  if(S.points.xp<0) S.points.xp=0;
-  if(d.points<0) d.points=0;
-  S.undo=null; save(); haptic(); render(); toast(`Undone · −${refund} coins`);
 }
 /* Unmark one done task today — refunds its coins (and day-clear / streak pay if that breaks the clear). */
 function unmarkDone(id){
@@ -3579,28 +3594,6 @@ function pOverview(){
     <li><span>Weakest weekday</span><b>${rec.worstDay||'—'}</b></li></ul></div></details>`;
 }
 
-function pCalendar(){
-  const k=today(); const [y,m]=progState.month.split('-').map(Number);
-  const first=new Date(y,m-1,1), off=(first.getDay()+6)%7, days=new Date(y,m,0).getDate();
-  let cells=''; for(let i=0;i<off;i++) cells+='<div></div>';
-  for(let i=1;i<=days;i++){ const dk=`${y}-${pad(m)}-${pad(i)}`; const s=dayStats(dk); const p=s.expected?s.done/s.expected:0;
-    const lvl=s.expected===0||dk>k?'':p>=1?'l4':p>=.66?'l3':p>=.33?'l2':p>0?'l1':'';
-    cells+=`<button class="cell ${lvl} ${dk===k?'today':''} ${dk===progState.sel?'sel':''} ${dk>k?'future':''} ${S.days[dk]?.note?'hasnote':''}" data-day="${dk}">${i}</button>`; }
-  const selS=dayStats(progState.sel);
-  const selTasks=expectedOn(progState.sel).map(id=>({t:S.tasks.find(x=>x.id===id),st:S.days[progState.sel]?.tasks?.[id]})).filter(x=>x.t);
-  const mstat=(()=>{ let e=0,d=0,c=0; for(let i=1;i<=days;i++){const dk=`${y}-${pad(m)}-${pad(i)}`; if(dk>=k) continue; const s=dayStats(dk); e+=s.expected;d+=s.done; if(s.perfect)c++;} return {rate:e?Math.round(100*d/e):0,cleared:c,any:e>0}; })();
-  return `
-  <div class="card" data-tour="heat">
-    <div class="row between" style="margin-bottom:4px"><button class="iconbtn" data-month="-1">‹</button><b>${first.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</b><button class="iconbtn" data-month="1" ${progState.month>=k.slice(0,7)?'disabled style="opacity:.3"':''}>›</button></div>
-    <p class="tiny muted" style="text-align:center;margin-bottom:12px">${mstat.any?`${mstat.rate}% completed · ${mstat.cleared} day${mstat.cleared===1?'':'s'} cleared`:'No history this month'}</p>
-    <div class="heat">${['M','T','W','T','F','S','S'].map(x=>`<div class="dow">${x}</div>`).join('')}${cells}</div>
-    <div class="legend"><span class="tiny muted">Less</span>${['','l1','l2','l3','l4'].map(c=>`<i class="${c}"></i>`).join('')}<span class="tiny muted">More</span></div>
-  </div>
-  <div class="card"><div class="row between" style="margin-bottom:10px"><b>${fmt(progState.sel,{weekday:'long',day:'numeric',month:'long'})}</b><span class="small muted">${selS.expected?`${selS.done}/${selS.expected} · ${selS.points} coins`:'no tasks'}</span></div>
-    ${progState.sel>today()?'<p class="muted small">Not here yet.</p>':selTasks.length?`<ul class="list">${selTasks.map(x=>`<li><span>${esc(x.t.name)}</span><span class="small ${x.st?.status==='done'?'':'muted'}" style="${x.st?.status==='done'?'color:var(--accent)':''}">${x.st?.status==='done'?`done${x.st.minutes?' · '+x.st.minutes+'m':''}`:x.st?.status==='missed'?`missed${x.st.reason?' · '+esc(x.st.reason):''}`:'open'}</span></li>`).join('')}</ul>`:'<p class="muted small">Nothing scheduled.</p>'}
-    ${progState.sel>today()?'':`<textarea id="daynote" placeholder="Note for this day…" rows="2" style="margin-top:12px">${esc(S.days[progState.sel]?.note||'')}</textarea>`}</div>`;
-}
-
 function pTasks(){
   const list=S.tasks.filter(t=>!t.archived).map(t=>({t,s:strengthOf(t)})).sort((a,b)=>b.s-a.s);
   if(!list.length) return '<div class="card empty"><b>No tasks yet</b>Add some in Settings and this fills up.</div>';
@@ -4252,7 +4245,6 @@ function bind(){
     const items=which==='today'?todosOn(today()):S.todos.filter(x=>!x.done&&x.day&&x.day<today());
     const n=moveTodosToTomorrow(items); if(!n) return;
     haptic(); render(); toast(`Moved ${n} to tomorrow`); });
-  qa('[data-pull]').forEach(b=>b.onclick=()=>{ setTodoDay(b.dataset.pull,today()); haptic(); render(); toast('Moved to today'); });
   qa('[data-tdrop]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
     toast('Removed','Undo',()=>{ S.todos.push(t); save(); render(); }); });
   // Plan — notes
@@ -4395,15 +4387,12 @@ function bind(){
   qa('[data-sub]').forEach(b=>b.onclick=()=>{progState.sub=b.dataset.sub; progState.taskId=null; haptic();render();window.scrollTo({top:0});});
   qa('[data-opentask]').forEach(b=>b.onclick=()=>{ progState.taskId=b.dataset.opentask; progState.sub='tasks'; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-taskback]').forEach(b=>b.onclick=()=>{ progState.taskId=null; progState.sub='tasks'; haptic(); render(); window.scrollTo({top:0}); });
-  qa('[data-day]').forEach(b=>b.onclick=()=>{progState.sel=b.dataset.day;render();});
   qa('[data-tday]').forEach(b=>b.onclick=()=>{ const [id,dk]=b.dataset.tday.split('|');
     taskState.sel[id]=taskState.sel[id]===dk?null:dk; if(!taskState.month[id]) taskState.month[id]=dk.slice(0,7); haptic(); render(); });
   qa('[data-tmonth]').forEach(b=>b.onclick=()=>{ const [id,step]=b.dataset.tmonth.split('|');
     const cur=taskState.month[id]||today().slice(0,7); const [y,m]=cur.split('-').map(Number);
     const d=new Date(y,m-1+Number(step),1); taskState.month[id]=`${d.getFullYear()}-${pad(d.getMonth()+1)}`;
     taskState.sel[id]=null; haptic(); render(); });
-  qa('[data-month]').forEach(b=>b.onclick=()=>{const [y,m]=progState.month.split('-').map(Number);const d=new Date(y,m-1+Number(b.dataset.month),1);progState.month=`${d.getFullYear()}-${pad(d.getMonth()+1)}`;render();});
-  qa('[data-jump]').forEach(b=>b.onclick=()=>{progState.month=b.dataset.jump;render();});
   qa('[data-range]').forEach(b=>b.onclick=()=>{progState.range=b.dataset.range;render();});
   const dn=q('#daynote'); if(dn) dn.oninput=()=>{ const k=dn.dataset.noteday||today(); day(k).note=dn.value; save(); };
   // Shop
@@ -4422,7 +4411,6 @@ function bind(){
   qa('[data-rename]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.rename); editTask(t);});
   qa('[data-deltask]').forEach(b=>b.onclick=()=>{const t=S.tasks.find(x=>x.id===b.dataset.deltask); modal(`<h2>Remove “${esc(t.name)}”?</h2><p class="muted">It leaves today’s list. Past days stay in Progress.</p>`,'Remove',()=>{t.archived=true;t.archivedAt=today();delete (S.days[today()]?.tasks||{})[t.id];save();syncCadencePrices();resyncToday();render();document.getElementById('acc-tasks').open=true;toast('Removed');},true);});
   // rewards
-  qa('[data-tier]').forEach(b=>b.onclick=()=>{qa('[data-tier]').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
   const nw=q('#newwhy'); if(nw){ const add=()=>{const v=nw.value.trim(); if(!v) return; const now=Date.now(); S.whys.push({id:uid(),text:v,createdAt:now,touchedAt:now}); save(); haptic(); render(); document.getElementById('newwhy')?.focus();};
     q('#addwhy').onclick=add; nw.onkeydown=e=>{ if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); add(); } }; }
   const asearch=q('#affsearch'); if(asearch){ asearch.oninput=()=>{ planState.affQ=asearch.value; renderKeepingDrafts(); const el=document.getElementById('affsearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
@@ -4499,7 +4487,6 @@ function bind(){
     }
     save(); applyTheme(); haptic(); render(); keepLook();
   });
-  const ca=q('#customink'); if(ca) ca.oninput=()=>{S.settings.ink=ca.value;save();applyTheme();}; if(ca) ca.onchange=()=>{render();keepLook();};
   qa('[data-toggle]').forEach(b=>b.onclick=()=>{S.settings[b.dataset.toggle]=!S.settings[b.dataset.toggle];save();applyTheme();haptic();render();keepLook();});
   // Away + Rough day
   const syncAwayUntilFromDays=()=>{
@@ -4786,7 +4773,7 @@ function timeSheet(timed, edit){
     if(ti<0) ti=-1;
     return `<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
     <div class="timerow">${list.map((m,i)=>`<button class="chip ${i===ti?'on':''}" data-m="${m}">${m}m</button>`).join('')}${extra}<button class="chip add" data-other>Other</button></div></div>`; };
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot">${edit?'':'<button class="btn ghost" data-x>Cancel</button>'}<button class="btn" data-skip>${edit?'Cancel':'Skip time'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins, and skipping the time pays the turn-up rate. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${OT_DAY_CAP} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot">${edit?'':'<button class="btn ghost" data-x>Cancel</button>'}<button class="btn" data-skip>${edit?'Cancel':'Skip time'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
   const refresh=()=>{ let left=room();
     timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
       const pay=paidValue(t,mins[t.id]);
@@ -4800,7 +4787,7 @@ function timeSheet(timed, edit){
     el.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>pick(Number(b.dataset.m),b));
     el.querySelector('[data-other]').onclick=()=>promptNum('Minutes on “'+t.name+'”',mins[t.id],v=>{ const b=document.createElement('button'); b.className='chip on'; b.textContent=v+'m'; b.dataset.m=v; b.onclick=()=>pick(v,b); el.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); el.querySelector('[data-other]').before(b); mins[t.id]=v; refresh(); });
   });
-  o.querySelector('[data-skip]').onclick=()=>{ close(o); if(!edit) completeSelected(); };
+  o.querySelector('[data-skip]').onclick=()=>{ close(o); if(!edit) completeSelected(null,true); };
   const cx=o.querySelector('[data-x]'); if(cx) cx.onclick=()=>close(o);     // back out without marking anything
   o.querySelector('[data-ok]').onclick=()=>{ close(o); if(edit) timed.forEach(t=>recastDone(t.id,mins[t.id])); else completeSelected(mins); };
   refresh();
@@ -5703,6 +5690,7 @@ function friendsTick(){
   if(!friendList().length && !Sync.signedIn()) return;
   if(_ticking) return;                    // two overlapping chains could both pay the same cheers
   _ticking=true;
+  Sync.upgradeCode().catch(()=>{});
   const pushLocalChals=()=>Promise.all(chalList().map(c=>Sync.pushChallenge(c).catch(()=>{})));
   /* Pull before pushing challenges: pushing first sent stale copies up (a host's old "pending"
      overwrote an accepted challenge, and declined invites were re-created). Challenges are only
@@ -5732,6 +5720,7 @@ function maybeGates(){
 let _booted=false;
 export function bootSteady(){
   $app=document.getElementById('app');
+  try{ markOpened(); }catch(e){}
   try{ migratePairChallenges(S); normalizeChallenges(); }catch(e){ console.error(e); }
   document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>{haptic();setTab(b.dataset.tab)});
   try{ applyTheme(); }catch(e){ console.error(e); }
@@ -5767,11 +5756,14 @@ export function bootSteady(){
     setInterval(()=>{ if(S.flags.lastOpen!==today()){ rollover(); catchUpSnooze=false; renderKeepingDrafts(); maybeGates(); friendsTick(); } try{ reminderTick(); }catch(e){} },30000);
     setTimeout(()=>{ try{ reminderTick(); }catch(e){} },4000);
     document.addEventListener('visibilitychange',()=>{ if(document.hidden) return;
+      try{ markOpened(); }catch(e){}
       const rolled=S.flags.lastOpen!==today();
       if(rolled){ rollover(); renderKeepingDrafts(); friendsTick(); }
       const wasSnoozed=catchUpSnooze;
       catchUpSnooze=false;               // Ask me later only lasts until next show
-      if(rolled || wasSnoozed || _gatesPending) maybeGates();
+      /* A new day on a resumed app gets the opening quote too — onboarding promises it "every day". */
+      if(rolled && S.flags.onboarded) quoteGate(()=>setTimeout(maybeGates,300));
+      else if(rolled || wasSnoozed || _gatesPending) maybeGates();
     });
     /* Arriving back from a password-reset email takes priority over everything. */
     Sync.claimRecovery().then(rec=>{

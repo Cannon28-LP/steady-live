@@ -29,9 +29,14 @@ create table if not exists daily_stats (
   consistency int default 0,
   level       int default 1,
   title       text,
+  opened      boolean,   -- really opened the app that day ("Show up" challenges)
+  buys        int,       -- rewards bought that day ("Nobody buys" challenges)
   updated_at  timestamptz default now(),
   primary key (user_id, date)
 );
+
+alter table daily_stats add column if not exists opened boolean;
+alter table daily_stats add column if not exists buys int;
 
 create table if not exists cheers (
   id      bigserial primary key,
@@ -66,15 +71,29 @@ language sql security definer stable set search_path = public as $$
   );
 $$;
 
--- Pair BOTH directions in one call. This is the fix: previously only the
--- person who typed the code got a link, so the other side saw nothing.
+-- Pair BOTH directions in one call, so both sides see each other after one add.
+create table if not exists friend_tries (
+  user_id uuid not null,
+  at      timestamptz not null default now()
+);
+create index if not exists friend_tries_user_at on friend_tries (user_id, at);
+alter table friend_tries enable row level security;   -- no policies: only add_friend() touches it
+
 create or replace function add_friend(p_code text)
 returns table (id uuid, display_name text, code text)
 language plpgsql security definer set search_path = public as $$
 declare target uuid;
 begin
+  if (select count(*) from friend_tries t
+      where t.user_id = auth.uid() and t.at > now() - interval '1 hour') >= 20 then
+    raise exception 'Too many tries — wait an hour and go again.';
+  end if;
+  insert into friend_tries (user_id) values (auth.uid());
+  delete from friend_tries t where t.at < now() - interval '1 day';
   select p.id into target from profiles p where p.code = upper(trim(p_code));
-  if target is null then raise exception 'No one with that code.'; end if;
+  -- No match returns nothing (the app says "No one with that code"). Raising here would roll back
+  -- the try we just counted.
+  if target is null then return; end if;
   if target = auth.uid() then raise exception 'That is your own code.'; end if;
   insert into friendships (a_id, b_id) values (auth.uid(), target) on conflict do nothing;
   insert into friendships (a_id, b_id) values (target, auth.uid()) on conflict do nothing;

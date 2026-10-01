@@ -2,7 +2,7 @@
 // HTML/JS/CSS: network-first so a broken build never sticks.
 // Other assets: stale-while-revalidate.
 const CACHE = 'steady-v82';
-const ASSETS = ['./', './index.html', './app.v3.js?b=80', './app.v3.css?b=80', './vendor/open-peeps-avatar.js', './manifest.json', './icon.svg'];
+const ASSETS = ['./', './index.html', './app.v3.js?b=80', './app.v3.css?b=80', './vendor/open-peeps-avatar.js', './manifest.json', './icon.svg', './apple-touch-icon.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -56,7 +56,9 @@ self.addEventListener('fetch', e => {
           caches.open(CACHE).then(c => c.put(key, copy));
         }
         return res;
-      }).catch(() => caches.match(isDoc ? './index.html' : req).then(hit => hit || caches.match('./index.html')))
+      // Offline: the page falls back to the cached shell; a script or stylesheet only ever to its own cached
+      // copy (serving index.html in place of app.v3.js gave a confusing module-type error).
+      }).catch(() => isDoc ? caches.match('./index.html') : caches.match(req, { ignoreSearch: false }).then(hit => hit || Response.error()))
     );
     return;
   }
