@@ -751,3 +751,5 @@ body.light .tabbar nav{border-color:color-mix(in srgb,var(--line) 70%,transparen
 .head .eyebrow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .reward .bar i{background:var(--coin)}
 .reward.locked .bar i{background:var(--fg3)}
+.sheet .foot .btn{white-space:nowrap}
+.sheet .foot .btn.ghost{flex:0 0 auto;padding-left:12px;padding-right:12px}
