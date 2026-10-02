@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { createPeepsSvg } from './vendor/open-peeps-avatar.js';
+import { charArt, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
   return (b?'b'+b+' · ':'')+'2026-10-02'; }catch(e){ return '2026-10-02'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
@@ -969,183 +969,126 @@ async function setMyAvatar(dataUrl){
 
 
 /* ---------- Characters ----------
-   Open Peeps (Pablo Stanley, CC0) via a local DiceBear bundle. Every Peeps part is
-   available to every face — no gendered lockout. Outfits are shirt colours only;
-   headwear replaces hair (Peeps cannot layer a hat). Hair colour tints Peeps hair and facial hair. */
-const TONES = [
-  {id:'t1',hex:'#f6dcc8',shade:'#e3bfa4',peeps:'ffdbb4'},
-  {id:'t2',hex:'#ecc4a4',shade:'#d4a480',peeps:'edb98a'},
-  {id:'t3',hex:'#d39b6d',shade:'#b77d52',peeps:'d08b5b'},
-  {id:'t4',hex:'#a9673c',shade:'#8d5130',peeps:'ae5d29'},
-  {id:'t5',hex:'#7b4525',shade:'#63351b',peeps:'694d3d'},
-  {id:'t6',hex:'#4e2a17',shade:'#3b1f10',peeps:'4a312c'},
+   A cute doll-style set drawn in chars.js (plain SVG, no art library). Every piece works with every
+   other: any face, skin tone, hairstyle, outfit, face detail, glasses, hat and backdrop. Item ids and
+   prices below are unchanged from the old set, so anything already bought maps onto its new version. */
+const TONES = CHAR_TONES;
+const HAIR_COLOURS = CHAR_HAIR;
+const BASES = FACES;
+/* Every look: [id, slot, price, legacy?]. Names and art come from chars.js; ids/prices match the old set. */
+const LOOK_DEFS = [
+  ['h-crop','hair',0],
+  ['h-side','hair',0],
+  ['h-long','hair',0],
+  ['h-bob','hair',0],
+  ['h-short2','hair',0],
+  ['h-short4','hair',0],
+  ['h-medium1','hair',0],
+  ['h-shaved1','hair',0],
+  ['h-no1','hair',0],
+  ['h-buzz','hair',8],
+  ['h-shaved3','hair',8],
+  ['h-short5','hair',12],
+  ['h-no2','hair',8],
+  ['h-no3','hair',8],
+  ['h-fringe','hair',12],
+  ['h-bangs2','hair',12],
+  ['h-quiff','hair',12],
+  ['h-medium2','hair',12],
+  ['h-medium3','hair',12],
+  ['h-pony','hair',12,1],
+  ['h-bun','hair',12],
+  ['h-bun2','hair',12],
+  ['h-undercut','hair',12],
+  ['h-wavy','hair',12],
+  ['h-longbangs','hair',12],
+  ['h-mbangs','hair',12],
+  ['h-mbangs2','hair',18],
+  ['h-mbangs3','hair',18],
+  ['h-curls','hair',18,1],
+  ['h-braids','hair',18],
+  ['h-cornrows2','hair',24],
+  ['h-space','hair',18],
+  ['h-afro','hair',18],
+  ['h-longafro','hair',24],
+  ['h-dreads1','hair',24],
+  ['h-dreads2','hair',24],
+  ['h-twists','hair',24],
+  ['h-twists2','hair',24],
+  ['h-bantu','hair',24],
+  ['h-flattopL','hair',24],
+  ['h-grayshort','hair',18],
+  ['h-graymed','hair',24],
+  ['h-graybun','hair',24],
+  ['h-mohawk','hair',30],
+  ['h-mohawk2','hair',30],
+  ['h-bear','hair',30],
+  ['fh-chin','facial',0],
+  ['fh-goat1','facial',0],
+  ['fh-mous1','facial',0],
+  ['fh-mous2','facial',0],
+  ['fh-full','facial',8],
+  ['fh-full2','facial',12],
+  ['fh-full3','facial',12],
+  ['fh-full4','facial',12],
+  ['fh-goat2','facial',8],
+  ['fh-mous3','facial',8],
+  ['fh-mous4','facial',8],
+  ['fh-mous5','facial',12],
+  ['fh-mous6','facial',12],
+  ['fh-mous7','facial',12],
+  ['fh-mous8','facial',12],
+  ['fh-mous9','facial',12],
+  ['o-tee','outfit',0],
+  ['o-hoodie','outfit',0],
+  ['o-navy','outfit',0],
+  ['o-cream','outfit',0],
+  ['o-shirt','outfit',8],
+  ['o-stripe','outfit',8],
+  ['o-white','outfit',8],
+  ['o-black','outfit',12],
+  ['o-charcoal','outfit',12],
+  ['o-sky','outfit',12],
+  ['o-mint','outfit',12],
+  ['o-hivis','outfit',18],
+  ['o-jumper','outfit',18],
+  ['o-dress','outfit',18],
+  ['o-berry','outfit',18],
+  ['o-jacket','outfit',18],
+  ['o-forest','outfit',18],
+  ['o-rust','outfit',24],
+  ['o-violet','outfit',24],
+  ['o-coral','outfit',24],
+  ['g-round','glasses',0],
+  ['g-square','glasses',12],
+  ['g-cats','glasses',12],
+  ['g-glass4','glasses',18],
+  ['g-glass5','glasses',18],
+  ['g-shades','glasses',18],
+  ['g-shades2','glasses',24],
+  ['g-patch','glasses',24],
+  ['a-beanie','hat',18],
+  ['a-cap','hat',18],
+  ['a-hijab','hat',18],
+  ['a-turban','hat',18],
+  ['a-bowbig','hat',18],
+  ['a-crown','hat',24],
+  ['a-tiara','hat',24],
+  ['a-bow','hair',12,1],
+  ['a-band','hair',12,1],
+  ['bg-plain','backdrop',0],
+  ['bg-sun','backdrop',8],
+  ['bg-mint','backdrop',8],
+  ['bg-night','backdrop',12],
+  ['bg-rose','backdrop',12],
+  ['bg-sky','backdrop',12],
+  ['bg-lilac','backdrop',12],
+  ['bg-peach','backdrop',12],
 ];
-const HAIR_COLOURS = [
-  {id:'c-black', hex:'#241f1d'},
-  {id:'c-brown', hex:'#4a2f1d'},
-  {id:'c-mid',   hex:'#8a5a34'},
-  {id:'c-blond', hex:'#d9a95c'},
-  {id:'c-ginger',hex:'#c1521f'},
-  {id:'c-red',   hex:'#8e2a1c'},
-  {id:'c-grey',  hex:'#9a9a9a'},
-  {id:'c-dyed',  hex:'#6d5ae0'},
-];
-/* Faces — core calm-friendly set first; extras (wilder) after. */
-const BASES = [
-  {id:'b1', name:'Calm',        peeps:'calm',        group:'core'},
-  {id:'b2', name:'Smile',       peeps:'smile',       group:'core'},
-  {id:'b3', name:'Cheeky',      peeps:'cheeky',      group:'core'},
-  {id:'b4', name:'Big smile',   peeps:'smileBig',    group:'core'},
-  {id:'b5', name:'Cute',        peeps:'cute',        group:'core'},
-  {id:'b6', name:'Blank',       peeps:'blank',       group:'core'},
-  {id:'b7', name:'Solemn',      peeps:'solemn',      group:'core'},
-  {id:'b8', name:'Driven',      peeps:'driven',      group:'core'},
-  {id:'b9', name:'Serious',     peeps:'serious',     group:'core'},
-  {id:'b10',name:'Loving grin', peeps:'lovingGrin1', group:'core'},
-  {id:'b11',name:'Loving grin 2',peeps:'lovingGrin2',group:'core'},
-  {id:'b12',name:'Awe',         peeps:'awe',         group:'core'},
-  {id:'b13',name:'Concerned',   peeps:'concerned',   group:'core'},
-  {id:'b14',name:'Tired',       peeps:'tired',       group:'core'},
-  {id:'b15',name:'Contempt',    peeps:'contempt',    group:'core'},
-  {id:'b16',name:'Explaining',  peeps:'explaining',  group:'core'},
-  {id:'b17',name:'Eyes closed', peeps:'eyesClosed',  group:'core'},
-  {id:'b18',name:'Old',         peeps:'old',         group:'core'},
-  {id:'b19',name:'Suspicious',  peeps:'suspicious',  group:'core'},
-  {id:'b20',name:'Hectic',      peeps:'hectic',      group:'core'},
-  {id:'b21',name:'Eating happy',peeps:'eatingHappy', group:'core'},
-  {id:'b22',name:'LOL',         peeps:'smileLOL',    group:'core'},
-  {id:'b23',name:'Teeth gap',   peeps:'smileTeethGap',group:'core'},
-  {id:'b24',name:'Concerned fear',peeps:'concernedFear',group:'core'},
-  {id:'b25',name:'Fear',        peeps:'fear',        group:'core'},
-  {id:'bx1',name:'Cyclops',     peeps:'cyclops',     group:'extra'},
-  {id:'bx2',name:'Monster',     peeps:'monster',     group:'extra'},
-  {id:'bx3',name:'Rage',        peeps:'rage',        group:'extra'},
-  {id:'bx4',name:'Very angry',  peeps:'veryAngry',   group:'extra'},
-  {id:'bx5',name:'Angry fang',  peeps:'angryWithFang',group:'extra'},
-];
-/* Cosmetics — nearly every Peeps head/accessory/facialHair + a wide colour grid.
-   Legacy ids (h-crop, o-tee, …) kept so old saves keep working. */
-const LOOK_ITEMS = [
-  // —— Hair (Peeps head, non-covering) —— free starters
-  {id:'h-crop',     slot:'hair', name:'Short 1',        cost:0,   peeps:'short1'},
-  {id:'h-side',     slot:'hair', name:'Short 3',        cost:0,   peeps:'short3'},
-  {id:'h-long',     slot:'hair', name:'Long',           cost:0,   peeps:'long'},
-  {id:'h-bob',      slot:'hair', name:'Medium straight',cost:0,   peeps:'mediumStraight'},
-  {id:'h-short2',   slot:'hair', name:'Short 2',        cost:0,   peeps:'short2'},
-  {id:'h-short4',   slot:'hair', name:'Short 4',        cost:0,   peeps:'short4'},
-  {id:'h-medium1',  slot:'hair', name:'Medium 1',       cost:0,   peeps:'medium1'},
-  {id:'h-shaved1',  slot:'hair', name:'Shaved 1',       cost:0,   peeps:'shaved1'},
-  {id:'h-no1',      slot:'hair', name:'No hair 1',      cost:0,   peeps:'noHair1'},
-  // fluff ≤8–12 (b79: Looks stay ≤ MAX_LOOK_COST)
-  {id:'h-buzz',     slot:'hair', name:'Shaved 2',       cost:8,  peeps:'shaved2'},
-  {id:'h-shaved3',  slot:'hair', name:'Shaved 3',       cost:8,  peeps:'shaved3'},
-  {id:'h-short5',   slot:'hair', name:'Short 5',        cost:12,  peeps:'short5'},
-  {id:'h-no2',      slot:'hair', name:'No hair 2',      cost:8,  peeps:'noHair2'},
-  {id:'h-no3',      slot:'hair', name:'No hair 3',      cost:8,  peeps:'noHair3'},
-  {id:'h-fringe',   slot:'hair', name:'Bangs',          cost:12, peeps:'bangs'},
-  {id:'h-bangs2',   slot:'hair', name:'Bangs 2',        cost:12, peeps:'bangs2'},
-  {id:'h-quiff',    slot:'hair', name:'Pomp',           cost:12, peeps:'pomp'},
-  {id:'h-medium2',  slot:'hair', name:'Medium 2',       cost:12, peeps:'medium2'},
-  {id:'h-medium3',  slot:'hair', name:'Medium 3',       cost:12, peeps:'medium3'},
-  {id:'h-pony',     slot:'hair', name:'Medium 2 (pony)',cost:12, peeps:'medium2', legacy:true}, // legacy alias art
-  {id:'h-bun',      slot:'hair', name:'Bun',            cost:12, peeps:'bun'},
-  {id:'h-bun2',     slot:'hair', name:'Bun 2',          cost:12, peeps:'bun2'},
-  {id:'h-undercut', slot:'hair', name:'Flat top',       cost:12, peeps:'flatTop'},
-  {id:'h-wavy',     slot:'hair', name:'Long curly',     cost:12, peeps:'longCurly'},
-  {id:'h-longbangs',slot:'hair', name:'Long bangs',     cost:12, peeps:'longBangs'},
-  {id:'h-mbangs',   slot:'hair', name:'Medium bangs',   cost:12, peeps:'mediumBangs'},
-  // nicer 18–24 (Looks ≤30)
-  {id:'h-mbangs2',  slot:'hair', name:'Medium bangs 2', cost:18, peeps:'mediumBangs2'},
-  {id:'h-mbangs3',  slot:'hair', name:'Medium bangs 3', cost:18, peeps:'mediumBangs3'},
-  {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:18, peeps:'mediumBangs', legacy:true}, // legacy
-  {id:'h-braids',   slot:'hair', name:'Cornrows',       cost:18, peeps:'cornrows'},
-  {id:'h-cornrows2',slot:'hair', name:'Cornrows 2',     cost:24, peeps:'cornrows2'},
-  {id:'h-space',    slot:'hair', name:'Buns',           cost:18, peeps:'buns'},
-  {id:'h-afro',     slot:'hair', name:'Afro',           cost:18, peeps:'afro'},
-  {id:'h-longafro', slot:'hair', name:'Long afro',      cost:24, peeps:'longAfro'},
-  {id:'h-dreads1',  slot:'hair', name:'Dreads 1',       cost:24, peeps:'dreads1'},
-  {id:'h-dreads2',  slot:'hair', name:'Dreads 2',       cost:24, peeps:'dreads2'},
-  {id:'h-twists',   slot:'hair', name:'Twists',         cost:24, peeps:'twists'},
-  {id:'h-twists2',  slot:'hair', name:'Twists 2',       cost:24, peeps:'twists2'},
-  {id:'h-bantu',    slot:'hair', name:'Bantu knots',    cost:24, peeps:'bantuKnots'},
-  {id:'h-flattopL', slot:'hair', name:'Flat top long',  cost:24, peeps:'flatTopLong'},
-  {id:'h-grayshort',slot:'hair', name:'Grey short',     cost:18, peeps:'grayShort'},
-  {id:'h-graymed',  slot:'hair', name:'Grey medium',    cost:24, peeps:'grayMedium'},
-  {id:'h-graybun',  slot:'hair', name:'Grey bun',       cost:24, peeps:'grayBun'},
-  // statement 30 (Looks ceiling ≈ one clear-day haul)
-  {id:'h-mohawk',   slot:'hair', name:'Mohawk',         cost:30, peeps:'mohawk'},
-  {id:'h-mohawk2',  slot:'hair', name:'Mohawk 2',       cost:30, peeps:'mohawk2'},
-  {id:'h-bear',     slot:'hair', name:'Bear',           cost:30, peeps:'bear'},
-
-  // —— Facial hair (optional) ——
-  {id:'fh-chin',    slot:'facial', name:'Chin',         cost:0,   peeps:'chin'},
-  {id:'fh-goat1',   slot:'facial', name:'Goatee 1',     cost:0,   peeps:'goatee1'},
-  {id:'fh-mous1',   slot:'facial', name:'Moustache 1',  cost:0,   peeps:'moustache1'},
-  {id:'fh-mous2',   slot:'facial', name:'Moustache 2',  cost:0,   peeps:'moustache2'},
-  {id:'fh-full',    slot:'facial', name:'Full',         cost:8,  peeps:'full'},
-  {id:'fh-full2',   slot:'facial', name:'Full 2',       cost:12,  peeps:'full2'},
-  {id:'fh-full3',   slot:'facial', name:'Full 3',       cost:12, peeps:'full3'},
-  {id:'fh-full4',   slot:'facial', name:'Full 4',       cost:12, peeps:'full4'},
-  {id:'fh-goat2',   slot:'facial', name:'Goatee 2',     cost:8,  peeps:'goatee2'},
-  {id:'fh-mous3',   slot:'facial', name:'Moustache 3',  cost:8,  peeps:'moustache3'},
-  {id:'fh-mous4',   slot:'facial', name:'Moustache 4',  cost:8,  peeps:'moustache4'},
-  {id:'fh-mous5',   slot:'facial', name:'Moustache 5',  cost:12,  peeps:'moustache5'},
-  {id:'fh-mous6',   slot:'facial', name:'Moustache 6',  cost:12,  peeps:'moustache6'},
-  {id:'fh-mous7',   slot:'facial', name:'Moustache 7',  cost:12, peeps:'moustache7'},
-  {id:'fh-mous8',   slot:'facial', name:'Moustache 8',  cost:12, peeps:'moustache8'},
-  {id:'fh-mous9',   slot:'facial', name:'Moustache 9',  cost:12, peeps:'moustache9'},
-
-  // —— Shirt colours (outfit slot) —— free + paid (Looks ≤30)
-  {id:'o-tee',     slot:'outfit', name:'Teal',         cost:0,   col:'#3f8f83'},
-  {id:'o-hoodie',  slot:'outfit', name:'Slate',        cost:0,   col:'#4a5568'},
-  {id:'o-navy',    slot:'outfit', name:'Navy',         cost:0,   col:'#2c3e6b'},
-  {id:'o-cream',   slot:'outfit', name:'Cream',        cost:0,   col:'#f3ebe0'},
-  {id:'o-shirt',   slot:'outfit', name:'Cloud',        cost:8,  col:'#dfe6ef'},
-  {id:'o-stripe',  slot:'outfit', name:'Pearl',        cost:8,  col:'#e4e9f0'},
-  {id:'o-white',   slot:'outfit', name:'White',        cost:8,  col:'#f7f7f5'},
-  {id:'o-black',   slot:'outfit', name:'Black',        cost:12, col:'#1f2428'},
-  {id:'o-charcoal',slot:'outfit', name:'Charcoal',     cost:12, col:'#3a3f44'},
-  {id:'o-sky',     slot:'outfit', name:'Sky',          cost:12, col:'#6fa8d8'},
-  {id:'o-mint',    slot:'outfit', name:'Mint',         cost:12, col:'#6fd6bd'},
-  {id:'o-hivis',   slot:'outfit', name:'Hi-vis',       cost:18, col:'#e4d43a'},
-  {id:'o-jumper',  slot:'outfit', name:'Knit brown',   cost:18, col:'#8a6b4f'},
-  {id:'o-dress',   slot:'outfit', name:'Rose',         cost:18, col:'#c2466f'},
-  {id:'o-berry',   slot:'outfit', name:'Berry',        cost:18, col:'#9b3d5a'},
-  {id:'o-jacket',  slot:'outfit', name:'Denim',        cost:18, col:'#3f6796'},
-  {id:'o-forest',  slot:'outfit', name:'Forest',       cost:18, col:'#2f6b4f'},
-  {id:'o-rust',    slot:'outfit', name:'Rust',         cost:24, col:'#b85a32'},
-  {id:'o-violet',  slot:'outfit', name:'Violet',       cost:24, col:'#6d5ae0'},
-  {id:'o-coral',   slot:'outfit', name:'Coral',        cost:24, col:'#e07a6d'},
-
-  // —— Eyewear / accessories ——
-  {id:'g-round',   slot:'glasses', name:'Glasses',     cost:0,   peeps:'glasses'},
-  {id:'g-square',  slot:'glasses', name:'Glasses 2',   cost:12, peeps:'glasses2'},
-  {id:'g-cats',    slot:'glasses', name:'Glasses 3',   cost:12, peeps:'glasses3'},
-  {id:'g-glass4',  slot:'glasses', name:'Glasses 4',   cost:18, peeps:'glasses4'},
-  {id:'g-glass5',  slot:'glasses', name:'Glasses 5',   cost:18, peeps:'glasses5'},
-  {id:'g-shades',  slot:'glasses', name:'Sunglasses',  cost:18, peeps:'sunglasses'},
-  {id:'g-shades2', slot:'glasses', name:'Sunglasses 2',cost:24, peeps:'sunglasses2'},
-  {id:'g-patch',   slot:'glasses', name:'Eyepatch',    cost:24, peeps:'eyepatch'},
-
-  // —— Headwear (replaces hair) ——
-  {id:'a-beanie',  slot:'hat', name:'Beanie',         cost:18, peeps:'hatBeanie'},
-  {id:'a-cap',     slot:'hat', name:'Cap',             cost:18, peeps:'hatHip'},
-  {id:'a-hijab',   slot:'hat', name:'Hijab',           cost:18, peeps:'hijab'},
-  {id:'a-turban',  slot:'hat', name:'Turban',          cost:18, peeps:'turban'},
-  // legacy hat ids kept as aliases → migrated to hair on load (see LOOK_ID_MAP)
-  {id:'a-bow',     slot:'hair', name:'Bun 2 (legacy)', cost:12, peeps:'bun2', legacy:true},
-  {id:'a-band',    slot:'hair', name:'Bangs 2 (legacy)',cost:12, peeps:'bangs2', legacy:true},
-
-  // —— Backdrops ——
-  {id:'bg-plain',  slot:'backdrop', name:'Plain',      cost:0,   col:null},
-  {id:'bg-sun',    slot:'backdrop', name:'Sunrise',    cost:8,  col:'#f0a05a'},
-  {id:'bg-mint',   slot:'backdrop', name:'Mint',       cost:8,  col:'#6fd6bd'},
-  {id:'bg-night',  slot:'backdrop', name:'Night',      cost:12, col:'#2c3358'},
-  {id:'bg-rose',   slot:'backdrop', name:'Rose',       cost:12, col:'#dd7ea4'},
-  {id:'bg-sky',    slot:'backdrop', name:'Sky',        cost:12, col:'#7eb6e0'},
-  {id:'bg-lilac',  slot:'backdrop', name:'Lilac',      cost:12, col:'#b8a4e0'},
-  {id:'bg-peach',  slot:'backdrop', name:'Peach',      cost:12, col:'#f0c4a8'},
-];
+const LOOK_SRC = {hair:CHAR_HAIRSTYLES, facial:CHAR_DETAILS, glasses:CHAR_GLASSES, hat:CHAR_HATS, outfit:CHAR_OUTFITS, backdrop:CHAR_BACKDROPS};
+const LOOK_ITEMS = LOOK_DEFS.map(([id,slot,cost,legacy])=>{ const art=LOOK_SRC[slot][id]||{};
+  return {id, slot, cost, name:art.name||id, legacy:!!legacy,
+    col: slot==='outfit' ? art.col : slot==='backdrop' ? (art.bg==='plain'?null:BACKDROP_SWATCH[art.bg]) : undefined}; });
 /* Old saved ids → current ids (equipped + owned). */
 const LOOK_ID_MAP = {
   'a-bow': 'h-bun2',
@@ -1153,8 +1096,8 @@ const LOOK_ID_MAP = {
 };
 const SLOTS = [
   ['hair','Hair'],
-  ['facial','Facial hair'],
-  ['outfit','Shirt'],
+  ['facial','Face details'],
+  ['outfit','Outfit'],
   ['glasses','Eyewear'],
   ['hat','Headwear'],
   ['backdrop','Backdrop'],
@@ -1200,135 +1143,22 @@ function buyLook(id){
   S.points.coins-=it.cost; looks().owned.push(id); save(); return true;
 }
 
-/* ---------- Drawing one (Open Peeps) ---------- */
+/* ---------- Drawing one ---------- */
 function hairHex(av){
   return (HAIR_COLOURS.find(c=>c.id===(av&&av.hairCol))||HAIR_COLOURS[1]).hex;
 }
-function peepsOptsFromAv(a){
-  const base=BASES.find(b=>b.id===a.base)||BASES[0];
-  const tone=TONES.find(t=>t.id===a.tone)||TONES[1];
-  const hairIt=lookItem(a.hair)||lookItem('h-crop');
-  const hatIt=a.hat?lookItem(a.hat):null;
-  const glassIt=a.glasses?lookItem(a.glasses):null;
-  const facialIt=a.facial?lookItem(a.facial):null;
-  const outfitIt=lookItem(a.outfit)||lookItem('o-tee');
-  const clothing=(outfitIt.col||'#3f8f83').replace(/^#/,'').toLowerCase();
-  const hair = hairHex(a).replace(/^#/,'').toLowerCase();
-  const head = (hatIt && hatIt.peeps) ? hatIt.peeps : (hairIt.peeps||'short1');
-  const opts = {
-    seed: 'steady-'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit].join('-'),
-    face: [base.peeps||'calm'],
-    head: [head],
-    skinColor: [tone.peeps||'edb98a'],
-    clothingColor: [clothing],
-    headContrastColor: [hair],
-    facialHairProbability: 0,
-    maskProbability: 0,
-    accessoriesProbability: 0,
-    backgroundColor: ['transparent'],
-  };
-  if(facialIt && facialIt.peeps){
-    opts.facialHair = [facialIt.peeps];
-    opts.facialHairProbability = 100;
-  }
-  if(glassIt && glassIt.peeps){
-    opts.accessories = [glassIt.peeps];
-    opts.accessoriesProbability = 100;
-  }
-  return opts;
-}
-/* Retarget ink fills in the DiceBear head + facialHair groups only — never skin, face,
-   accessories (glasses), or clothing. Accessories sit at translate(203 303), after face. */
-function tintPeepsHair(svg, hex){
-  const ink = /fill="(?:#000(?:000)?|black|currentColor)"/gi;
-  const paint = `fill="${hex}"`;
-  const tint = chunk => chunk.replace(ink, paint);
-  const headMark = '<g transform="matrix(.99789';
-  const faceMark = '<g transform="translate(315 248)"';
-  const facialMark = '<g transform="translate(279 400)"';
-  const maskMark = '<g transform="translate(179 343)"';
-  const accMark = '<g transform="translate(203 303)"';
-  const iHead = svg.indexOf(headMark), iFace = svg.indexOf(faceMark), iAcc = svg.indexOf(accMark);
-  /* Hair only: stop at face, or earlier if accessories somehow precede face. */
-  let iHairEnd = iFace;
-  if(iAcc>=0 && (iHairEnd<0 || iAcc<iHairEnd)) iHairEnd = iAcc;
-  if(iHead>=0 && iHairEnd>iHead) svg = svg.slice(0,iHead) + tint(svg.slice(iHead,iHairEnd)) + svg.slice(iHairEnd);
-  const iFacial = svg.indexOf(facialMark), iMask = svg.indexOf(maskMark);
-  /* Facial hair only — never walk into mask or accessories. */
-  let iFaceEnd = iMask;
-  const iAcc2 = svg.indexOf(accMark);
-  if(iAcc2>=0 && (iFaceEnd<0 || iAcc2<iFaceEnd)) iFaceEnd = iAcc2;
-  if(iFacial>=0 && iFaceEnd>iFacial) svg = svg.slice(0,iFacial) + tint(svg.slice(iFacial,iFaceEnd)) + svg.slice(iFaceEnd);
-  return svg;
-}
-/* Opaque white lens fills in Open Peeps glasses (e.g. glasses4) read as solid blobs
-   at small sizes — paint them near-black inside the accessories group only. */
-function blackenGlassesWhites(svg){
-  const accMark = '<g transform="translate(203 303)">';
-  const iAcc = svg.indexOf(accMark);
-  if(iAcc < 0) return svg;
-  const before = svg.slice(0, iAcc);
-  let chunk = svg.slice(iAcc);
-  /* Lens whites + near-whites → ink. Accessory #000 → #111 so dusk button
-     color:inherit (light fg) cannot wash black presentation attrs. */
-  chunk = chunk.replace(/fill=["'](?:#fff(?:fff)?|#f{3,8}|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))["']/gi, 'fill="#111"');
-  chunk = chunk.replace(/(style=["'][^"']*?)fill\s*:\s*(?:#fff(?:fff)?|#f{3,8}|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))\b/gi, '$1fill:#111');
-  chunk = chunk.replace(/fill=white\b/gi, 'fill="#111"');
-  chunk = chunk.replace(/fill=["'](?:#000(?:000)?|black)["']/gi, 'fill="#111"');
-  return before + chunk;
-}
+/* size: 'chip' (head close-up for the 42px top-right chip), a number ≥52 (head and shoulders, for
+   the editor and thumbnails), or a small number (close-up). Rendered at 2× for crisp small sizes. */
 function charSVG(av,size){
   const a=av||myChar();
-  const hex = hairHex(a);
-  let peeps='';
-  try{ peeps = blackenGlassesWhites(tintPeepsHair(createPeepsSvg(peepsOptsFromAv(a)), hex)); }
-  catch(e){ peeps = '<svg viewBox="0 0 704 704" xmlns="http://www.w3.org/2000/svg"></svg>'; }
-  /* Leftover currentColor / CSS vars must stay ink — never theme text colour. */
-  peeps = peeps.replace(/fill=["']currentColor["']/gi, 'fill="#111"');
-  peeps = peeps.replace(/fill=["']var\([^"']+\)["']/gi, 'fill="#111"');
-  /* Second pass: accessories whites that survived tint + first blacken. */
-  peeps = blackenGlassesWhites(peeps);
-  /* Global ink normalize — remaining #000/black → #111 (face + frames). Same pipeline
-     for editor + chip; stops #000 reading as light under button color:inherit. */
-  peeps = peeps.replace(/fill=["'](?:#000(?:000)?|black)["']/gi, 'fill="#111"');
-  let inner = peeps.replace(/^[\s\S]*?<svg[^>]*>/i,'').replace(/<\/svg>\s*$/i,'');
-  const bg=(lookItem(a.backdrop)||{}).col;
-  /* size≥52 = Looks thumbs/picks/preview (bust). 'chip' / no size / faces = zoomed-out head. */
   const bust = size !== 'chip' && (size|0) >= 52;
-  /* Never CSS vars in SVG fill — chip/small use light cream; bust uses light neutral if no col. */
-  const bgFill = bg || (bust ? '#eef2f1' : '#e8f0ee');
-  const nonce = Math.random().toString(36).slice(2,7);
-  const uid=('cc'+[a.base,a.tone,a.hairCol,a.hair,a.hat,a.glasses,a.facial,a.outfit,a.backdrop,size||'',nonce].join('')).replace(/[^a-zA-Z0-9_-]/g,'');
-  /* Chip (b77): bring down so hair clears the circle top; bust ≥52 unchanged. */
-  const xf = bust
-    ? 'translate(50 50) scale(0.165) translate(-352 -340)'
-    : 'translate(50 50) scale(0.145) translate(-352 -305)';
-  /* Chip: slight stroke on eyewear so thin Open Peeps frames stay readable at 42px. */
-  if(size === 'chip'){
-    inner = inner.replace(
-      '<g transform="translate(203 303)">',
-      '<g transform="translate(203 303)" stroke="#111" stroke-width="10" paint-order="stroke fill">'
-    );
-  }
-  /* Chip / small: 2× intrinsic px so SVG downsamples sharp into the CSS box (mechip 42→84). */
-  let sizeAttr = '';
-  let shapeAttr = '';
-  if(size === 'chip'){
-    sizeAttr = 'width="84" height="84"';
-    shapeAttr = 'shape-rendering="geometricPrecision"';
-  }else if(!bust){
-    const cssPx = (size|0) > 0 ? (size|0) : 40;
-    sizeAttr = `width="${cssPx*2}" height="${cssPx*2}"`;
-    shapeAttr = 'shape-rendering="geometricPrecision"';
-  }else if(size){
-    sizeAttr = `width="${size}" height="${size}"`;
-  }
-  return `<svg viewBox="0 0 100 100" class="charsvg" ${sizeAttr} ${shapeAttr}>
-    <defs><clipPath id="${uid}"><circle cx="50" cy="50" r="50"/></clipPath></defs>
-    <g clip-path="url(#${uid})">
-      <rect width="100" height="100" fill="${bgFill}"/>
-      <g class="peeps-bust" transform="${xf}">${inner}</g>
-    </g></svg>`;
+  const uid='c'+Math.random().toString(36).slice(2,8);
+  let svg=charArt(a,{mode:bust?'bust':'chip',uid});
+  let attrs='';
+  if(size==='chip') attrs='width="84" height="84"';
+  else if(!bust) attrs=`width="${((size|0)||40)*2}" height="${((size|0)||40)*2}"`;
+  else if(size) attrs=`width="${size}" height="${size}"`;
+  return svg.replace('<svg ', `<svg ${attrs} shape-rendering="geometricPrecision" `);
 }
 
 /* ---------- Quick chat ----------
@@ -4124,7 +3954,7 @@ function vShop(){
   <div class="section"><h2>Looks <span class="muted">${looks().owned.filter(id=>lookItem(id)&&!lookItem(id).legacy).length} of ${LOOK_ITEMS.filter(i=>!i.legacy).length}</span></h2>
     <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
       <span class="avatar big img">${charSVG(myChar(),64)}</span>
-      <div><b>Your character</b><p class="tiny muted">Faces, hair, facial hair, eyewear, hats, shirt colours and backdrops.</p></div></div>
+      <div><b>Your character</b><p class="tiny muted">Faces, hairstyles, outfits, face details, glasses, hats and backdrops.</p></div></div>
       <span class="chev">›</span></button></div>
   <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
     ${lockerHtml()}</div>`;
@@ -4370,7 +4200,7 @@ function vSettings(){
 
     <p><b style="color:var(--fg)">Friends.</b> Add a friend's code and you're linked both ways. Chats use set phrases and emoji only — no free typing. There's no leaderboard, on purpose.</p>
     <p><b style="color:var(--fg)">Accounts.</b> An account backs up your data and lets you add friends; everything else works without one. It backs itself up a few seconds after anything changes. Forgotten your password? Tap <i>Forgotten your password?</i> on the sign-in screen for a reset code.</p>
-    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture at the top right. Mix any face with any skin tone, hair, facial hair, eyewear, hat, shirt colour and backdrop (a hat replaces your hair). Starters are free; the rest cost up to ${MAX_LOOK_COST} coins. Art: Open Peeps by Pablo Stanley (CC0).</p>
+    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture at the top right. Mix any face with any skin tone, hairstyle, hair colour, outfit, face detail, glasses, hat and backdrop. Starters are free; the rest cost up to ${MAX_LOOK_COST} coins.</p>
     <p><b style="color:var(--fg)">Your picture.</b> Prefer a photo? Tap your picture at the top right and choose <i>Use an image</i> — any square image works. It's shrunk small so friends can see it; remove it to go back to your character.</p>
     <p><b style="color:var(--fg)">Friend details.</b> On Friends, open a friend and tap their card to see your time together: chests won, coins, tiers and dates.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Settings → Customise → Appearance. Auto follows your phone, or pick Light or Dark.</p>
@@ -5464,30 +5294,28 @@ function charSheet(){
       const core=BASES.filter(b=>b.group!=='extra');
       const extra=BASES.filter(b=>b.group==='extra');
       body.innerHTML=`<div class="charGrid">${core.map(bs=>`<button class="charpick ${a.base===bs.id?'on':''}" data-cbase="${bs.id}" title="${esc(bs.name)}">
-        ${charSVG({...a,base:bs.id},64)}</button>`).join('')}</div>
+        ${charSVG({...a,base:bs.id},'chip')}</button>`).join('')}</div>
         <p class="tiny muted" style="margin-top:8px">${core.length} everyday faces. Skin, hair and clothes are picked separately, so any face works with any look.</p>
-        ${extra.length?`<p class="tiny muted" style="margin:14px 0 6px"><b style="color:var(--fg)">Extra faces</b> — wilder expressions.</p>
+        ${extra.length?`<p class="tiny muted" style="margin:14px 0 6px"><b style="color:var(--fg)">Extra faces</b> — just for fun.</p>
         <div class="charGrid">${extra.map(bs=>`<button class="charpick ${a.base===bs.id?'on':''}" data-cbase="${bs.id}" title="${esc(bs.name)}">
-          ${charSVG({...a,base:bs.id},64)}</button>`).join('')}</div>`:''}`;
+          ${charSVG({...a,base:bs.id},'chip')}</button>`).join('')}</div>`:''}`;
     } else if(tab==='skin'){
       body.innerHTML=`<div class="swatches">${TONES.map(t=>`<button class="sw ${a.tone===t.id?'on':''}" data-ctone="${t.id}" style="background:${t.hex}" title="${t.id}"></button>`).join('')}</div>`;
     } else if(tab==='hairc'){
       body.innerHTML=`<div class="swatches">${HAIR_COLOURS.map(c=>`<button class="sw ${a.hairCol===c.id?'on':''}" data-chair="${c.id}" style="background:${c.hex}"></button>`).join('')}</div>
-        <p class="tiny muted" style="margin-top:8px">Colours your hair and facial hair.</p>`;
+        <p class="tiny muted" style="margin-top:8px">Colours your hair, brows and any beard.</p>`;
     } else {
       const items=LOOK_ITEMS.filter(i=>i.slot===tab && !i.legacy);
       const optional=tab==='glasses'||tab==='hat'||tab==='facial';
-      const tip = tab==='outfit' ? 'Pick a shirt colour. '
-        : tab==='hat' ? 'A hat replaces your hair. '
-        : tab==='facial' ? 'Facial hair is optional — None clears it. '
+      const tip = tab==='outfit' ? 'Pick an outfit. '
+        : tab==='hat' ? 'Hats sit on your hair; the hijab covers it. '
+        : tab==='facial' ? 'Freckles, lashes, lipstick, stickers or a beard — None clears it. '
         : tab==='hair' ? 'Every hair style works on every face. '
         : '';
       body.innerHTML=`<div class="lookGrid">
         ${optional?`<button class="lookpick ${!a[tab]?'on':''}" data-cequip="${tab}|"><span class="lookname">None</span></button>`:''}
         ${items.map(i=>{const owned=ownsLook(i.id), on=a[tab]===i.id;
-          const thumb = tab==='outfit'
-            ? `<span class="lookthumb swatch" style="background:${i.col||'#888'}"></span>`
-            : `<span class="lookthumb">${charSVG({...a,[tab]:i.id},52)}</span>`;
+          const thumb = `<span class="lookthumb">${charSVG({...a,[tab]:i.id},(tab==='facial'||tab==='glasses')?'chip':52)}</span>`;
           return `<button class="lookpick ${on?'on':''} ${owned?'':'locked'}" data-${owned?'cequip':'cbuy'}="${owned?tab+'|'+i.id:i.id}">
             ${thumb}
             <span class="lookname">${esc(i.name)}</span>
