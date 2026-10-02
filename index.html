@@ -64,10 +64,10 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.v3.js?b=86"/>
-<link rel="modulepreload" href="./chars.js"/>
-<link rel="preload" href="./app.v3.css?b=86" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.v3.css?b=86"/></noscript>
+<link rel="modulepreload" href="./app.v3.js?b=87"/>
+<link rel="modulepreload" href="./chars.js?b=87"/>
+<link rel="preload" href="./app.v3.css?b=87" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v3.css?b=87"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
@@ -108,7 +108,7 @@ window.__steadyBootTimer = setTimeout(function(){
 }, 20000);
 </script>
 <script type="module">
-const src = new URL('./app.v3.js?b=86', document.baseURI).href;
+const src = new URL('./app.v3.js?b=87', document.baseURI).href;
 const clear = () => { const boot=document.getElementById('boot');
   if(boot){ boot.classList.add('gone'); setTimeout(()=>boot.remove(),350); } };
 const fail = (e) => {

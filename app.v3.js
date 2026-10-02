@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { charArt, charFull, hairHexOf, isHex, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js';
+import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=87';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
   return (b?'b'+b+' · ':'')+'2026-10-02'; }catch(e){ return '2026-10-02'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
@@ -582,6 +582,18 @@ function whenLabel(k){ if(!k) return 'Someday'; const d=daysBetween(today(),k); 
 
 /* ---------- Notes ----------
    Deliberately plain: a title, a date, and a box to write in. Nothing to learn. */
+/* Notes can be tinted like sticky notes; the hex is mixed into the theme's surface so it suits light and dark. */
+const NOTE_COLOURS=[['red','#f28b82'],['orange','#fbbc04'],['yellow','#fff475'],['green','#ccff90'],['teal','#a7ffeb'],['blue','#aecbfa'],['purple','#d7aefb'],['pink','#fdcfe8']];
+const noteHex=c=>(NOTE_COLOURS.find(x=>x[0]===c)||[])[1]||null;
+const NICON={
+  pin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6l-1 7 4 3v2H6v-2l4-3z"/><path d="M12 15v6"/></svg>',
+  pinOn:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6l-1 7 4 3v2H6v-2l4-3z" fill="currentColor"/><path d="M12 15v6"/></svg>',
+  palette:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.7-.8 1.7-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5C21 6.3 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1.1" fill="currentColor"/><circle cx="10" cy="7.5" r="1.1" fill="currentColor"/><circle cx="14.5" cy="7.5" r="1.1" fill="currentColor"/></svg>',
+  list:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5"/><path d="M4.6 7.1l1.1 1.1L7.6 6"/><rect x="3" y="14" width="6" height="6" rx="1.5"/><path d="M13 7h8M13 17h8"/></svg>',
+  text:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
+  share:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+};
 function migrateNote(n){
   if(n.body===undefined){
     const parts=[];
@@ -600,19 +612,39 @@ function migrateNote(n){
   if(n.title===undefined) n.title='';
   if(!n.createdAt) n.createdAt=n.updatedAt||Date.now();
   if(!n.updatedAt) n.updatedAt=n.createdAt;           // old notes had none — the sort went NaN
+  if(!n.editedAt) n.editedAt=n.updatedAt;             // "Edited" time — opening a note no longer changes it
+  if(typeof n.pinned!=='boolean') n.pinned=false;
+  if(n.color!==null && !noteHex(n.color)) n.color=null;
+  if(n.items!==undefined){                            // a checklist: [{id,text,done}]
+    if(!Array.isArray(n.items)) delete n.items;
+    else {
+      if(n.items.some(i=>!i||typeof i!=='object')) n.items=n.items.filter(i=>i&&typeof i==='object');
+      n.items.forEach(i=>{ if(!i.id) i.id=uid(); if(typeof i.text!=='string') i.text=String(i.text??''); i.done=!!i.done; });
+    }
+  }
   return n;
 }
+const isList=n=>Array.isArray(n.items);
+/* Everything written in a note, as plain lines (checklist items one per line). */
+function noteText(n){ migrateNote(n); return isList(n)?n.items.map(i=>i.text).join('\n'):(n.body||''); }
 function noteTitle(n){
   migrateNote(n);
   if(n.title.trim()) return n.title.trim();
-  const first=(n.body||'').split('\n').map(l=>l.trim()).find(Boolean);
+  const first=noteText(n).split('\n').map(l=>l.trim()).find(Boolean);
   return first || 'Untitled';
 }
-function notePreview(n){
-  migrateNote(n);
-  const lines=(n.body||'').split('\n').map(l=>l.trim()).filter(Boolean);
-  const from = n.title.trim() ? lines : lines.slice(1);
-  return from.join(' · ') || 'Empty';
+/* Card date: a time today, "Yesterday", then a date (with the year once it's not this year). */
+function noteWhen(ts){
+  const d=new Date(ts), now=new Date(), k=dkey(d);
+  if(k===dkey(now)) return d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  if(k===dkey(new Date(now.getFullYear(),now.getMonth(),now.getDate()-1))) return 'Yesterday';
+  return fmt(k, d.getFullYear()===now.getFullYear()?{day:'numeric',month:'short'}:{day:'numeric',month:'short',year:'numeric'});
+}
+function editedLabel(n){
+  const ts=n.editedAt||n.updatedAt, s=(Date.now()-ts)/1000;
+  if(s<60) return 'Edited just now';
+  if(s<3600) return `Edited ${Math.floor(s/60)} min ago`;
+  const w=noteWhen(ts); return 'Edited '+(w==='Yesterday'?'yesterday':w);
 }
 /* First display line for Plan lists — rest opens in a dropdown. */
 function firstLine(text, max=60){
@@ -642,28 +674,16 @@ function restAfterFirstLine(text, max=60){
   if(t.length<=max) return '';
   return t.slice(max-1);
 }
-function addNote(){
+function addNote(list=false){
   const now=Date.now();
-  const n={id:uid(),title:'',body:'',createdAt:now,updatedAt:now};
-  S.notes.unshift(n); save(); return n;
+  const n={id:uid(),title:'',body:'',createdAt:now,updatedAt:now,editedAt:now,pinned:false,color:null};
+  if(list) n.items=[{id:uid(),text:'',done:false}];
+  S.notes.unshift(n); saveQuiet(); return n;
 }
-function touchNote(n){ n.updatedAt=Date.now(); save(); }
 function dropNote(id){ S.notes=S.notes.filter(n=>n.id!==id); save(); }
-function noteEmpty(n){ migrateNote(n); return !n.title.trim() && !n.body.trim(); }
-/* Leaving inline edit — whichever way — keeps what was typed; an empty note removes itself, like the full editor. */
-function endNoteEdit(){
-  const id=planState.editNote; planState.editNote=null; planState.noteSnap=null;
-  const n=id&&S.notes.find(x=>x.id===id);
-  if(n&&noteEmpty(n)){ dropNote(id); if(planState.openNote===id) planState.openNote=null; return true; }
-  return false;
-}
-function beginNoteEdit(n){
-  endNoteEdit();
-  planState.openNote=n.id; planState.editNote=n.id; planState.openAff=planState.editAff=null;
-  planState.noteSnap={id:n.id,title:n.title,body:n.body,updatedAt:n.updatedAt};
-}
-/* Most recently opened or edited first. */
-function notesSorted(){ S.notes.forEach(migrateNote); return [...S.notes].sort((a,b)=>b.updatedAt-a.updatedAt); }
+function noteEmpty(n){ migrateNote(n); return !n.title.trim() && !(n.body||'').trim() && !(n.items||[]).some(i=>i.text.trim()); }
+/* Pinned first, then the one you last opened or edited. */
+function notesSorted(){ S.notes.forEach(migrateNote); return [...S.notes].sort((a,b)=>(b.pinned-a.pinned)||(b.updatedAt-a.updatedAt)); }
 /* Keyword search: every space-separated word must appear somewhere in the text (not an exact title match). */
 function keywordMatch(hay, q){
   const words=String(q||'').toLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -679,8 +699,8 @@ function migrateWhy(w){
 }
 function touchWhy(w){ migrateWhy(w); w.touchedAt=Date.now(); save(); }
 function whysSorted(){ (S.whys||[]).forEach(migrateWhy); return [...(S.whys||[])].sort((a,b)=>(b.touchedAt||0)-(a.touchedAt||0)); }
-/* The note being edited always stays visible, even if the search no longer matches it. */
-function notesFiltered(){ const q=planState.noteQ||''; return notesSorted().filter(n=>n.id===planState.editNote || keywordMatch(noteTitle(n)+' '+ (n.body||''), q)); }
+/* Search looks through titles, text and checklist items. */
+function notesFiltered(){ const q=planState.noteQ||''; return notesSorted().filter(n=>keywordMatch(n.title+' '+noteText(n), q)); }
 function whysFiltered(){ const q=planState.affQ||''; return whysSorted().filter(w=>keywordMatch(w.text, q)); }
 
 function toggleTodo(id){ const t=S.todos.find(x=>x.id===id); if(!t) return;
@@ -992,15 +1012,15 @@ const LOOK_DEFS = [
   ['h-no2','hair',8],
   ['h-no3','hair',8],
   ['h-fringe','hair',12],
-  ['h-bangs2','hair',12],
+  ['h-bangs2','hair',0],
   ['h-quiff','hair',12],
-  ['h-medium2','hair',12],
+  ['h-medium2','hair',0],
   ['h-medium3','hair',12],
   ['h-pony','hair',12,1],
   ['h-bun','hair',12],
-  ['h-bun2','hair',12],
+  ['h-bun2','hair',0],
   ['h-undercut','hair',12],
-  ['h-wavy','hair',12],
+  ['h-wavy','hair',0],
   ['h-longbangs','hair',12],
   ['h-mbangs','hair',12],
   ['h-mbangs2','hair',18],
@@ -1136,11 +1156,29 @@ function looks(){
 }
 function myChar(){
   const L=looks();
-  if(!L.av) L.av={base:'b1',tone:'t2',hairCol:'c-brown',hair:'h-crop',outfit:'o-tee',glasses:null,hat:null,facial:null,backdrop:'bg-plain'};
+  if(!L.av) L.av={base:'b1',tone:'t2',hairCol:'c-brown',hair:'h-long',outfit:'o-tee',glasses:null,hat:null,facial:null,backdrop:'bg-plain'};
   if(L.av.facial === undefined) L.av.facial = null;
   return L.av;
 }
 const ownsLook = id => !id || looks().owned.includes(id);
+/* Swap anything that isn't in this character's set (women's or men's) for a free one that is. */
+function fitSex(a){
+  const sx=sexOf(a);
+  if(!suits(a.base,sx)) a.base=BASES.find(b=>suits(b.id,sx)).id;
+  for(const slot of ['hair','outfit']) if(!suits(a[slot],sx))
+    a[slot]=(LOOK_ITEMS.find(i=>i.slot===slot&&!i.legacy&&!i.cost&&suits(i.id,sx))||{}).id||a[slot];
+  for(const slot of ['facial','glasses','hat']) if(a[slot]&&!suits(a[slot],sx)) a[slot]=null;
+}
+/* Switching set remembers the other one's look, so switching back brings it back. */
+function setSex(sx){
+  const a=myChar(), was=sexOf(a); if(a.sex===sx) return;
+  const L=looks(); L.alt=L.alt||{};
+  if(was!==sx) L.alt[was]={base:a.base,hair:a.hair,outfit:a.outfit,facial:a.facial,glasses:a.glasses,hat:a.hat};
+  a.sex=sx;
+  const back=was!==sx&&L.alt[sx];
+  if(back) for(const [k,v] of Object.entries(back)) if(v===null || suits(v,sx)) a[k]=v;   // it was worn before, so it's theirs
+  fitSex(a);
+}
 function buyLook(id){
   const it=lookItem(id); if(!it||ownsLook(id)||it.legacy) return false;
   if(S.points.coins < it.cost) return false;
@@ -1156,6 +1194,7 @@ function cleanChar(c){
   if(!c||typeof c!=='object') return null;
   const out={}, ok=v=>typeof v==='string'&&/^[a-z0-9-]{1,24}$/i.test(v);
   for(const k of ['base','tone','hair','outfit','glasses','hat','facial','backdrop']) if(ok(c[k])) out[k]=c[k];
+  if(c.sex==='f'||c.sex==='m') out.sex=c.sex;
   if(ok(c.hairCol)||isHex(c.hairCol)) out.hairCol=c.hairCol;
   return Object.keys(out).length?out:null;
 }
@@ -2824,7 +2863,7 @@ function celebrate(){
 }
 /* ---------- Router ---------- */
 let remOpen=false, rewOpen=false, newRewardFreq='weekly', newRewardPer=3;
-let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null,openNote:null,editNote:null,noteSnap:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
+let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
@@ -3067,7 +3106,7 @@ function updateTabDots(){
   });
 }
 
-function setTab(t){ if(t!=='progress') progState.taskId=null; if(t!==tab) endNoteEdit(); endTour(true); rollTabAff(); tab=t; sel.clear(); render(); markTabSeen(t); updateTabDots(); window.scrollTo({top:0}); setTimeout(()=>{ if(tab===t) tour(t); },350); }
+function setTab(t){ if(t!=='progress') progState.taskId=null; endTour(true); rollTabAff(); tab=t; sel.clear(); render(); markTabSeen(t); updateTabDots(); window.scrollTo({top:0}); setTimeout(()=>{ if(tab===t) tour(t); },350); }
 function render(){
   if(!$app || !document.body.contains($app)) $app=document.getElementById('app');
   if(!$app) return;
@@ -3416,7 +3455,7 @@ function vPlan(){
   const search = (sub==='notes'||sub==='affirmations')?`<div class="card" style="margin-bottom:12px;padding:12px">
     <input type="search" id="${sub==='notes'?'notesearch':'affsearch'}" placeholder="${sub==='notes'?'Search notes by a word…':'Search affirmations by a word…'}" value="${esc(q)}" autocomplete="off">
     <p class="tiny muted" style="margin-top:8px">${(()=>{
-      if(!(q||'').trim()) return sub==='notes'?'Last opened or edited sits at the top.':'Most recently brought to the top comes first.';
+      if(!(q||'').trim()) return sub==='notes'?'Finds words in titles, text and checklists.':'Most recently brought to the top comes first.';
       const n = sub==='notes'?notesFiltered().length:whysFiltered().length;
       return n?`${n} match${n===1?'':'es'}`:'No matches';
     })()}</p></div>`:'';
@@ -3467,39 +3506,45 @@ function rowTodo(t){
     <div class="planfold-body">${esc(t.text)}</div></details></li>`;
 }
 
+/* A note as a card: title, then the start of its text or its first few list items. */
+function noteCard(n){
+  const t=n.title.trim(), list=isList(n);
+  let inner='';
+  if(list){
+    const filled=n.items.filter(i=>i.text.trim()), open=filled.filter(i=>!i.done), done=filled.filter(i=>i.done);
+    const show=[...open.slice(0,6), ...done.slice(0,Math.max(0,6-open.length))], more=filled.length-show.length;
+    if(show.length) inner=`<ul class="ncard-list">${show.map(i=>`<li class="${i.done?'done':''}"><i></i><span>${esc(i.text)}</span></li>`).join('')}</ul>${more>0?`<span class="ncard-more">+${more} more</span>`:''}`;
+  } else {
+    const b=(n.body||'').trim();
+    if(b) inner=`<p class="ncard-b">${esc(b.length>500?b.slice(0,500)+'…':b)}</p>`;
+  }
+  if(!t&&!inner) inner='<p class="ncard-b">Empty note</p>';
+  const filled=list?n.items.filter(i=>i.text.trim()):[];
+  return `<button type="button" class="ncard" data-noteopen="${n.id}"${n.color?` data-c="${n.color}" style="--nc:${noteHex(n.color)}"`:''}>
+    ${t?`<b class="ncard-t">${esc(t)}</b>`:''}${inner}
+    <span class="ncard-d">${list&&filled.length?`${filled.filter(i=>i.done).length}/${filled.length} ticked · `:''}${noteWhen(n.editedAt)}</span></button>`;
+}
+/* Rough card height, so the two columns come out even. */
+function noteWeight(n){
+  const t=n.title.trim()?1.4:0;
+  if(isList(n)){ const k=n.items.filter(i=>i.text.trim()).length; return 1.6+t+Math.min(k,6)+(k>6?.8:0); }
+  const b=(n.body||'').trim(); if(!b) return 2.6+t;
+  return 1.6+t+Math.min(8,b.split('\n').reduce((sum,l)=>sum+Math.max(1,Math.ceil(l.length/20)),0));
+}
+function noteGrid(ns){
+  const cols=[[],[]], h=[0,0];
+  ns.forEach(n=>{ const c=h[0]<=h[1]?0:1; cols[c].push(n); h[c]+=noteWeight(n); });
+  return `<div class="ngrid">${cols.map(c=>`<div class="ncol">${c.map(noteCard).join('')}</div>`).join('')}</div>`;
+}
 function pNotes(){
-  const all=notesSorted(), ns=notesFiltered(), q=planState.noteQ||'';
-  return `
-  <button class="btn primary block" id="newnote" style="margin-bottom:14px">New note</button>
-  ${ns.length?`<div class="card" style="padding:0;overflow:hidden">${ns.map(n=>{
-      const open=planState.openNote===n.id;
-      const editing=planState.editNote===n.id;
-      const title=firstLine(noteTitle(n), 52);
-      const body=n.title.trim()?(n.body||'').trim():restAfterFirstLine(n.body||'',Infinity).trim();   // untitled: the first line is already the headline
-      return `<div class="planfold noterowfold ${open?'open':''}" data-noterow="${n.id}">
-        <button type="button" class="noterow" data-notetog="${n.id}">
-          <div class="grow"><div class="row between" style="gap:10px;align-items:baseline">
-            <b class="planfold-title">${esc(title)}</b>
-            <span class="tiny muted" style="flex:none">${fmt(dkey(new Date(n.createdAt)),{day:'numeric',month:'short',year:'2-digit'})}</span>
-          </div></div><span class="chev">${open?'‹':'›'}</span>
-        </button>
-        ${open?`<div class="planfold-body" data-notebody="${n.id}">
-          ${editing?`<input type="text" class="ntitle" data-note-title="${n.id}" maxlength="400" value="${esc(n.title||'')}" placeholder="Title" style="width:100%;margin-bottom:8px">
-            <textarea data-note-body="${n.id}" rows="6" placeholder="Write anything…" style="width:100%;resize:vertical">${esc(n.body||'')}</textarea>
-            <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-              <button type="button" class="btn primary sm" data-notesave="${n.id}">Save</button>
-              <button type="button" class="btn sm ghost" data-notecancel="${n.id}">Cancel</button>
-              <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
-            </div>`
-          :`<p style="white-space:pre-wrap;overflow-wrap:anywhere">${body?esc(body):`<span class="muted">${n.title.trim()?'No text yet':'That’s the whole note.'}</span>`}</p>
-            <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-              <button type="button" class="btn sm primary" data-noteedit="${n.id}">Edit</button>
-              <button type="button" class="btn sm ghost" data-note="${n.id}">Full editor</button>
-            </div>`}
-        </div>`:''}
-      </div>`; }).join('')}</div>`:
+  const all=notesSorted(), ns=notesFiltered();
+  const pinned=ns.filter(n=>n.pinned), rest=ns.filter(n=>!n.pinned);
+  return `<div class="notes-actions">
+    <button class="btn primary" id="newnote">${NICON.plus}New note</button>
+    <button class="btn" id="newlist">${NICON.list}New list</button></div>
+  ${ns.length?`${pinned.length?`<p class="notes-h">Pinned</p>${noteGrid(pinned)}`:''}${rest.length?`${pinned.length?'<p class="notes-h">Others</p>':''}${noteGrid(rest)}`:''}`:
     all.length?`<div class="card empty"><b>Nothing matched</b>Try another word.</div>`:
-    `<div class="card empty"><b>No notes</b>Somewhere to write things down.</div>`}`;
+    `<div class="card empty"><b>No notes yet</b>Jot something down, or start a list you can tick off.</div>`}`;
 }
 
 function pAffirmations(){
@@ -3972,7 +4017,8 @@ function vShop(){
         <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
         <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
           al.maxed?`That's it for ${al.period}` : !afford?`${cost-S.points.coins} more coins` : al.intoExtra?'Use an extra buy' : al.over?'Buy the spare one' : 'Buy'}</button>`;})()}</div>`}).join('');})():`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
-  <div class="section"><h2>Looks <span class="muted">${looks().owned.filter(id=>lookItem(id)&&!lookItem(id).legacy).length} of ${LOOK_ITEMS.filter(i=>!i.legacy).length}</span></h2>
+  <div class="section"><h2>Looks <span class="muted">${(()=>{ const sx=sexOf(myChar()), mine=LOOK_ITEMS.filter(i=>!i.legacy&&suits(i.id,sx));
+    return `${mine.filter(i=>ownsLook(i.id)).length} of ${mine.length}`; })()}</span></h2>
     <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
       <span class="avatar big img">${charSVG(myChar(),64)}</span>
       <div><b>Your character</b><p class="tiny muted">Faces, hairstyles, outfits, face details, glasses, hats and backdrops.</p></div></div>
@@ -4215,13 +4261,13 @@ function vSettings(){
     <p><b style="color:var(--fg)">Challenges.</b> Start one from a chat — pick who's in, a tier and a challenge — and it begins once everyone accepts. Common, Rare and Legendary share the same four (clear streak, coin haul, show up, shop silence), just harder with bigger chests; Rare may add an extra Shop buy for the week and Legendary always adds two. One Legendary, one Rare and two Common can run at once. Finish one and it's locked until next month; fail and you can try again tomorrow.</p>
     <p><b style="color:var(--fg)">Plan.</b> Your list, notes and affirmations. None of it earns coins or can be failed. List items can have a date, and a time if you'd like a reminder; unfinished ones wait under Overdue until you tick them or tap <i>Move all to tomorrow</i>.</p>
     <p><b style="color:var(--fg)">Tab dots.</b> A dot on a tab means something new is waiting there.</p>
-    <p><b style="color:var(--fg)">Notes.</b> Notes save as you type, and the one you used last sits at the top. Search finds any word in the title or text. Delete one with the bin in the full editor; an empty note deletes itself.</p>
+    <p><b style="color:var(--fg)">Notes.</b> <i>New note</i> is for writing; <i>New list</i> is a checklist — tick things off and they drop to the bottom. Everything saves as you type. Inside a note, the top bar pins it above the rest, gives it a colour, switches between text and checklist, shares it, or deletes it (with Undo). Search finds any word in titles, text and list items, and an empty note tidies itself away.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like: one greets you when you first open the app each day, and a random one sits at the top of each tab. Tap one to read it all; <i>Bring to top</i> moves it up the list.</p>
     <p><b style="color:var(--fg)">Reminders.</b> A morning nudge, an evening one if anything's left, an optional affirmation, and anything on your list with a time. ${pushKey()?'Morning and evening ones arrive even when the app is closed. ':'For now they only arrive while the app is open or recently used. '}If your browser blocks notifications, the Reminders panel shows how to allow them.</p>
 
     <p><b style="color:var(--fg)">Friends.</b> Add a friend's code and you're linked both ways. Chats use set phrases and emoji only — no free typing. There's no leaderboard, on purpose.</p>
     <p><b style="color:var(--fg)">Accounts.</b> An account backs up your data and lets you add friends; everything else works without one. It backs itself up a few seconds after anything changes. Forgotten your password? Tap <i>Forgotten your password?</i> on the sign-in screen for a reset code.</p>
-    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture at the top right. Mix any face with any skin tone, hairstyle, hair colour, outfit, face detail, glasses, hat and backdrop. Starters are free; the rest cost up to ${MAX_LOOK_COST} coins.</p>
+    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture at the top right. Pick <i>Women</i> or <i>Men</i> at the top and you'll only see that set's faces, hair, outfits and extras — switch any time and each set remembers its look. Mix any face with any skin tone, hairstyle, hair colour, outfit, face detail, glasses, hat and backdrop. Starters are free; the rest cost up to ${MAX_LOOK_COST} coins.</p>
     <p><b style="color:var(--fg)">Your picture.</b> Prefer a photo? Tap your picture at the top right and choose <i>Use an image</i> — any square image works. It's shrunk small so friends can see it; remove it to go back to your character.</p>
     <p><b style="color:var(--fg)">Friend details.</b> On Friends, open a friend and tap their card to see your time together: chests won, coins, tiers and dates.</p>
     <p><b style="color:var(--fg)">Light and dark.</b> Settings → Customise → Appearance. Auto follows your phone, or pick Light or Dark.</p>
@@ -4245,7 +4291,7 @@ function bind(){
   updateConfirm();
   // Progress
   // Plan — list
-  qa('[data-psub]').forEach(b=>b.onclick=()=>{ endNoteEdit(); planState.sub=b.dataset.psub; planState.openAff=planState.editAff=planState.openNote=planState.editNote=null; haptic(); render(); window.scrollTo({top:0}); });
+  qa('[data-psub]').forEach(b=>b.onclick=()=>{ planState.sub=b.dataset.psub; planState.openAff=planState.editAff=null; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-fsub]').forEach(b=>b.onclick=()=>{ friendsState.sub=b.dataset.fsub; friendsState.open=null; haptic(); render(); window.scrollTo({top:0}); });
   qa('[data-ftog]').forEach(b=>b.onclick=()=>{ const id=b.dataset.ftog; friendsState.open=friendsState.open===id?null:id; haptic(); render(); });
   qa('[data-acceptchal]').forEach(b=>b.onclick=()=>acceptChallenge(b.dataset.acceptchal));
@@ -4272,39 +4318,9 @@ function bind(){
   qa('[data-tdrop]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); const t=S.todos.find(x=>x.id===b.dataset.tdrop); dropTodo(b.dataset.tdrop); haptic(); render();
     toast('Removed','Undo',()=>{ S.todos.push(t); save(); render(); }); });
   // Plan — notes
-  const nn=q('#newnote'); if(nn) nn.onclick=()=>{ endNoteEdit(); planState.noteQ=''; const n=addNote(); beginNoteEdit(n); haptic(); render();
-    setTimeout(()=>document.querySelector(`[data-note-title="${n.id}"]`)?.focus(),40); };
-  qa('[data-note]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
-    if(planState.editNote===b.dataset.note){ planState.editNote=null; planState.noteSnap=null; }   // the full editor takes over; it keeps what was typed
-    noteEditor(b.dataset.note); });
-  qa('[data-notetog]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
-    const id=b.dataset.notetog;
-    if(planState.editNote===id) return;
-    endNoteEdit();
-    if(planState.openNote===id){ planState.openNote=null; }
-    else { planState.openNote=id; planState.openAff=planState.editAff=null; }
-    haptic(); render(); });
-  qa('[data-notebody]').forEach(b=>b.onclick=e=>{
-    if(planState.editNote===b.dataset.notebody) return;
-    if(e.target.closest('button,input,textarea,a')) return;
-    planState.openNote=null; haptic(); render();
-  });
-  qa('[data-noteedit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
-    const n=S.notes.find(x=>x.id===b.dataset.noteedit); if(!n) return;
-    beginNoteEdit(n); haptic(); render();
-    setTimeout(()=>document.querySelector(`[data-note-title="${n.id}"]`)?.focus(),40); });
-  /* Inline edit saves as you type, like the full editor — tapping away never loses words. */
-  qa('[data-note-title],[data-note-body]').forEach(el=>el.oninput=()=>{
-    const n=S.notes.find(x=>x.id===(el.dataset.noteTitle||el.dataset.noteBody)); if(!n) return;
-    if(el.dataset.noteTitle) n.title=el.value; else n.body=el.value;
-    touchNote(n); });
-  qa('[data-note-title]').forEach(el=>el.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); document.querySelector(`[data-note-body="${el.dataset.noteTitle}"]`)?.focus(); } });
-  qa('[data-notesave]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
-    const gone=endNoteEdit(); haptic(gone?'light':'success'); render(); toast(gone?'Empty note removed':'Saved'); });
-  qa('[data-notecancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation();
-    const id=b.dataset.notecancel, snap=planState.noteSnap, n=S.notes.find(x=>x.id===id);
-    if(n && snap && snap.id===id){ n.title=snap.title; n.body=snap.body; n.updatedAt=snap.updatedAt; save(); }
-    endNoteEdit(); haptic(); render(); });
+  const nn=q('#newnote'); if(nn) nn.onclick=()=>{ planState.noteQ=''; const n=addNote(); haptic(); noteEditor(n.id,{fresh:true}); };
+  const nlist=q('#newlist'); if(nlist) nlist.onclick=()=>{ planState.noteQ=''; const n=addNote(true); haptic(); noteEditor(n.id,{fresh:true}); };
+  qa('[data-noteopen]').forEach(b=>b.onclick=()=>{ haptic(); noteEditor(b.dataset.noteopen); });
   const nsearch=q('#notesearch'); if(nsearch){ nsearch.oninput=()=>{ planState.noteQ=nsearch.value; render(); const el=document.getElementById('notesearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
   // Friends  // Friends
   qa('[data-authmode]').forEach(b=>b.onclick=()=>{ authState.mode=b.dataset.authmode; haptic(); render(); });
@@ -4450,7 +4466,7 @@ function bind(){
     const id=b.dataset.afftog;
     if(planState.editAff===id) return;
     if(planState.openAff===id){ planState.openAff=null; planState.editAff=null; }
-    else { planState.openAff=id; planState.editAff=null; planState.openNote=planState.editNote=null; }
+    else { planState.openAff=id; planState.editAff=null; }
     haptic(); render();
   });
   qa('[data-affbody]').forEach(b=>b.onclick=e=>{
@@ -4749,38 +4765,152 @@ function moveSheet(t){
   o.querySelector('[data-mvpick]').onclick=()=>{ close(o); promptDate('When?',t.day&&t.day>today()?t.day:addDays(today(),2),d=>{ setTodoDay(t.id,d); haptic(); render(); }); };
   o.querySelector('#mvatsave').onclick=()=>{ setTodoTime(t.id,o.querySelector('#mvat').value||null); haptic(); close(o); render(); toast(t.at?`Reminder at ${t.at}`:'Time cleared'); };
 }
-function noteEditor(id){
+/* Full-screen note: title, then text or a checklist. Saves on every keystroke, so closing the app mid-sentence
+   loses nothing. The bar pins it, tints it, switches text ⇄ checklist, shares it and deletes it (with Undo). */
+function noteEditor(id,{fresh=false}={}){
   const n=S.notes.find(x=>x.id===id); if(!n) return;
   migrateNote(n);
-  touchNote(n);                                        // opening it counts as using it
+  n.updatedAt=Date.now(); saveQuiet();                 // opening it brings it to the top; the "Edited" time stays put
+  let showDone=true;
   const g=document.createElement('div'); g.className='gate noteedit';
   g.innerHTML=`
     <div class="noteedit-bar">
       <button class="btn ghost sm" data-back>‹ Notes</button>
-      <span class="tiny muted" id="nsaved"></span>
-      <button class="iconbtn" data-del aria-label="Delete note">${ICON.trash}</button>
+      <div class="nbar-tools">
+        <button class="iconbtn" data-pin></button>
+        <button class="iconbtn" data-colour aria-label="Colour">${NICON.palette}</button>
+        <button class="iconbtn" data-kind></button>
+        <button class="iconbtn" data-share aria-label="Share">${NICON.share}</button>
+        <button class="iconbtn" data-del aria-label="Delete note">${ICON.trash}</button>
+      </div>
     </div>
-    <div class="noteedit-head">
-      <input type="text" id="ntitle" class="ntitle" placeholder="Title" maxlength="400" value="${esc(n.title||'')}">
-      <span class="tiny muted ndate">${fmt(dkey(new Date(n.createdAt)),{weekday:'short',day:'numeric',month:'short',year:'numeric'})}</span>
-    </div>
-    <textarea id="nbody" class="nbody" placeholder="Write anything…">${esc(n.body||'')}</textarea>`;
+    <div class="ncolours" hidden>${[[null,null],...NOTE_COLOURS].map(([k,h])=>`<button type="button" class="${k?'':'none'}" data-ncol="${k||''}"${h?` style="--nc:${h}"`:''} aria-label="${k?k[0].toUpperCase()+k.slice(1):'No colour'}"></button>`).join('')}</div>
+    <div class="noteedit-scroll">
+      <input type="text" id="ntitle" class="ntitle" placeholder="Title" maxlength="400" value="${esc(n.title||'')}" enterkeyhint="next">
+      <div class="nmeta" id="nmeta"></div>
+      <div id="nmain"></div>
+    </div>`;
   document.body.appendChild(g);
+  const ti=g.querySelector('#ntitle'), main=g.querySelector('#nmain'), meta=g.querySelector('#nmeta'), sc=g.querySelector('.noteedit-scroll');
 
-  const ti=g.querySelector('#ntitle'), ta=g.querySelector('#nbody'), st=g.querySelector('#nsaved');
-  const flag=()=>{ st.textContent='Saved'; clearTimeout(flag.t); flag.t=setTimeout(()=>st.textContent='',1200); };
-  /* Stored on every keystroke (no delay) so closing the app mid-sentence loses nothing. */
-  const store=()=>{ n.title=ti.value; n.body=ta.value; touchNote(n); flag(); };
-  ti.oninput=store; ta.oninput=store;
-  ti.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); ta.focus(); } };
+  /* This editor's copy is the truth: if a backup restore swapped the notes underneath, put this one back. */
+  const keep=()=>{ const i=S.notes.findIndex(x=>x.id===id); if(i<0) S.notes.unshift(n); else if(S.notes[i]!==n) S.notes[i]=n; };
+  const edited=()=>{ keep(); n.updatedAt=n.editedAt=Date.now(); save(); meta.textContent=editedLabel(n); };
+  const grow=el=>{ const top=sc.scrollTop; el.style.height='auto'; el.style.height=el.scrollHeight+'px'; sc.scrollTop=top; };
+  const paint=()=>{
+    const c=noteHex(n.color);
+    if(c){ g.dataset.c=n.color; g.style.setProperty('--nc',c); } else { delete g.dataset.c; g.style.removeProperty('--nc'); }
+    const pb=g.querySelector('[data-pin]'); pb.innerHTML=n.pinned?NICON.pinOn:NICON.pin; pb.classList.toggle('on',n.pinned);
+    pb.setAttribute('aria-label',n.pinned?'Unpin':'Pin to the top'); pb.setAttribute('aria-pressed',String(n.pinned));
+    const kb=g.querySelector('[data-kind]'); kb.innerHTML=isList(n)?NICON.text:NICON.list;
+    kb.setAttribute('aria-label',isList(n)?'Turn into a text note':'Turn into a checklist');
+    g.querySelectorAll('[data-ncol]').forEach(b=>b.classList.toggle('on',(b.dataset.ncol||null)===(n.color||null)));
+    meta.textContent=editedLabel(n);
+  };
 
-  const leave=()=>{ n.title=ti.value; n.body=ta.value;
-    if(noteEmpty(n)) dropNote(id); else touchNote(n);
-    g.remove(); render(); };
+  /* ---- text ---- */
+  const drawText=()=>{
+    main.innerHTML=`<textarea id="nbody" class="nbody" placeholder="Note">${esc(n.body||'')}</textarea>`;
+    const ta=main.querySelector('#nbody');
+    ta.oninput=()=>{ n.body=ta.value; grow(ta); edited(); };
+    requestAnimationFrame(()=>grow(ta));
+    return ta;
+  };
+
+  /* ---- checklist: Enter adds the next item, Backspace on an empty one removes it, ticked items drop to the bottom ---- */
+  const row=i=>`<div class="nl-row ${i.done?'done':''}">
+      <button type="button" class="nl-check" data-tick="${i.id}" aria-label="${i.done?'Untick':'Tick'}">${ICON.check}</button>
+      <textarea class="nl-text" rows="1" data-itext="${i.id}" placeholder="List item" enterkeyhint="next">${esc(i.text)}</textarea>
+      <button type="button" class="nl-x" data-xitem="${i.id}" aria-label="Remove item">×</button></div>`;
+  const item=iid=>n.items.find(x=>x.id===iid);
+  const drawList=(focusId,caret=true)=>{
+    const open=n.items.filter(i=>!i.done), done=n.items.filter(i=>i.done);
+    main.innerHTML=`<div class="nlist">${open.map(row).join('')}
+      <button type="button" class="nl-add" data-additem>${NICON.plus}<span>List item</span></button>
+      ${done.length?`<div class="nl-donehead"><button type="button" data-showdone>${showDone?'▾':'▸'} ${done.length} ticked</button>
+        <button type="button" data-cleardone>Remove ticked</button></div>${showDone?done.map(row).join(''):''}`:''}</div>`;
+    main.querySelectorAll('.nl-text').forEach(ta=>{
+      grow(ta);
+      ta.oninput=()=>{ const i=item(ta.dataset.itext); if(!i) return;
+        if(ta.value.includes('\n')){                       // pasted lines become one item each
+          const [first,...more]=ta.value.split('\n'); i.text=first;
+          const add=more.filter(t=>t.trim()).map(t=>({id:uid(),text:t,done:false}));
+          n.items.splice(n.items.indexOf(i)+1,0,...add); edited(); drawList((add[add.length-1]||i).id); return; }
+        i.text=ta.value; grow(ta); edited(); };
+      ta.onkeydown=e=>{ const i=item(ta.dataset.itext); if(!i) return;
+        if(e.key==='Enter' && !e.shiftKey && !e.isComposing){
+          e.preventDefault();
+          const at=ta.selectionStart, ni={id:uid(),text:ta.value.slice(at),done:false};
+          i.text=ta.value.slice(0,at); n.items.splice(n.items.indexOf(i)+1,0,ni); edited(); drawList(ni.id,false);
+        } else if(e.key==='Backspace' && !ta.value){
+          e.preventDefault();
+          const same=[...main.querySelectorAll('.nl-row'+(i.done?'.done':':not(.done)')+' .nl-text')];
+          const prev=same[same.indexOf(ta)-1]||same[same.indexOf(ta)+1];
+          n.items.splice(n.items.indexOf(i),1); edited(); haptic(); drawList(prev&&prev.dataset.itext);
+        }
+      };
+    });
+    main.querySelectorAll('[data-tick]').forEach(b=>b.onclick=()=>{ const i=item(b.dataset.tick); if(!i) return;
+      i.done=!i.done; haptic(); edited(); drawList(); });
+    main.querySelectorAll('[data-xitem]').forEach(b=>b.onclick=()=>{ const i=item(b.dataset.xitem); if(!i) return;
+      n.items.splice(n.items.indexOf(i),1); edited(); haptic(); drawList(); });
+    main.querySelector('[data-additem]').onclick=()=>{
+      const last=[...n.items].reverse().find(i=>!i.done), ni={id:uid(),text:'',done:false};
+      n.items.splice(last?n.items.indexOf(last)+1:0,0,ni); keep(); drawList(ni.id); };
+    const sd=main.querySelector('[data-showdone]'); if(sd) sd.onclick=()=>{ showDone=!showDone; haptic(); drawList(); };
+    const cd=main.querySelector('[data-cleardone]'); if(cd) cd.onclick=()=>{
+      const gone=n.items.filter(i=>i.done); n.items=n.items.filter(i=>!i.done); edited(); haptic(); drawList();
+      toast(`Removed ${gone.length} ticked`,'Undo',()=>{ if(!isList(n)) return; n.items.push(...gone); edited(); if(g.isConnected) drawList(); else render(); }); };
+    if(focusId){ const el=main.querySelector(`[data-itext="${focusId}"]`);
+      if(el){ el.focus(); const at=caret===true?el.value.length:caret===false?0:caret; el.setSelectionRange(at,at); } }
+  };
+
+  /* ---- bar ---- */
+  g.querySelector('[data-pin]').onclick=()=>{ keep(); n.pinned=!n.pinned; save(); haptic(); paint(); toast(n.pinned?'Pinned to the top':'Unpinned'); };
+  const pal=g.querySelector('.ncolours');
+  g.querySelector('[data-colour]').onclick=()=>{ pal.hidden=!pal.hidden; haptic(); };
+  g.querySelectorAll('[data-ncol]').forEach(b=>b.onclick=()=>{ keep(); n.color=b.dataset.ncol||null; save(); haptic(); paint(); });
+  g.querySelector('[data-kind]').onclick=()=>{
+    if(isList(n)){
+      n.body=n.items.filter(i=>i.text.trim()).map(i=>(i.done?'✓ ':'')+i.text).join('\n'); delete n.items;
+      edited(); paint(); drawText(); toast('Now a text note');
+    } else {
+      const lines=(n.body||'').split('\n').map(l=>l.trim()).filter(Boolean);
+      n.items=lines.map(l=>({id:uid(), done:/^(\[[xX]\]|[✓✔☑])/.test(l), text:l.replace(/^(\[[ xX]?\]\s*|[✓✔☑☐]\s*|[-*•]\s+)/,'')}));
+      if(!n.items.length) n.items=[{id:uid(),text:'',done:false}];
+      n.body=''; edited(); paint(); drawList(n.items.length===1&&!n.items[0].text?n.items[0].id:null); toast('Now a checklist');
+    }
+    haptic();
+  };
+  g.querySelector('[data-share]').onclick=async()=>{
+    const body=isList(n)?n.items.filter(i=>i.text.trim()).map(i=>(i.done?'☑ ':'☐ ')+i.text).join('\n'):(n.body||'').trim();
+    const text=[n.title.trim(),body].filter(Boolean).join('\n\n');
+    if(!text){ toast('Nothing to share yet'); return; }
+    try{ if(navigator.share){ await navigator.share({title:n.title.trim()||'Note',text}); return; } }catch(e){ if(e?.name==='AbortError') return; }
+    try{ await navigator.clipboard.writeText(text); toast('Copied — paste it anywhere'); }catch(e){ toast('Could not share it'); }
+  };
+  const leave=()=>{
+    if(isList(n) && n.items.some(i=>!i.text.trim())) n.items=n.items.filter(i=>i.text.trim());   // blank rows go
+    if(noteEmpty(n)){ dropNote(id); if(!fresh) toast('Empty note removed'); }
+    else { keep(); save(); }
+    g.remove(); render();
+  };
   g.querySelector('[data-back]').onclick=leave;
-  g.querySelector('[data-del]').onclick=()=>modal('<h2>Delete this note?</h2><p class="muted">It cannot be recovered.</p>','Delete',()=>{ dropNote(id); if(planState.openNote===id) planState.openNote=null; g.remove(); render(); toast('Note deleted'); },true);
+  g.querySelector('[data-del]').onclick=()=>{
+    if(noteEmpty(n)){ leave(); return; }
+    keep(); const at=S.notes.findIndex(x=>x.id===id);
+    dropNote(id); g.remove(); haptic(); render();
+    toast('Note deleted','Undo',()=>{ if(S.notes.some(x=>x.id===id)) return; S.notes.splice(Math.max(0,at),0,n); save(); render(); });
+  };
+  ti.oninput=()=>{ n.title=ti.value; edited(); };
+  ti.onkeydown=e=>{ if(e.key!=='Enter') return; e.preventDefault();
+    if(!isList(n)){ main.querySelector('#nbody')?.focus(); return; }
+    const first=n.items.find(i=>!i.done); if(first) main.querySelector(`[data-itext="${first.id}"]`)?.focus(); else main.querySelector('[data-additem]').click(); };
 
-  setTimeout(()=>{ (n.title||n.body?ta:ti).focus(); },120);
+  paint();
+  const ta=isList(n)?null:drawText();
+  if(isList(n)) drawList(fresh?n.items[0]?.id:null);
+  else if(fresh) ta.focus();                            // straight in while the tap still counts, so phones raise the keyboard
 }
 
 
@@ -5308,18 +5438,21 @@ function charSheet(){
   let tab='face';
   const o=overlay(`<div class="sheet sheet-looks"><div class="grab"></div>
     <div class="charpreview" id="cprev"></div>
-    <div class="seg seg-scroll" id="ctabs" style="margin:12px 0"></div>
+    <div class="seg sexseg" id="csex" role="group" aria-label="Women's or men's looks"></div>
+    <div class="seg seg-scroll" id="ctabs" style="margin:10px 0 12px"></div>
     <div id="cbody" class="looks-body"></div>
     <div class="foot"><button class="btn" data-x>Done</button></div></div>`);
   const TABS=[['face','Face'],['skin','Skin'],['hairc','Hair colour'],...SLOTS.map(([k,l])=>[k,l])];
+  if(!myChar().sex){ myChar().sex=sexOf(myChar()); fitSex(myChar()); save(); }   // older characters: start from their look
   const draw=()=>{
-    const a=myChar();
+    const a=myChar(), sx=sexOf(a);
     o.querySelector('#cprev').innerHTML=charFullSVG(a);
+    o.querySelector('#csex').innerHTML=[['f','Women'],['m','Men']].map(([k,l])=>`<button class="${sx===k?'on':''}" data-csex="${k}">${l}</button>`).join('');
     o.querySelector('#ctabs').innerHTML=TABS.map(([k,l])=>`<button class="${tab===k?'on':''}" data-ctab="${k}">${l}</button>`).join('');
     const body=o.querySelector('#cbody');
     if(tab==='face'){
-      const core=BASES.filter(b=>b.group!=='extra');
-      const extra=BASES.filter(b=>b.group==='extra');
+      const core=BASES.filter(b=>b.group!=='extra'&&suits(b.id,sx));
+      const extra=BASES.filter(b=>b.group==='extra'&&suits(b.id,sx));
       body.innerHTML=`<div class="charGrid">${core.map(bs=>`<button class="charpick ${a.base===bs.id?'on':''}" data-cbase="${bs.id}" title="${esc(bs.name)}">
         ${charSVG({...a,base:bs.id},'chip')}</button>`).join('')}</div>
         <p class="tiny muted" style="margin-top:8px">${core.length} everyday faces. Skin, hair and clothes are picked separately, so any face works with any look.</p>
@@ -5332,13 +5465,13 @@ function charSheet(){
       const custom=isHex(a.hairCol);
       body.innerHTML=`<div class="swatches">${HAIR_COLOURS.map(c=>`<button class="sw ${a.hairCol===c.id?'on':''}" data-chair="${c.id}" style="background:${c.hex}" title="${esc(c.name)}" aria-label="${esc(c.name)}"></button>`).join('')}
           <label class="sw swcustom ${custom?'on':''}" title="Any colour" style="background:${custom?a.hairCol:'conic-gradient(#ff5f8a,#ffd166,#7fd8be,#5b8def,#b9a0f2,#ff5f8a)'}"><input type="color" id="haircustom" value="${hairHex(a)}" aria-label="Pick any hair colour"></label></div>
-        <p class="tiny muted" style="margin-top:8px">Any hairstyle, any colour — the rainbow circle picks an exact shade. Colours your hair, brows and any beard too.</p>`;
+        <p class="tiny muted" style="margin-top:8px">Any hairstyle, any colour — the rainbow circle picks an exact shade. Colours your hair and brows${sx==='m'?', and any beard':''} too.</p>`;
     } else {
-      const items=LOOK_ITEMS.filter(i=>i.slot===tab && !i.legacy);
+      const items=LOOK_ITEMS.filter(i=>i.slot===tab && !i.legacy && suits(i.id,sx));
       const optional=tab==='glasses'||tab==='hat'||tab==='facial';
       const tip = tab==='outfit' ? 'Whole looks, top to shoes — including this season’s trends. '
-        : tab==='hat' ? 'Hats sit on your hair; the hijab covers it. '
-        : tab==='facial' ? 'Freckles, lashes, lipstick, stickers or a beard — None clears it. '
+        : tab==='hat' ? (sx==='m'?'Hats sit on your hair. ':'Hats sit on your hair; the hijab covers it. ')
+        : tab==='facial' ? (sx==='m'?'Freckles, stubble or a beard — None clears it. ':'Freckles, lashes, lipstick or stickers — None clears it. ')
         : tab==='hair' ? 'Every hair style works on every face. '
         : '';
       body.innerHTML=`<div class="lookGrid">
@@ -5354,6 +5487,7 @@ function charSheet(){
       <p class="tiny muted" style="margin-top:8px">${tip}Locked items cost coins. Any item works on any face.</p>`;
     }
     o.querySelectorAll('[data-ctab]').forEach(b=>b.onclick=()=>{ tab=b.dataset.ctab; draw(); });
+    o.querySelectorAll('[data-csex]').forEach(b=>b.onclick=()=>{ setSex(b.dataset.csex); save(); haptic(); draw(); });
     o.querySelectorAll('[data-cbase]').forEach(b=>b.onclick=()=>{ myChar().base=b.dataset.cbase; save(); haptic(); draw(); });
     o.querySelectorAll('[data-ctone]').forEach(b=>b.onclick=()=>{ myChar().tone=b.dataset.ctone; save(); haptic(); draw(); });
     o.querySelectorAll('[data-chair]').forEach(b=>b.onclick=()=>{ myChar().hairCol=b.dataset.chair; save(); haptic(); draw(); });

@@ -62,6 +62,34 @@ export const FACES = [
   { id: 'bx5', name: 'Game face', e: 'cool', m: 'flat', b: 'determined', group: 'extra' },
 ];
 
+/* ---------- women's and men's sets ----------
+   Each character is a woman or a man; the editor then only offers that set. Anything not listed suits both. */
+const ONLY = {
+  f: new Set([
+    'b5', 'b10', 'b18', 'b23', 'b24', 'bx4',
+    'h-long', 'h-bob', 'h-no2', 'h-fringe', 'h-bangs2', 'h-medium2', 'h-medium3', 'h-bun2', 'h-wavy', 'h-longbangs', 'h-mbangs2',
+    'h-mbangs3', 'h-braids', 'h-space', 'h-dreads2', 'h-twists', 'h-twists2', 'h-bantu', 'h-graymed', 'h-graybun', 'h-bear',
+    'fh-goat1', 'fh-mous4', 'fh-mous5', 'fh-mous6', 'fh-mous7', 'fh-mous8', 'fh-mous9', 'fh-full3', 'fh-full4',
+    'g-cats', 'g-glass4', 'g-glass5', 'a-hijab', 'a-bowbig', 'a-crown', 'a-tiara',
+    'o-tee', 'o-sky', 'o-mint', 'o-hivis', 'o-dress', 'o-berry', 'o-rust', 'o-violet', 'o-coquette', 'o-ballet', 'o-y2k', 'o-tennis', 'o-boho', 'o-sport',
+  ]),
+  m: new Set([
+    'h-crop', 'h-side', 'h-short2', 'h-short4', 'h-shaved1', 'h-no1', 'h-buzz', 'h-shaved3', 'h-short5', 'h-no3', 'h-quiff', 'h-undercut',
+    'h-flattopL', 'h-mohawk',
+    'fh-mous2', 'fh-full', 'fh-full2', 'fh-goat2', 'fh-mous3',
+    'o-navy', 'o-coral', 'o-retro', 'o-forest',
+  ]),
+};
+/* Does this item belong in the women's ('f') or men's ('m') set? */
+export function suits(id, sex) { return !id || !(sex === 'f' ? ONLY.m : sex === 'm' ? ONLY.f : new Set()).has(id); }
+/* A character's set: chosen in the editor, or (for older characters) worked out from the hair, face details and outfit. */
+export function sexOf(a) {
+  if (!a) return 'f';
+  if (a.sex === 'f' || a.sex === 'm') return a.sex;
+  for (const id of [a.hair, a.facial, a.outfit]) { if (ONLY.m.has(id)) return 'm'; if (ONLY.f.has(id)) return 'f'; }
+  return 'f';
+}
+
 /* ---------- catalogue art keys, by item id (ids and prices live in the app) ---------- */
 export const HAIR = {
   // free
@@ -191,6 +219,7 @@ export const BACKDROP_SWATCH = { plain: '#eef1f0', sunset: '#f7a77a', mint: '#a8
 
 /* ---------- geometry ---------- */
 const HEAD = 'M100 46C128 46 142 66 142 92C142 119 123 137 100 137C77 137 58 119 58 92C58 66 72 46 100 46Z';
+const HEAD_M = 'M100 46C128 46 142 66 142 92C142 112 137 125 125 132C117 136.5 108 138 100 138C92 138 83 136.5 75 132C63 125 58 112 58 92C58 66 72 46 100 46Z';   // squarer jaw
 const BODY = 'M30 202C30 172 52 156 84 151L116 151C148 156 170 172 170 202Z';
 const EYE_Y = 99, EL = 83, ER = 117, MOUTH_Y = 120;
 
@@ -309,8 +338,8 @@ function hairFront(k, c, d, l) {
   }
 }
 
-function eyes(kind, skin, iris) {
-  const doll = (x, lashes) => `<ellipse cx="${x}" cy="${EYE_Y}" rx="7.2" ry="8.8" fill="${iris}"/><ellipse cx="${x}" cy="${EYE_Y + 2.5}" rx="5" ry="5" fill="${shade(iris, 0.25)}" opacity=".55"/><circle cx="${x - 2.4}" cy="${EYE_Y - 3.4}" r="2.8" fill="#fff"/><circle cx="${x + 2.6}" cy="${EYE_Y + 3}" r="1.3" fill="#fff"/>` + (lashes ? `<path d="M${x - 8} ${EYE_Y - 5}Q${x} ${EYE_Y - 12} ${x + 8} ${EYE_Y - 5}" stroke="#2a1d1f" stroke-width="2.4" fill="none" stroke-linecap="round"/>` + (x < 100 ? `<path d="M${x - 7.5} ${EYE_Y - 5.5}L${x - 11} ${EYE_Y - 8.5}M${x - 5.5} ${EYE_Y - 8}L${x - 8} ${EYE_Y - 11.5}" stroke="#2a1d1f" stroke-width="2" stroke-linecap="round"/>` : `<path d="M${x + 7.5} ${EYE_Y - 5.5}L${x + 11} ${EYE_Y - 8.5}M${x + 5.5} ${EYE_Y - 8}L${x + 8} ${EYE_Y - 11.5}" stroke="#2a1d1f" stroke-width="2" stroke-linecap="round"/>`) : '');
+function eyes(kind, skin, iris, male) {
+  const doll = (x, lash) => { const lashes = lash && !male; return  `<ellipse cx="${x}" cy="${EYE_Y}" rx="7.2" ry="8.8" fill="${iris}"/><ellipse cx="${x}" cy="${EYE_Y + 2.5}" rx="5" ry="5" fill="${shade(iris, 0.25)}" opacity=".55"/><circle cx="${x - 2.4}" cy="${EYE_Y - 3.4}" r="2.8" fill="#fff"/><circle cx="${x + 2.6}" cy="${EYE_Y + 3}" r="1.3" fill="#fff"/>` + (lashes ? `<path d="M${x - 8} ${EYE_Y - 5}Q${x} ${EYE_Y - 12} ${x + 8} ${EYE_Y - 5}" stroke="#2a1d1f" stroke-width="2.4" fill="none" stroke-linecap="round"/>` + (x < 100 ? `<path d="M${x - 7.5} ${EYE_Y - 5.5}L${x - 11} ${EYE_Y - 8.5}M${x - 5.5} ${EYE_Y - 8}L${x - 8} ${EYE_Y - 11.5}" stroke="#2a1d1f" stroke-width="2" stroke-linecap="round"/>` : `<path d="M${x + 7.5} ${EYE_Y - 5.5}L${x + 11} ${EYE_Y - 8.5}M${x + 5.5} ${EYE_Y - 8}L${x + 8} ${EYE_Y - 11.5}" stroke="#2a1d1f" stroke-width="2" stroke-linecap="round"/>`) : ''); };
   const arcUp = x => `<path d="M${x - 7} ${EYE_Y + 2}Q${x} ${EYE_Y - 7} ${x + 7} ${EYE_Y + 2}" stroke="#2a1d1f" stroke-width="3" fill="none" stroke-linecap="round"/>`;
   const arcDown = x => `<path d="M${x - 7} ${EYE_Y - 1}Q${x} ${EYE_Y + 6} ${x + 7} ${EYE_Y - 1}" stroke="#2a1d1f" stroke-width="3" fill="none" stroke-linecap="round"/>`;
   const heart = x => `<path transform="translate(${x} ${EYE_Y - 4})" d="M0 3C-3-4-12-2-10 5C-8 10 0 13 0 13C0 13 8 10 10 5C12-2 3-4 0 3Z" fill="#ff4f8b"/><circle cx="${x - 4}" cy="${EYE_Y - 2}" r="1.6" fill="#fff"/>`;
@@ -330,9 +359,9 @@ function eyes(kind, skin, iris) {
     default: return doll(EL, true) + doll(ER, true);
   }
 }
-function brows(kind, col) {
-  const s = `stroke="${col}" stroke-width="2.6" fill="none" stroke-linecap="round"`;
-  const y = 85;
+function brows(kind, col, male) {
+  const s = `stroke="${col}" stroke-width="${male ? 3.8 : 2.6}" fill="none" stroke-linecap="round"`;
+  const y = male ? 86 : 85;
   switch (kind) {
     case 'raised': return `<path d="M${EL - 7} ${y - 3}Q${EL} ${y - 9} ${EL + 7} ${y - 4}" ${s}/><path d="M${ER - 7} ${y - 4}Q${ER} ${y - 9} ${ER + 7} ${y - 3}" ${s}/>`;
     case 'determined': return `<path d="M${EL - 7} ${y - 3}L${EL + 7} ${y + 1}" ${s}/><path d="M${ER - 7} ${y + 1}L${ER + 7} ${y - 3}" ${s}/>`;
@@ -601,12 +630,13 @@ function parts(a, uid) {
   const browC = lum(hairC) > 0.6 ? shade(hairC, -0.45) : shade(hairC, -0.1);
   const skinD = shade(tone, -0.12), lip = shade(tone, -0.45);
   const hij = ht === 'hijab' ? hijab('#e7a3b8', uid) : null;
+  const male = sexOf(a) === 'm';
   let head = `<ellipse cx="58.5" cy="97" rx="6.5" ry="9" fill="${tone}" stroke="${shade(tone, -0.18)}" stroke-width="1"/><ellipse cx="141.5" cy="97" rx="6.5" ry="9" fill="${tone}" stroke="${shade(tone, -0.18)}" stroke-width="1"/><ellipse cx="59.5" cy="97" rx="3" ry="5" fill="${skinD}" opacity=".6"/><ellipse cx="140.5" cy="97" rx="3" ry="5" fill="${skinD}" opacity=".6"/>`;
-  head += `<path d="${HEAD}" fill="${tone}" stroke="${shade(tone, -0.18)}" stroke-width="1"/>`;
-  const bo = face.blush === 2 ? 0.55 : 0.3;
+  head += `<path d="${male ? HEAD_M : HEAD}" fill="${tone}" stroke="${shade(tone, -0.18)}" stroke-width="1"/>`;
+  const bo = face.blush === 2 ? (male ? 0.4 : 0.55) : (male ? 0.1 : 0.3);
   head += `<ellipse cx="77" cy="112" rx="8" ry="4.6" fill="#ff7a9c" opacity="${bo}"/><ellipse cx="123" cy="112" rx="8" ry="4.6" fill="#ff7a9c" opacity="${bo}"/>`;
   if (det) head += detail(det, hairC, tone, 'under');
-  head += eyes(face.e, tone, '#3a2627') + brows(face.b, browC);
+  head += eyes(face.e, tone, '#3a2627', male) + brows(face.b, browC, male);
   head += `<path d="M98 108Q100 110.5 102 108" stroke="${skinD}" stroke-width="2" fill="none" stroke-linecap="round"/>`;
   head += mouth(face.m, lip);
   if (det) head += detail(det, hairC, tone, 'over');
