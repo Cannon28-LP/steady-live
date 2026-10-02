@@ -1,7 +1,7 @@
 {
   "name": "Steady",
   "short_name": "Steady",
-  "description": "A quiet, local-first habit tracker. Keep your word to yourself.",
+  "description": "A quiet habit tracker. Tick off your habits, earn coins, treat yourself.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

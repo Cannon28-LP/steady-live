@@ -12,7 +12,8 @@ const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b')
    consistency and level. Task names, notes, miss reasons and your "why" are never shared with friends
    (the signed-in account backup holds everything, readable only by you — see stripForVault). */
 /* Paste your VAPID public key here to turn on server-sent reminders (see push.sql). */
-const PUSH = { vapidPublic: '' };
+const PUSH = { vapidPublic: '' };   // left empty: the key is read from the server (app_config), so it can change without a release
+const pushKey = () => PUSH.vapidPublic || (typeof S!=='undefined' && S && S.pushKey) || '';
 const SYNC = {
   url:    'https://rjytcvajeysfnfmtgakm.supabase.co',
   anonKey:'sb_publishable_YY7K6b6P_E1HoQxAu_PTsg_MYU0lTeA'
@@ -819,20 +820,29 @@ function urlB64ToUint8(b64){
   const raw=atob((b64+pad).replace(/-/g,'+').replace(/_/g,'/'));
   return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
 }
-async function subscribePush(){
-  if(!pushCapable()||!PUSH.vapidPublic) return null;
-  const reg=await navigator.serviceWorker.ready;
-  let sub=await reg.pushManager.getSubscription();
-  if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(PUSH.vapidPublic)});
-  const j=sub.toJSON(); const c=remindCfg();
-  if(Sync.live()&&Sync.signedIn()){
-    try{ await api('/rest/v1/push_subs?on_conflict=endpoint',{method:'POST',
+/* Keeps this device's row in push_subs in step with the Reminders settings, so reminders arrive when the
+   app is closed. Quiet on purpose: if the server isn't set up yet, nothing nags you about it. */
+async function subscribePush(){ return syncPush(); }
+async function syncPush(){
+  try{
+    if(!pushCapable()||!Sync.live()||!Sync.signedIn()) return null;
+    if(!pushKey()) await Sync.fetchPushKey();
+    const key=pushKey(); if(!key) return null;
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    const c=remindCfg(), wanted=c.on && notifPerm()==='granted';
+    if(!wanted){
+      if(sub) await api(`/rest/v1/push_subs?endpoint=eq.${encodeURIComponent(sub.endpoint)}`,{method:'DELETE',headers:{Prefer:'return=minimal'}}).catch(()=>{});
+      return null;
+    }
+    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(key)});
+    const j=sub.toJSON();
+    await api('/rest/v1/push_subs?on_conflict=endpoint',{method:'POST',
       body:{user_id:S.me.id,endpoint:j.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,
-            tz_offset:-new Date().getTimezoneOffset(),morning:c.morning,evening:c.eveningOn?c.evening:null},
+            tz_offset:-new Date().getTimezoneOffset(),morning:c.morning||null,evening:c.eveningOn?(c.evening||null):null},
       headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
-    }catch(e){ S.syncError=readableSyncError(e); save(); }
-  }
-  return sub;
+    return sub;
+  }catch(e){ console.warn('push', e); return null; }
 }
 async function showLocal(title,body,tag){
   try{
@@ -2047,6 +2057,17 @@ const Sync = {
       headers:{Prefer:'resolution=merge-duplicates,return=minimal'}}); }catch(e){} }
     return await this.restore();
   },
+  /* Deletes the account and everything stored on the server (update-b82.sql). This device keeps its habits. */
+  async deleteAccount(){
+    if(!this.live()||!this.signedIn()) throw new Error('Sign in first.');
+    try{ await api('/rest/v1/rpc/delete_my_account',{method:'POST',body:{}}); }
+    catch(e){ throw new Error(readableSyncError(e)); }
+    const keepName=S.me?.name||'';
+    S.auth='out'; S.session=null; S.friends={}; S.inbox=[]; S.crews=[]; S.msgs={}; S.challenges=[]; S.pairs={};
+    S.vaultAt=null; S.flags.vaultDeclined=null;
+    S.me={id:uid()+uid(),name:keepName,code:newFriendCode()};   // a fresh local identity — the old one no longer exists
+    saveQuiet();
+  },
   async signOut(){
     if(this.live()){ try{ await api('/auth/v1/logout',{method:'POST'}); }catch(e){} }
     S.auth='out'; S.session=null; S.friends={}; S.inbox=[]; save();
@@ -2057,6 +2078,13 @@ const Sync = {
     const code=newFriendCode();
     try{ await api(`/rest/v1/profiles?id=eq.${S.me.id}`,{method:'PATCH',body:{code},headers:{Prefer:'return=minimal'}});
       S.me.code=code; save(); }catch(e){}
+  },
+  /* The public half of the push key lives on the server, so reminders switch on without an app update. */
+  async fetchPushKey(){
+    if(!this.live()) return '';
+    try{ const rows=await api('/rest/v1/app_config?key=eq.vapid_public&select=value',{noAuth:true});
+      const v=rows?.[0]?.value||''; if(v && v!==S.pushKey){ S.pushKey=v; saveQuiet(); } return v; }
+    catch(e){ return ''; }
   },
   async rename(name){
     S.me.name=name; save();
@@ -3872,7 +3900,7 @@ function vFriends(){
         <button class="btn primary block" id="authgo">${authState.mode==='up'?'Create account':'Sign in'}</button>
         ${authState.mode==='in'?`<button class="btn ghost block" id="forgotpw">Forgotten your password?</button>`:''}
       </div>
-      <p class="tiny muted" style="margin-top:12px">${authState.mode==='up'?'An account keeps a private backup of everything — tasks, history, coins, notes, rough days — so a new phone restores it all. Only you can read it; friends only ever see totals.':'Signing in on a new phone restores your tasks, history and coins.'}</p>
+      <p class="tiny muted" style="margin-top:12px">${authState.mode==='up'?'An account keeps a private backup of everything — tasks, history, coins, notes, rough days — so a new phone restores it all. Only you can read it; friends only ever see totals. <a href="./privacy.html" target="_blank" rel="noopener">Privacy</a>':'Signing in on a new phone restores your tasks, history and coins.'}</p>
     </div>
     <div class="card empty"><b>Why an account?</b>Without one, clearing your browser data loses everything. Your habits stay on the device either way — this is just the safety net.</div>`;
 
@@ -4154,7 +4182,7 @@ function vSettings(){
         <div class="opt"><label>Affirmation <span class="hint">sends one of your own lines</span></label><button class="toggle ${c.affOn?'on':''}" data-remind-aff role="switch" aria-checked="${c.affOn}"></button></div>
         ${c.affOn?`<div class="opt"><label>Affirmation time</label><input type="time" id="remaff" value="${c.aff}" style="width:130px"></div>`:''}
         <div class="opt"><label>List reminders <span class="hint">for Plan items with a time</span></label><button class="toggle ${c.todos!==false?'on':''}" data-remind-todos role="switch" aria-checked="${c.todos!==false}"></button></div>
-        <p class="tiny muted" style="margin-top:10px">${PUSH.vapidPublic?'Reminders arrive whether the app is open or not.':'These fire while the app is open (or recently open in the background).'}</p>`;
+        <p class="tiny muted" style="margin-top:10px">${pushKey()?'Morning and evening nudges arrive even when the app is closed; list-item and affirmation ones while it’s open or recently used.':'These fire while the app is open (or recently open in the background).'}</p>`;
     })()}
   </div></details>
   ${(()=>{ const live=Sync.live(), inn=Sync.signedIn();
@@ -4171,6 +4199,8 @@ function vSettings(){
         <button class="btn sm" id="backupnow">Backup now</button>
         <button class="btn sm" id="syncnow">Update app</button></div>
       <button class="btn sm ghost danger block" id="signout" style="margin-top:14px">Sign out</button>
+      <button class="btn sm ghost danger block" id="delacct" style="margin-top:4px">Delete account</button>
+      <p class="tiny muted" style="margin-top:6px"><a href="./privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>
     </div></details>`;
   })()}
   <div class="card away-settings" style="margin:12px 0">
@@ -4234,7 +4264,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Tab dots.</b> A dot on a tab means something new is waiting there.</p>
     <p><b style="color:var(--fg)">Notes.</b> Notes save as you type, and the one you used last sits at the top. Search finds any word in the title or text. Delete one with the bin in the full editor; an empty note deletes itself.</p>
     <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like: one greets you when you first open the app each day, and a random one sits at the top of each tab. Tap one to read it all; <i>Bring to top</i> moves it up the list.</p>
-    <p><b style="color:var(--fg)">Reminders.</b> A morning nudge, an evening one if anything's left, an optional affirmation, and anything on your list with a time. ${PUSH.vapidPublic?'':'For now they only arrive while the app is open or recently used. '}If your browser blocks notifications, the Reminders panel shows how to allow them.</p>
+    <p><b style="color:var(--fg)">Reminders.</b> A morning nudge, an evening one if anything's left, an optional affirmation, and anything on your list with a time. ${pushKey()?'Morning and evening ones arrive even when the app is closed. ':'For now they only arrive while the app is open or recently used. '}If your browser blocks notifications, the Reminders panel shows how to allow them.</p>
 
     <p><b style="color:var(--fg)">Friends.</b> Add a friend's code and you're linked both ways. Chats use set phrases and emoji only — no free typing. There's no leaderboard, on purpose.</p>
     <p><b style="color:var(--fg)">Accounts.</b> An account backs up your data and lets you add friends; everything else works without one. It backs itself up a few seconds after anything changes. Forgotten your password? Tap <i>Forgotten your password?</i> on the sign-in screen for a reset code.</p>
@@ -4245,7 +4275,7 @@ function vSettings(){
     <p><b style="color:var(--fg)">Away.</b> Settings → Away pauses your habits for as many days as you choose. Away days ask nothing of you, aren't misses and don't break your full-clear streak (they don't count as clears either); your login streak still counts if you open the app. With reminders allowed, you'll get a nudge on your last away day.</p>
     <p><b style="color:var(--fg)">Rough day.</b> Tap <i>Rough day?</i> on Today to write a private note about how the day went, with an optional feeling. It earns nothing and is never shared; edit it from <i>This week</i> in Progress.</p>
     <p><b style="color:var(--fg)">This week.</b> Progress → Overview sums up your week so far in a few private lines: clear days, away days, why you missed and any rough-day notes.</p>
-    <p><b style="color:var(--fg)">Privacy.</b> Everything stays on this device unless you sign in. Friends only see totals — days cleared, tasks done, login streak, consistency, level, and whether you opened the app or bought a reward (for challenges) — never task names, notes, miss reasons, rough days or affirmations. Signing in also keeps a private backup of everything that only you can read.</p>
+    <p><b style="color:var(--fg)">Privacy.</b> Everything stays on this device unless you sign in. Friends only see totals — days cleared, tasks done, login streak, consistency, level, and whether you opened the app or bought a reward (for challenges) — never task names, notes, miss reasons, rough days or affirmations. Signing in also keeps a private backup of everything that only you can read. <a href="./privacy.html" target="_blank" rel="noopener">Full privacy policy</a>.</p>
     <p class="tiny">Build ${BUILD}</p>
     <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="replayonb">Replay setup</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
   </div></details>`;
@@ -4346,6 +4376,9 @@ function bind(){
     }catch(e){ ag.disabled=false; ag.textContent=authState.mode==='up'?'Create account':'Sign in'; toast(e.message||'Could not sign in'); }
   };
   const fp=q('#forgotpw'); if(fp) fp.onclick=()=>forgotSheet();
+  const da=q('#delacct'); if(da) da.onclick=()=>modal(`<h2>Delete your account?</h2><p class="muted">This deletes your account and everything stored with it on the server — your backup, friends, chats, challenges and stats. It can’t be undone.</p><p class="muted" style="margin-top:8px">Your habits on <b>this</b> device stay; use Erase everything in Settings if you want those gone too.</p>`,'Delete for good',async()=>{
+    try{ await Sync.deleteAccount(); haptic('success'); render(); toast('Account deleted'); }
+    catch(e){ toast(e.message||'Could not delete the account'); } },true);
   const so=q('#signout'); if(so) so.onclick=()=>modal('<h2>Sign out?</h2><p class="muted">Your tasks and history stay on this device. Sign back in any time.</p>','Sign out',async()=>{ await Sync.signOut(); render(); toast('Signed out'); });
   const rvault=q('#restorevault'); if(rvault) rvault.onclick=async()=>{
     rvault.disabled=true; rvault.textContent='…';
@@ -4598,13 +4631,13 @@ function bind(){
     toast(r==='granted'?'Reminders on':r==='denied'?'Blocked in your browser settings':'Not enabled'); };
   const ro=q('[data-remind-on]'); if(ro) ro.onclick=async()=>{ const c=remindCfg(); c.on=!c.on; save(); haptic();
     if(c.on && notifyState()==='default'){ await askNotify(); }
-    render(); keepRem(); };
+    syncPush(); render(); keepRem(); };
   const rc=q('#recheck'); if(rc) rc.onclick=()=>{ render(); keepRem();
     toast(notifyState()==='granted'?'Working now':'Still blocked in the browser'); };
   const raf=q('[data-remind-aff]'); if(raf) raf.onclick=()=>{ const c=remindCfg(); c.affOn=!c.affOn; save(); haptic(); render(); keepRem(); };
   const rav=q('#remaff'); if(rav) rav.onchange=()=>{ remindCfg().aff=rav.value; save(); subscribePush().catch(()=>{}); toast('Affirmation time set'); };
   const rtd=q('[data-remind-todos]'); if(rtd) rtd.onclick=()=>{ const c=remindCfg(); c.todos=c.todos===false; save(); haptic(); render(); keepRem(); };
-  const re=q('[data-remind-eve]'); if(re) re.onclick=()=>{ const c=remindCfg(); c.eveningOn=!c.eveningOn; save(); haptic(); render(); keepRem(); };
+  const re=q('[data-remind-eve]'); if(re) re.onclick=()=>{ const c=remindCfg(); c.eveningOn=!c.eveningOn; save(); haptic(); syncPush(); render(); keepRem(); };
   const rm=q('#remmorning'); if(rm) rm.onchange=()=>{ remindCfg().morning=rm.value; save(); subscribePush().catch(()=>{}); toast('Morning nudge set'); };
   const rv=q('#remevening'); if(rv) rv.onchange=()=>{ remindCfg().evening=rv.value; save(); subscribePush().catch(()=>{}); toast('Evening nudge set'); };
   const ii=q('[data-iosinstall]'); if(ii) ii.onclick=()=>iosInstallSheet();
@@ -5735,6 +5768,7 @@ function friendsTick(){
   if(_ticking) return;                    // two overlapping chains could both pay the same cheers
   _ticking=true;
   Sync.upgradeCode().catch(()=>{});
+  syncPush();                             // keeps reminder times and time zone current on the server
   const pushLocalChals=()=>Promise.all(chalList().map(c=>Sync.pushChallenge(c).catch(()=>{})));
   /* Pull before pushing challenges: pushing first sent stale copies up (a host's old "pending"
      overwrote an accepted challenge, and declined invites were re-created). Challenges are only

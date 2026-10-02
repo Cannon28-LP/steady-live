@@ -4,14 +4,23 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"/>
 <title>Steady</title>
-<meta name="description" content="A quiet, local-first habit tracker. Keep your word to yourself."/>
+<meta name="description" content="A quiet habit tracker. Tick off your habits, earn coins, treat yourself. Your data stays on your phone."/>
+<!-- Link previews (WhatsApp, iMessage, socials). Image URL must be absolute: update it if the address changes. -->
+<meta property="og:type" content="website"/>
+<meta property="og:title" content="Steady"/>
+<meta property="og:description" content="Keep your word to yourself. Tick off your habits, earn coins, treat yourself."/>
+<meta property="og:image" content="https://cannon28-lp.github.io/steady-live/og.png"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta name="twitter:card" content="summary_large_image"/>
 <meta name="theme-color" content="#0f1a19"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Steady"/>
 <link rel="icon" type="image/svg+xml" href="./icon.svg"/>
 <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png"/>
-<base href="/steady-live/">
+<!-- Base = the folder this page is served from, so the same files work on github.io/steady-live/ and on a custom domain at /. -->
+<script>(function(){var p=location.pathname;if(!/\/$/.test(p))p=/\.[a-z0-9]+$/i.test(p)?p.replace(/[^\/]*$/,''):p+'/';document.write('<base href="'+p+'">');})();</script>
 <link rel="manifest" href="./manifest.json"/>
 
 <!-- Critical styles inline: the splash must paint before app.css or app.js arrive. -->
@@ -55,10 +64,10 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 }catch(e){}})();
 </script>
 
-<link rel="modulepreload" href="./app.v3.js?b=81"/>
+<link rel="modulepreload" href="./app.v3.js?b=82"/>
 <link rel="modulepreload" href="./vendor/open-peeps-avatar.js"/>
-<link rel="preload" href="./app.v3.css?b=81" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
-<noscript><link rel="stylesheet" href="./app.v3.css?b=81"/></noscript>
+<link rel="preload" href="./app.v3.css?b=82" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+<noscript><link rel="stylesheet" href="./app.v3.css?b=82"/></noscript>
 </head>
 <body>
 <div id="boot"><div class="ring"></div><div><div class="word">Steady</div><div class="sub" id="bootsub">one day at a time</div></div>
@@ -84,7 +93,7 @@ html,body{margin:0;background:var(--bg);color:var(--fg);
 
 <script>
 function steadyHardReload(){
-  var go=function(){ location.replace('/steady-live/?t='+Date.now()); };
+  var go=function(){ location.replace(new URL('./?t='+Date.now(), document.baseURI).href); };
   var tasks=[];
   try{ if(navigator.serviceWorker) tasks.push(navigator.serviceWorker.getRegistrations().then(function(rs){ return Promise.all(rs.map(function(r){ return r.unregister(); })); })); }catch(e){}
   try{ if(window.caches) tasks.push(caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); })); }catch(e){}
@@ -99,7 +108,7 @@ window.__steadyBootTimer = setTimeout(function(){
 }, 20000);
 </script>
 <script type="module">
-const src = '/steady-live/app.v3.js?b=81';
+const src = new URL('./app.v3.js?b=82', document.baseURI).href;
 const clear = () => { const boot=document.getElementById('boot');
   if(boot){ boot.classList.add('gone'); setTimeout(()=>boot.remove(),350); } };
 const fail = (e) => {
@@ -110,7 +119,7 @@ const fail = (e) => {
 };
 import(src).then(m => {
   try { m.bootSteady(); window.__steadyBooted=true; clearTimeout(window.__steadyBootTimer); clear();
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/steady-live/sw.js');
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register(new URL('./sw.js', document.baseURI).href);
   } catch (e) { fail(e); }
 }).catch(fail);
 </script>

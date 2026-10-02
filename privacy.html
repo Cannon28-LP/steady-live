@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Steady · Privacy</title>
+<meta name="description" content="What Steady stores, where, who can see it, and how to delete it."/>
+<link rel="icon" type="image/svg+xml" href="./icon.svg"/>
+<style>
+:root{--bg:#f3f7f6;--card:#fff;--fg:#10201d;--fg2:#4f625e;--line:#d8e3df;--accent:#0f766e}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1211;--card:#111a19;--fg:#ecf4f2;--fg2:#a3b5b1;--line:#24332f;--accent:#2dd4bf}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:680px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:2rem;line-height:1.15;letter-spacing:-.02em;margin:8px 0 4px}
+h2{font-size:1.1rem;margin:28px 0 8px}
+p,li{color:var(--fg2)} b,strong{color:var(--fg)}
+ul{padding-left:20px} li{margin:4px 0}
+a{color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;margin:16px 0}
+.back{display:inline-block;margin-bottom:8px;font-weight:600;text-decoration:none}
+small{color:var(--fg2)}
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./">‹ Back to Steady</a>
+  <h1>Privacy</h1>
+  <small>Last updated 2 October 2026</small>
+
+  <div class="card"><p><b>The short version.</b> Steady works entirely on your device unless you create an account. There are no ads, no analytics and no tracking. Friends only ever see totals — never your task names, notes or reasons. You can delete your account and everything stored with it at any time from Settings → Account.</p></div>
+
+  <h2>Without an account</h2>
+  <p>Everything — tasks, history, coins, notes, your list, affirmations, rough-day notes, miss reasons and settings — is stored in your browser's storage on this device only. Nothing is sent to us. Clearing your browser data, or Settings → Erase everything, deletes it.</p>
+
+  <h2>With an account</h2>
+  <p>Creating an account lets you back up your data and add friends. We then store:</p>
+  <ul>
+    <li><b>Your email and password</b> — for signing in. Passwords are stored hashed by our sign-in provider; we never see them.</li>
+    <li><b>Your profile</b> — display name, friend code and, if you add one, a small profile picture. Friends can see these.</li>
+    <li><b>Daily totals</b> — for each day: whether you cleared it, tasks done and due, login streak, consistency, level, and whether you opened the app or bought a reward. Friends can see these; they're what shared streaks and challenges are built on.</li>
+    <li><b>Friends, chats and challenges</b> — who you're paired with, chat messages (set phrases and emoji only), cheers, and challenge progress. Chat members can see the chat.</li>
+    <li><b>A private backup</b> of all your app data, so a new phone can restore it. Only you can read it — not friends, not other users.</li>
+    <li><b>Reminder settings</b>, if you turn reminders on — your reminder times, time zone offset, and the address your browser gives us for delivering notifications.</li>
+    <li><b>A short-lived log of friend-code attempts</b>, to stop people guessing codes. It's deleted after a day.</li>
+  </ul>
+
+  <h2>Who handles it</h2>
+  <ul>
+    <li><b>Supabase</b> stores account data and runs sign-in.</li>
+    <li><b>GitHub Pages</b> serves the app's files. Like any web host, it may log IP addresses for security.</li>
+    <li><b>Your browser's push service</b> (for example Google, Apple or Mozilla) delivers reminders if you turn them on. It sees only the notification, not your data.</li>
+  </ul>
+  <p>We don't sell or share your data with anyone else, and we don't use it for advertising. Everything travels over encrypted connections, and the database only lets each person read what they're allowed to.</p>
+
+  <h2>How long we keep it</h2>
+  <p>Account data stays until you delete your account. Deleting it removes your profile, backup, daily totals, friendships, chats you own, messages, cheers and reminder settings straight away; challenges you were in carry on for the others without you.</p>
+
+  <h2>Your rights</h2>
+  <p>You can see and export the data on your device (Settings → Export data), correct your name at any time, and delete your account (Settings → Account → Delete account). Under data-protection law (such as the UK and EU GDPR) you can also ask us for a copy of what we hold about you, or to correct or erase it — contact us below.</p>
+
+  <h2>Children</h2>
+  <p>Steady isn't meant for children under 13, and we don't knowingly create accounts for them.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes in a way that matters, we'll update the date at the top and mention it in the app.</p>
+
+  <h2>Contact</h2>
+  <p id="contact">Questions or requests about your data: <span id="mail">our privacy address will be listed here at launch.</span></p>
+</main>
+<script>
+// The privacy address follows the site's own domain (privacy@<domain>), so it's right wherever Steady is hosted.
+(function(){ var h=location.hostname; if(h && !/github\.io$|^localhost$|^127\./.test(h)){
+  var a='privacy@'+h.replace(/^www\./,''); var el=document.getElementById('mail');
+  el.innerHTML='<a href="mailto:'+a+'">'+a+'</a>'; } })();
+</script>
+</body>
+</html>
