@@ -2973,7 +2973,7 @@ function celebrate(){
   let f=0; (function step(){ x.clearRect(0,0,c.width,c.height); P.forEach(p=>{p.vy+=.45;p.x+=p.vx;p.y+=p.vy;p.a+=p.s;x.save();x.translate(p.x,p.y);x.rotate(p.a);x.globalAlpha=Math.max(0,1-f/70);x.fillStyle=p.c;x.fillRect(-p.r/2,-p.r/2,p.r,p.r*1.6);x.restore();}); if(++f<80) requestAnimationFrame(step); else x.clearRect(0,0,c.width,c.height); })();
 }
 /* ---------- Router ---------- */
-let remOpen=false, rewOpen=false, newRewardFreq='monthly', newRewardPer=3;
+let remOpen=false, rewOpen=false, newRewardFreq='weekly', newRewardPer=3;
 let tab='today', authState={mode:'up'}, taskState={month:{},sel:{}}, planState={sub:'list',when:'today',at:'',noteQ:'',affQ:'',openAff:null,editAff:null,openNote:null,editNote:null,noteSnap:null}, friendsState={sub:'list',open:null}, progState={month:today().slice(0,7),sel:today(),range:'week',sub:'overview',taskId:null};
 let $app;
 const ICON={check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
@@ -3401,8 +3401,8 @@ function vToday(){
     return `<div class="card clearstreak"><div class="row between"><div><b class="small">${nx.streak?`${nx.streak}-day full-clear streak`:'Full-clear streak'}</b>
       <p class="tiny muted">${nx.streak?`${nx.days} more clear ${nx.days===1?'day':'days'} for +${nx.amount} coins`:`Tick everything 7 days running for +${nx.amount} coins`}</p></div>
       <span class="pill ${nx.streak>=7?'accent':''}">${ICON.flame} ${nx.streak}</span></div></div>`;})()}
-  <div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=need?`Earned · +${chestCoins()} lands Monday`:`Clear ${need} of ${wcw.taskDays||7} for +${chestCoins()} · ${wc} so far`}</p></div>
-    <div class="dots big">${wk.map(x=>`<i class="${x.away?'a':x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}${x.away?' · away':''}"></i>`).join('')}</div></div></div>
+  ${activeTasks().length?`<div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=need?`Earned · +${chestCoins()} lands Monday`:`Clear ${need} of ${wcw.taskDays||7} for +${chestCoins()} · ${wc} so far`}</p></div>
+    <div class="dots big">${wk.map(x=>`<i class="${x.away?'a':x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}${x.away?' · away':''}"></i>`).join('')}</div></div></div>`:''}
   ${a?`<p class="whisper">${esc(a.text)}</p>`:''}
   <div class="row" style="margin:6px 2px 0;justify-content:flex-start">
     <button type="button" class="textlink" data-rough>${roughToday()?'Rough day · edit':'Rough day?'}</button>
@@ -5119,7 +5119,7 @@ function onboarding(next, force){
   const draw=()=>{
     const steps=`<div class="steps">${[0,1,2].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
     const back=step>0?`<button class="btn ghost sm" data-back style="margin-bottom:10px">‹ Back</button>`:'';
-    if(step===0) g.innerHTML=`${steps}${back}<h1>Nothing is taken from you.</h1>
+    if(step===0) g.innerHTML=`${steps}${back}<p class="eyebrow" style="color:var(--accent);font-weight:650;margin-bottom:6px">Welcome to Steady — a habit tracker that pays you in coins for keeping your word, to spend on treats you choose.</p><h1>Nothing is taken from you.</h1>
       <p>Miss a day and you only lose what you would have earned that day. No penalties, no debt, no guilt trip.</p>
       <p style="margin-top:12px">Steady’s job is to notice patterns you would not, and to make keeping your word to yourself worth something.</p>
       <div class="actions"><button class="btn primary block" data-n>Got it</button></div>`;
