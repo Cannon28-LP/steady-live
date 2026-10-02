@@ -753,3 +753,19 @@ body.light .tabbar nav{border-color:color-mix(in srgb,var(--line) 70%,transparen
 .reward.locked .bar i{background:var(--fg3)}
 .sheet .foot .btn{white-space:nowrap}
 .sheet .foot .btn.ghost{flex:0 0 auto;padding-left:12px;padding-right:12px}
+
+/* ---- full-body characters ---- */
+.charpreview{width:132px;height:266px;border-radius:22px}
+.charpreview .charsvg{width:100%;height:100%;display:block}
+.lookthumb.tall{width:46px;height:92px;border-radius:12px;background:var(--surface2)}
+.lookthumb.tall svg{width:100%;height:100%}
+.swcustom{position:relative;overflow:hidden;cursor:pointer}
+.swcustom input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0;padding:0}
+.duo{display:flex;justify-content:center;align-items:flex-end;gap:4px;margin:0 -4px;padding:14px 8px 4px;border-radius:20px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 14%,var(--surface2)),var(--surface2) 70%)}
+.duo figure{margin:0;flex:0 1 150px;text-align:center}
+.duo figure .charsvg{width:100%;height:auto;display:block}
+.duo figcaption{font-weight:700;font-size:.9rem;margin-top:2px}
+.duo-missing{height:240px;display:grid;place-items:center;align-content:center;gap:8px}
+.duo-missing .avatar{width:72px;height:72px;font-size:1.6rem}
+

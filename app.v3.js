@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { charArt, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js';
+import { charArt, charFull, hairHexOf, isHex, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
   return (b?'b'+b+' · ':'')+'2026-10-02'; }catch(e){ return '2026-10-02'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
@@ -1059,6 +1059,10 @@ const LOOK_DEFS = [
   ['o-rust','outfit',24],
   ['o-violet','outfit',24],
   ['o-coral','outfit',24],
+  ['o-fleece','outfit',18], ['o-y2k','outfit',18], ['o-football','outfit',18], ['o-tennis','outfit',18], ['o-sport','outfit',18],
+  ['o-coquette','outfit',24], ['o-ballet','outfit',24], ['o-gorp','outfit',24], ['o-ddenim','outfit',24], ['o-retro','outfit',24],
+  ['o-suede','outfit',24], ['o-boho','outfit',24], ['o-puffer','outfit',24], ['o-western','outfit',24], ['o-oldmoney','outfit',24],
+  ['o-trench','outfit',30],
   ['g-round','glasses',0],
   ['g-square','glasses',12],
   ['g-cats','glasses',12],
@@ -1144,8 +1148,16 @@ function buyLook(id){
 }
 
 /* ---------- Drawing one ---------- */
-function hairHex(av){
-  return (HAIR_COLOURS.find(c=>c.id===(av&&av.hairCol))||HAIR_COLOURS[1]).hex;
+function hairHex(av){ return hairHexOf(av&&av.hairCol); }
+/* Head to toe, for the editor and the friends' view. */
+function charFullSVG(av,{bg=true}={}){ return charFull(av||myChar(),{uid:'f'+Math.random().toString(36).slice(2,8),bg}); }
+/* Only ever accept a character made of known-looking ids (and a #hex hair colour) from the server. */
+function cleanChar(c){
+  if(!c||typeof c!=='object') return null;
+  const out={}, ok=v=>typeof v==='string'&&/^[a-z0-9-]{1,24}$/i.test(v);
+  for(const k of ['base','tone','hair','outfit','glasses','hat','facial','backdrop']) if(ok(c[k])) out[k]=c[k];
+  if(ok(c.hairCol)||isHex(c.hairCol)) out.hairCol=c.hairCol;
+  return Object.keys(out).length?out:null;
 }
 /* size: 'chip' (head close-up for the 42px top-right chip), a number ≥52 (head and shoulders, for
    the editor and thumbnails), or a small number (close-up). Rendered at 2× for crisp small sizes. */
@@ -2032,8 +2044,8 @@ const Sync = {
   async _pull(){
     // 1. discover anyone who added US, so pairing works from either side
     const links=await api('/rest/v1/rpc/my_friends',{method:'POST',body:{}});
-    (links||[]).filter(p=>okId(p.id)).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{},avatar:p.avatar||null,chalLocks:p.chal_locks||{}};
-      else { S.friends[p.id].name=p.display_name; S.friends[p.id].avatar=p.avatar!==undefined?(p.avatar||null):(S.friends[p.id].avatar||null); if(p.chal_locks) S.friends[p.id].chalLocks=p.chal_locks; } });
+    (links||[]).filter(p=>okId(p.id)).forEach(p=>{ if(!S.friends[p.id]) S.friends[p.id]={id:p.id,name:p.display_name,code:p.code,days:{},avatar:p.avatar||null,chalLocks:p.chal_locks||{},char:cleanChar(p.look)};
+      else { S.friends[p.id].name=p.display_name; S.friends[p.id].avatar=p.avatar!==undefined?(p.avatar||null):(S.friends[p.id].avatar||null); if(p.chal_locks) S.friends[p.id].chalLocks=p.chal_locks; if(p.look!==undefined) S.friends[p.id].char=cleanChar(p.look); } });
     const ids=Object.keys(S.friends).filter(id=>!id.startsWith('demo-'));
     if(ids.length){
       try{
@@ -2128,6 +2140,14 @@ const Sync = {
       });
       save();
     }catch(e){ S.syncError=readableSyncError(e); save(); }
+  },
+  /* Your character (just item ids) goes on your profile so friends can see you. Needs update-b86.sql. */
+  async pushChar(){
+    if(!this.live()||!this.signedIn()||!S.me?.id) return;
+    const c=cleanChar(myChar()); const key=JSON.stringify(c);
+    if(!c || S.looks?.pushed===key) return;
+    try{ await api(`/rest/v1/profiles?id=eq.${S.me.id}`,{method:'PATCH',body:{look:c},headers:{Prefer:'return=minimal'}});
+      S.looks.pushed=key; saveQuiet(); }catch(e){}
   },
   async pushChalLocks(){
     if(!this.live()||!this.signedIn()||!S.me?.id) return;
@@ -3869,7 +3889,8 @@ function vFriends(){
           <span class="row" style="gap:12px;align-items:center">${open?avPairHtml(m,f):avatarHtml(f)}<b>${esc(f.name)}</b></span>
           <span class="chev" style="transform:rotate(${open?'90':'0'}deg);transition:transform .15s">›</span>
         </button>
-        ${open?`<div style="padding:0 14px 14px;border-top:1px solid var(--line)">
+        ${open?`<div style="padding:12px 14px 14px;border-top:1px solid var(--line)">
+          ${duoHtml(f)}
           <button class="card friendcard" data-friend="${f.id}" style="margin-top:12px"><div class="row between" style="width:100%"><div class="row" style="gap:10px">${avPairHtml(m,f)}
             <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0}-day login streak · level ${f.level??1}</p></div></div>
             <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></button>
@@ -5189,10 +5210,16 @@ function friendStats(f){
   return {chests:ch.length, coins:ch.reduce((a,c)=>a+(c.amount||0),0), byTier,
     done:(p.done||[]).length, recent:[...ch].reverse().slice(0,8), streak:pairStreak(f)};
 }
+/* You and a friend, head to toe, side by side. A friend on an older version shows their picture instead. */
+function duoHtml(f){
+  const them=f.char?charFullSVG(f.char,{bg:false}):`<div class="duo-missing">${avatarHtml(f)}<p class="tiny muted">No character yet</p></div>`;
+  return `<div class="duo"><figure>${charFullSVG(myChar(),{bg:false})}<figcaption>You</figcaption></figure><figure>${them}<figcaption>${esc(f.name)}</figcaption></figure></div>`;
+}
 function friendSheet(f){
   const st=friendStats(f);
   const o=overlay(`<div class="sheet"><div class="grab"></div>
-    <div class="row" style="gap:12px;align-items:center"><span class="avpair big">${avatarHtml(me(),'chip')}${avatarHtml(f,'chip')}</span>
+    ${duoHtml(f)}
+    <div class="row" style="gap:12px;align-items:center;margin-top:12px">
       <div><h2 style="margin:0">${esc(f.name)}</h2><p class="tiny muted">${esc(f.title||'')} · level ${f.level??1} · code ${esc(f.code||'')}</p></div></div>
     <div class="stats" style="margin-top:14px">
       <div class="stat"><b>${st.chests}</b><span>chests together</span></div>
@@ -5287,7 +5314,7 @@ function charSheet(){
   const TABS=[['face','Face'],['skin','Skin'],['hairc','Hair colour'],...SLOTS.map(([k,l])=>[k,l])];
   const draw=()=>{
     const a=myChar();
-    o.querySelector('#cprev').innerHTML=charSVG(a,120);
+    o.querySelector('#cprev').innerHTML=charFullSVG(a);
     o.querySelector('#ctabs').innerHTML=TABS.map(([k,l])=>`<button class="${tab===k?'on':''}" data-ctab="${k}">${l}</button>`).join('');
     const body=o.querySelector('#cbody');
     if(tab==='face'){
@@ -5302,12 +5329,14 @@ function charSheet(){
     } else if(tab==='skin'){
       body.innerHTML=`<div class="swatches">${TONES.map(t=>`<button class="sw ${a.tone===t.id?'on':''}" data-ctone="${t.id}" style="background:${t.hex}" title="${t.id}"></button>`).join('')}</div>`;
     } else if(tab==='hairc'){
-      body.innerHTML=`<div class="swatches">${HAIR_COLOURS.map(c=>`<button class="sw ${a.hairCol===c.id?'on':''}" data-chair="${c.id}" style="background:${c.hex}"></button>`).join('')}</div>
-        <p class="tiny muted" style="margin-top:8px">Colours your hair, brows and any beard.</p>`;
+      const custom=isHex(a.hairCol);
+      body.innerHTML=`<div class="swatches">${HAIR_COLOURS.map(c=>`<button class="sw ${a.hairCol===c.id?'on':''}" data-chair="${c.id}" style="background:${c.hex}" title="${esc(c.name)}" aria-label="${esc(c.name)}"></button>`).join('')}
+          <label class="sw swcustom ${custom?'on':''}" title="Any colour" style="background:${custom?a.hairCol:'conic-gradient(#ff5f8a,#ffd166,#7fd8be,#5b8def,#b9a0f2,#ff5f8a)'}"><input type="color" id="haircustom" value="${hairHex(a)}" aria-label="Pick any hair colour"></label></div>
+        <p class="tiny muted" style="margin-top:8px">Any hairstyle, any colour — the rainbow circle picks an exact shade. Colours your hair, brows and any beard too.</p>`;
     } else {
       const items=LOOK_ITEMS.filter(i=>i.slot===tab && !i.legacy);
       const optional=tab==='glasses'||tab==='hat'||tab==='facial';
-      const tip = tab==='outfit' ? 'Pick an outfit. '
+      const tip = tab==='outfit' ? 'Whole looks, top to shoes — including this season’s trends. '
         : tab==='hat' ? 'Hats sit on your hair; the hijab covers it. '
         : tab==='facial' ? 'Freckles, lashes, lipstick, stickers or a beard — None clears it. '
         : tab==='hair' ? 'Every hair style works on every face. '
@@ -5315,7 +5344,8 @@ function charSheet(){
       body.innerHTML=`<div class="lookGrid">
         ${optional?`<button class="lookpick ${!a[tab]?'on':''}" data-cequip="${tab}|"><span class="lookname">None</span></button>`:''}
         ${items.map(i=>{const owned=ownsLook(i.id), on=a[tab]===i.id;
-          const thumb = `<span class="lookthumb">${charSVG({...a,[tab]:i.id},(tab==='facial'||tab==='glasses')?'chip':52)}</span>`;
+          const thumb = tab==='outfit' ? `<span class="lookthumb tall">${charFullSVG({...a,outfit:i.id},{bg:false})}</span>`
+            : `<span class="lookthumb">${charSVG({...a,[tab]:i.id},(tab==='facial'||tab==='glasses')?'chip':52)}</span>`;
           return `<button class="lookpick ${on?'on':''} ${owned?'':'locked'}" data-${owned?'cequip':'cbuy'}="${owned?tab+'|'+i.id:i.id}">
             ${thumb}
             <span class="lookname">${esc(i.name)}</span>
@@ -5327,6 +5357,9 @@ function charSheet(){
     o.querySelectorAll('[data-cbase]').forEach(b=>b.onclick=()=>{ myChar().base=b.dataset.cbase; save(); haptic(); draw(); });
     o.querySelectorAll('[data-ctone]').forEach(b=>b.onclick=()=>{ myChar().tone=b.dataset.ctone; save(); haptic(); draw(); });
     o.querySelectorAll('[data-chair]').forEach(b=>b.onclick=()=>{ myChar().hairCol=b.dataset.chair; save(); haptic(); draw(); });
+    const hc=o.querySelector('#haircustom'); if(hc){
+      hc.oninput=()=>{ myChar().hairCol=hc.value.toLowerCase(); o.querySelector('#cprev').innerHTML=charFullSVG(myChar()); };
+      hc.onchange=()=>{ myChar().hairCol=hc.value.toLowerCase(); save(); haptic(); draw(); }; }
     o.querySelectorAll('[data-cequip]').forEach(b=>b.onclick=()=>{ const [slot,id]=b.dataset.cequip.split('|');
       myChar()[slot]=id||null; save(); haptic(); draw(); });
     o.querySelectorAll('[data-cbuy]').forEach(b=>b.onclick=()=>{ const it=lookItem(b.dataset.cbuy);
@@ -5335,7 +5368,7 @@ function charSheet(){
         else toast(`${it.cost-S.points.coins} more coins needed`); }); });
   };
   draw();
-  o.querySelector('[data-x]').onclick=()=>{ close(o); render(); };
+  o.querySelector('[data-x]').onclick=()=>{ close(o); render(); Sync.pushChar().catch(()=>{}); };
 }
 
 
@@ -5703,6 +5736,7 @@ function friendsTick(){
   if(_ticking) return;                    // two overlapping chains could both pay the same cheers
   _ticking=true;
   Sync.upgradeCode().catch(()=>{});
+  Sync.pushChar().catch(()=>{});
   syncPush();                             // keeps reminder times and time zone current on the server
   const pushLocalChals=()=>Promise.all(chalList().map(c=>Sync.pushChallenge(c).catch(()=>{})));
   /* Pull before pushing challenges: pushing first sent stale copies up (a host's old "pending"
