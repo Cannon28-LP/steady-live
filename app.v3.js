@@ -748,7 +748,9 @@ function buildWeekRecap(mon){
 }
 function firstDay(){ const ks=Object.keys(S.days).filter(k=>S.days[k].finalized||k===today()).sort(); return ks[0]||today(); }
 function daysSinceStart(){ return daysBetween(firstDay(),today())+1; }
-function dueRecap(){ for(const [n,name] of MILESTONES){ if(daysSinceStart()>=n && !S.recaps.some(r=>r.n===n)) return {n,name}; } return null; }
+/* A milestone shows during its own window only (first week: days 7–13, first month: 30–59 …). Outside it
+   — e.g. history merged from a backup — "Your first week" weeks later would just be wrong, so it's skipped. */
+function dueRecap(){ const d=daysSinceStart(); for(const [n,name] of MILESTONES){ if(d>=n && d<n*2 && !S.recaps.some(r=>r.n===n)) return {n,name}; } return null; }
 function buildRecap(n,name){
   const start=firstDay(), k=today();
   let e=0,d=0,coins=0,cleared=0,shown=0,mins=0;
@@ -3190,6 +3192,9 @@ function render(){
   if(!$app) return;
   const ind=document.getElementById('tabind');
   document.querySelectorAll('.tabbar button').forEach((b,i)=>{ const on=b.dataset.tab===tab; b.classList.toggle('active',on); if(on && ind) ind.style.transform=`translateX(${i*100}%)`; });
+  /* Safety net: once set up, the tab bar is always there when a page renders (only the very first
+     start keeps it hidden until the opening screen is done). */
+  if(S.flags?.onboarded && !document.querySelector('.gate')){ const tb=document.getElementById('tabbar'); if(tb && tb.hidden) tb.hidden=false; }
   $app.innerHTML=`<div class="page">${({today:vToday,plan:vPlan,progress:vProgress,friends:vFriends,shop:vShop,settings:vSettings})[tab]()}</div>`;
   bind();
   try{ markTabSeen(tab); }catch(e){}
