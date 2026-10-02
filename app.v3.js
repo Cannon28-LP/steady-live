@@ -3,7 +3,7 @@
 import { createPeepsSvg } from './vendor/open-peeps-avatar.js';
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-10-01'; }catch(e){ return '2026-10-01'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-10-02'; }catch(e){ return '2026-10-02'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
