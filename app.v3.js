@@ -91,13 +91,13 @@ function daysToEarn(cost){
 function earnEta(cost){
   const n=activeTasks().length;
   const rate=clearDayPay();
-  if(!n) return 'Add a task first — a clear day is what this is based on.';
-  const pay=n===1?`1 task pays ${rate} a day`:`${n} tasks pay ${rate} a day`;
-  const worth=`About ${fullDays(cost)} full days`;
+  if(!n) return 'Add a task first — prices are based on what a clear day pays.';
+  const pay=`a clear day pays ${rate}`;
+  const fd=fullDays(cost), worth=`About ${fd} clear day${fd==='1'?'':'s'}`;
   const need=coinsNeeded(cost);
   if(need<=0) return `${worth} · you have enough now · ${pay}`;
   const days=Math.ceil(need/rate);
-  return `${worth} · ${days===1?'1 more day':days+' more days'} from your balance · ${pay}`;
+  return `${worth} · ${days===1?'1 more clear day':days+' more clear days'} with your coins · ${pay}`;
 }
 /* The floor applies at read time too, so it holds even for typed prices when your tasks change. */
 function rewardPrice(r){
@@ -554,7 +554,9 @@ function load(){
     return m;
   }catch(e){ return fresh(); }
 }
-function save(){ try{ if(typeof localStorage==='undefined') return; localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+function saveQuiet(){ try{ if(typeof localStorage==='undefined') return; localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+/* Every change is written locally at once and, when signed in, backed up a few seconds later. */
+function save(){ saveQuiet(); try{ if(Sync.live()&&Sync.signedIn()) scheduleBackup(); }catch(e){} }
 
 /* ---------- List ----------
    Deliberately outside the economy: no points, no strength, no miss gate.
@@ -691,7 +693,7 @@ async function connectionReport(){
   const L=[];
   L.push(['Build', BUILD]);
   const proto=location.protocol;
-  L.push(['Page', proto.startsWith('http') ? `served over ${proto.replace(':','')}` : `opened as a ${proto.replace(':','')} file — sync cannot work here`]);
+  L.push(['Page', proto.startsWith('http') ? `served over ${proto.replace(':','')}` : 'opened as a local file — sync cannot work here']);
   if(!SYNC.url||!SYNC.anonKey){ L.push(['Server','not configured in the code']); return L; }
   L.push(['Server', apiBase()]);
   if(!proto.startsWith('http')){ L.push(['Result','Open the app from its web address, not a downloaded file.']); return L; }
@@ -846,7 +848,7 @@ function reminderBody(){
   if(!st.expected) return activeTasks().length ? 'Nothing due today — a rest day.' : 'No tasks set yet — add a couple to get going.';
   if(left<=0) return 'Everything is ticked. Nice one.';
   const nx=nextClearReward();
-  return `${left} task${left===1?'':'s'} left today${nx.streak?` · ${nx.days} more full ${nx.days===1?'day':'days'} for +${nx.amount}`:''}`;
+  return `${left} task${left===1?'':'s'} left today${nx.streak?` · ${nx.days} more clear ${nx.days===1?'day':'days'} for a +${nx.amount} streak bonus`:''}`;
 }
 /* Fires while the app is open. Once per slot per day. */
 function reminderTick(){
@@ -937,7 +939,7 @@ function fileToAvatar(file){
         x.drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,AV_SIZE,AV_SIZE);
         let q=0.75, out=c.toDataURL('image/jpeg',q);
         while(out.length>AV_MAX_BYTES && q>0.35){ q-=0.1; out=c.toDataURL('image/jpeg',q); }
-        if(out.length>AV_MAX_BYTES) return rej(new Error('Still too big — try a simpler render.'));
+        if(out.length>AV_MAX_BYTES) return rej(new Error('Still too big — try a smaller or simpler image.'));
         res(out);
       };
       img.src=fr.result;
@@ -1035,7 +1037,7 @@ const LOOK_ITEMS = [
   {id:'h-quiff',    slot:'hair', name:'Pomp',           cost:12, peeps:'pomp'},
   {id:'h-medium2',  slot:'hair', name:'Medium 2',       cost:12, peeps:'medium2'},
   {id:'h-medium3',  slot:'hair', name:'Medium 3',       cost:12, peeps:'medium3'},
-  {id:'h-pony',     slot:'hair', name:'Medium 2 (pony)',cost:12, peeps:'medium2'}, // legacy alias art
+  {id:'h-pony',     slot:'hair', name:'Medium 2 (pony)',cost:12, peeps:'medium2', legacy:true}, // legacy alias art
   {id:'h-bun',      slot:'hair', name:'Bun',            cost:12, peeps:'bun'},
   {id:'h-bun2',     slot:'hair', name:'Bun 2',          cost:12, peeps:'bun2'},
   {id:'h-undercut', slot:'hair', name:'Flat top',       cost:12, peeps:'flatTop'},
@@ -1045,7 +1047,7 @@ const LOOK_ITEMS = [
   // nicer 18–24 (Looks ≤30)
   {id:'h-mbangs2',  slot:'hair', name:'Medium bangs 2', cost:18, peeps:'mediumBangs2'},
   {id:'h-mbangs3',  slot:'hair', name:'Medium bangs 3', cost:18, peeps:'mediumBangs3'},
-  {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:18, peeps:'mediumBangs'}, // legacy
+  {id:'h-curls',    slot:'hair', name:'Medium bangs',   cost:18, peeps:'mediumBangs', legacy:true}, // legacy
   {id:'h-braids',   slot:'hair', name:'Cornrows',       cost:18, peeps:'cornrows'},
   {id:'h-cornrows2',slot:'hair', name:'Cornrows 2',     cost:24, peeps:'cornrows2'},
   {id:'h-space',    slot:'hair', name:'Buns',           cost:18, peeps:'buns'},
@@ -1057,9 +1059,9 @@ const LOOK_ITEMS = [
   {id:'h-twists2',  slot:'hair', name:'Twists 2',       cost:24, peeps:'twists2'},
   {id:'h-bantu',    slot:'hair', name:'Bantu knots',    cost:24, peeps:'bantuKnots'},
   {id:'h-flattopL', slot:'hair', name:'Flat top long',  cost:24, peeps:'flatTopLong'},
-  {id:'h-grayshort',slot:'hair', name:'Gray short',     cost:18, peeps:'grayShort'},
-  {id:'h-graymed',  slot:'hair', name:'Gray medium',    cost:24, peeps:'grayMedium'},
-  {id:'h-graybun',  slot:'hair', name:'Gray bun',       cost:24, peeps:'grayBun'},
+  {id:'h-grayshort',slot:'hair', name:'Grey short',     cost:18, peeps:'grayShort'},
+  {id:'h-graymed',  slot:'hair', name:'Grey medium',    cost:24, peeps:'grayMedium'},
+  {id:'h-graybun',  slot:'hair', name:'Grey bun',       cost:24, peeps:'grayBun'},
   // statement 30 (Looks ceiling ≈ one clear-day haul)
   {id:'h-mohawk',   slot:'hair', name:'Mohawk',         cost:30, peeps:'mohawk'},
   {id:'h-mohawk2',  slot:'hair', name:'Mohawk 2',       cost:30, peeps:'mohawk2'},
@@ -1142,7 +1144,7 @@ const LOOK_ID_MAP = {
 const SLOTS = [
   ['hair','Hair'],
   ['facial','Facial hair'],
-  ['outfit','Colours'],
+  ['outfit','Shirt'],
   ['glasses','Eyewear'],
   ['hat','Headwear'],
   ['backdrop','Backdrop'],
@@ -1479,10 +1481,10 @@ function friendQuestLocked(f, questId){
 }
 function questLockReasons(questId, memberIds){
   const why=[];
-  if(iQuestLocked(questId)) why.push('You already finished this this month');
+  if(iQuestLocked(questId)) why.push('You’ve already done this one this month');
   for(const id of (memberIds||[])){
     const f=S.friends[id]; if(!f) continue;
-    if(friendQuestLocked(f,questId)) why.push(esc(f.name)+' already finished this');
+    if(friendQuestLocked(f,questId)) why.push(esc(f.name)+' has already done this one this month');
   }
   return why;
 }
@@ -1577,8 +1579,8 @@ function liveDesc(ch){
     const party=1+((ch.members||ch.memberIds||[]).length);
     const each=coinHaulNeedEach(ch);
     return party>1
-      ? `Earn ${each} coins each (${n} together) in ${days}. Window ends empty = fail.`
-      : `Earn ${n} coins in ${days}. Window ends empty = fail.`;
+      ? `Earn ${each} coins each (${n} together) in ${days}. Fall short when time’s up and it ends.`
+      : `Earn ${n} coins in ${days}. Fall short when time’s up and it ends.`;
   }
   if(ch.type==='noBuys') return `Nobody buys a reward for ${n} days. One shop buy ends it.`;
   if(ch.type==='eachClear') return `Each of ${who} clears ${n} days.`;
@@ -1713,7 +1715,7 @@ function challengeBroken(raw){
       if(isAway(x)) continue;                               // Away does not auto-fail a challenge
       if((S.pendingMisses||[]).some(p=>p.date===x)) return null;   // you haven't said yet whether you did it
       if(members.some(f=>!f.days?.[x])) return null;              // no data from a friend yet — unknown, not a miss
-      if(!hit(x)) return ch.type==='bothClearStreak'?'Clear streak broken — challenge over':'Open streak broken — challenge over';
+      if(!hit(x)) return ch.type==='bothClearStreak'?'Clear streak broken — challenge over':'Someone missed opening the app — challenge over';
     }
     return null;
   }
@@ -1725,7 +1727,7 @@ function challengeBroken(raw){
     const end=addDays(from,ch.window-1);
     if(k>end && !ch.unresolved){
       const pr=challengeProgress(ch);
-      if(pr.have<pr.need) return 'Coin window closed — challenge over';
+      if(pr.have<pr.need) return 'Time ran out on the coin haul — challenge over';
     }
   }
   return null;
@@ -1880,20 +1882,21 @@ function readableSyncError(e){
   const m=String(e?.message||e||'');
   if(/^network$|dynamically imported module|Failed to fetch|NetworkError|ERR_/i.test(m)) return "Can't reach the server. You're offline or the connection is blocked.";
   if(/Invalid login credentials/i.test(m)) return 'Wrong email or password.';
-  if(/refresh[_ ]?token/i.test(m)) return 'You were signed out — sign in again.';
-  if(/Invalid API key|apikey/i.test(m)) return 'That publishable key was rejected. Check it matches the project URL.';
+  if(/refresh[_ ]?token|JWT|jwt expired/i.test(m)) return 'You were signed out — sign in again.';
+  if(/Invalid API key|apikey/i.test(m)) return "The server didn't accept the app's key. Try Update app in Settings.";
   if(/Token has expired|otp_expired|invalid.*(otp|code|link)|(otp|code|link).*invalid/i.test(m)) return 'That code has expired — send another.';
-  if(/redirect|not allowed/i.test(m)) return "This address isn't in Supabase's allowed redirect list yet.";
-  if(/For security purposes|rate/i.test(m)) return 'Too many tries — wait a minute and go again.';
+  if(/redirect|not allowed/i.test(m)) return "That reset link can't open here. Use the 6-digit code from the email instead.";
+  if(/For security purposes|rate|Too many tries/i.test(m)) return 'Too many tries — wait a bit and go again.';
   if(/User already registered|already been registered/i.test(m)) return 'That email already has an account — sign in instead.';
   if(/Password should be|at least 6/i.test(m)) return 'Password needs to be at least 6 characters.';
-  if(/Email not confirmed/i.test(m)) return 'Confirm the email first, or switch off email confirmation in Supabase.';
-  if(/function .*add_friend|add_friend.*does not exist|PGRST202/i.test(m)) return "The database functions aren't there. Re-run supabase.sql — it has changed.";
-  if(/Could not find the '(status|accepted)' column|column .*\b(status|accepted)\b.*coop|coop.*\b(status|accepted)\b/i.test(m)) return "Challenge invites need a DB update — paste coop-accept.sql in the Supabase SQL editor.";
-  if(/relation .* does not exist|schema cache|PGRST20[0-9]/i.test(m)) return "The database tables aren't there. Run supabase.sql in the SQL editor.";
-  if(/row-level security|violates row-level/i.test(m)) return 'Blocked by row-level security. Check the policies in supabase.sql ran.';
-  if(/Invalid API key|JWT|apikey/i.test(m)) return 'That publishable key was rejected. Check it matches the project URL.';
-  return m.slice(0,120)||'Sync failed.';
+  if(/Email not confirmed/i.test(m)) return 'Confirm your email first — check your inbox for the link.';
+  if(/function .*add_friend|add_friend.*does not exist|PGRST202/i.test(m)) return 'The server needs an update. Please try again later.';
+  if(/Could not find the '(status|accepted)' column|column .*\b(status|accepted)\b.*coop|coop.*\b(status|accepted)\b/i.test(m)) return "Challenge invites aren't set up on the server yet. Please try again later.";
+  if(/relation .* does not exist|schema cache|PGRST20[0-9]/i.test(m)) return "The server isn't set up yet. Please try again later.";
+  if(/row-level security|violates row-level/i.test(m)) return 'The server refused that. Try signing out and back in.';
+  if(/No such challenge/i.test(m)) return 'That challenge has ended.';
+  console.warn('Sync error:', m);
+  return 'Sync failed — try again.';
 }
 
 /* Direct REST client — no CDN, no dynamic import, nothing to block or fail to load.
@@ -1968,7 +1971,7 @@ const Sync = {
     if(!this.live()){ me().name=name; S.auth='in'; save(); return; }
     let d; try{ d=await api('/auth/v1/signup',{method:'POST',body:{email:email.trim(),password},noAuth:true}); }
     catch(e){ throw new Error(readableSyncError(e)); }
-    if(!setSession(d)) throw new Error('Account made — now confirm the email, then sign in. (Or switch off email confirmation in Supabase → Authentication.)');
+    if(!setSession(d)) throw new Error('Account made — check your email to confirm it, then sign in.');
     const id=d.user?.id||S.session.user_id, code=me().code;
     try{ await api('/rest/v1/profiles?on_conflict=id',{method:'POST',body:{id,code,display_name:name},
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}}); }
@@ -2035,7 +2038,7 @@ const Sync = {
     if(!this.live()){ S.auth='in'; save(); return; }
     let d; try{ d=await api('/auth/v1/token?grant_type=password',{method:'POST',body:{email:email.trim(),password},noAuth:true}); }
     catch(e){ throw new Error(readableSyncError(e)); }
-    if(!setSession(d)) throw new Error('Signed in but no session came back.');
+    if(!setSession(d)) throw new Error('Signed in, but something went wrong. Please try again.');
     const id=d.user?.id||S.session.user_id;
     let prof=null; try{ prof=(await api(`/rest/v1/profiles?id=eq.${id}&select=code,display_name`))?.[0]; }catch(e){}
     S.me={id,email:email.trim(),name:prof?.display_name||'Me',code:prof?.code||me().code,avatar:S.me?.avatar||null};
@@ -2072,7 +2075,7 @@ const Sync = {
     try{ const rows=await api(`/rest/v1/vault?user_id=eq.${S.me.id}&select=blob,updated_at`);
       const row=rows?.[0]; if(!row?.blob) return null;
       return {blob:row.blob, updatedAt:Date.parse(row.updated_at)||0};
-    }catch(e){ S.syncError=readableSyncError(e); save(); return null; }
+    }catch(e){ S.syncError=readableSyncError(e); saveQuiet(); return null; }
   },
   async backup(){
     if(!this.live()||!this.signedIn()) return;
@@ -2088,9 +2091,9 @@ const Sync = {
       await api('/rest/v1/vault?on_conflict=user_id',{method:'POST',
         body:{user_id:S.me.id,blob:stripForVault(),updated_at:new Date().toISOString()},
         headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
-      S.vaultAt=Date.now(); S.syncError=null; save();
+      S.vaultAt=Date.now(); S.syncError=null; saveQuiet();
       return 'saved';
-    }catch(e){ S.syncError=readableSyncError(e); save(); return 'error'; }
+    }catch(e){ S.syncError=readableSyncError(e); saveQuiet(); return 'error'; }
   },
   async restore(){
     const v=await this.fetchVault();
@@ -3294,8 +3297,8 @@ function roughSheet(editId){
   const text0=existing?.text||'';
   const o=overlay(`<div class="sheet rough-sheet"><div class="grab"></div>
     <h2>${existing?'Edit rough day':'Rough day'}</h2>
-    <p class="muted small" style="margin-bottom:12px">What happened — and how does it land? Private — never shared with friends.</p>
-    <p class="tiny muted" style="margin-bottom:8px">Optional feel</p>
+    <p class="muted small" style="margin-bottom:12px">What happened, and how did it feel? Private — never shared with friends.</p>
+    <p class="tiny muted" style="margin-bottom:8px">How it felt (optional)</p>
     <div class="chips" data-feels>${ROUGH_FEELS.map(f=>`<button type="button" class="chip ${feel0===f?'on':''}" data-feel="${f}">${f}</button>`).join('')}<button type="button" class="chip ${!feel0?'on':''}" data-feel="">Skip</button></div>
     <textarea id="roughtext" maxlength="${ROUGH_TEXT_MAX}" rows="5" placeholder="Write freely…" style="margin-top:14px;width:100%;resize:vertical">${esc(text0)}</textarea>
     <p class="tiny muted" style="margin-top:6px"><span data-rc>${(text0||'').length}</span> / ${ROUGH_TEXT_MAX}</p>
@@ -3310,7 +3313,7 @@ function roughSheet(editId){
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelector('[data-ok]').onclick=()=>{
     const text=ta.value.trim();
-    if(!text && !feel){ toast('Write a little, or pick a feel'); return; }
+    if(!text && !feel){ toast('Write a little, or pick a feeling'); return; }
     saveRoughDay({text, feel:feel||null, id:existing?.id, date:existing?.date||today()});
     close(o); haptic('success'); render(); toast('Saved · never shared with friends');
   };
@@ -3363,12 +3366,12 @@ function vToday(){
         if(needHalf>0) return `${open.length} left · ${needHalf} more for half-day +${half}`;
         return `${open.length} left · half-day +${half} ready at 50%`;
       })()}</p>
-      ${d.bonus?`<p class="small" style="margin-top:6px;color:var(--accent)">+${d.bonus} streak bonus today</p>`:`<p class="tiny muted" style="margin-top:6px">Tomorrow's streak bonus: +${lb}</p>`}
+      ${d.bonus?`<p class="small" style="margin-top:6px;color:var(--accent)">+${d.bonus} for opening the app today</p>`:`<p class="tiny muted" style="margin-top:6px">Open the app tomorrow for +${lb}</p>`}
     </div>
   </div>
   ${(()=>{const nx=nextClearReward(); if(!activeTasks().length) return '';
-    return `<div class="card clearstreak"><div class="row between"><div><b class="small">${nx.streak?`${nx.streak} day full-clear streak`:'Full-clear streak'}</b>
-      <p class="tiny muted">${nx.streak?`${nx.days} more full ${nx.days===1?'day':'days'} for +${nx.amount} coins`:`Tick everything 7 days running for +${nx.amount} coins`}</p></div>
+    return `<div class="card clearstreak"><div class="row between"><div><b class="small">${nx.streak?`${nx.streak}-day full-clear streak`:'Full-clear streak'}</b>
+      <p class="tiny muted">${nx.streak?`${nx.days} more clear ${nx.days===1?'day':'days'} for +${nx.amount} coins`:`Tick everything 7 days running for +${nx.amount} coins`}</p></div>
       <span class="pill ${nx.streak>=7?'accent':''}">${ICON.flame} ${nx.streak}</span></div></div>`;})()}
   <div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=need?`Earned · +${chestCoins()} lands Monday`:`Clear ${need} of ${wcw.taskDays||7} for +${chestCoins()} · ${wc} so far`}</p></div>
     <div class="dots big">${wk.map(x=>`<i class="${x.away?'a':x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}${x.away?' · away':''}"></i>`).join('')}</div></div></div>
@@ -3378,7 +3381,7 @@ function vToday(){
   </div>
   <div class="section" style="margin-top:14px">
     ${awayNow?`<div class="card away-card"><b>You're away · habits paused</b>
-      <p class="small muted" style="margin-top:6px">No misses, no reason prompts. Your clear-streak holds.</p>
+      <p class="small muted" style="margin-top:6px">No misses, no reason prompts. Your full-clear streak holds.</p>
       <p class="tiny muted" style="margin-top:6px">${esc(awayStatusLabel())}</p>
       <button class="btn primary sm" style="margin-top:12px" data-away-back>I'm back</button></div>`:
     n===0?`<div class="card empty"><b>No tasks yet</b>Pick two or three things you want to keep doing.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="tasks">Add tasks</button></div>`:
@@ -3433,7 +3436,7 @@ function vPlan(){
   const search = (sub==='notes'||sub==='affirmations')?`<div class="card" style="margin-bottom:12px;padding:12px">
     <input type="search" id="${sub==='notes'?'notesearch':'affsearch'}" placeholder="${sub==='notes'?'Search notes by a word…':'Search affirmations by a word…'}" value="${esc(q)}" autocomplete="off">
     <p class="tiny muted" style="margin-top:8px">${(()=>{
-      if(!(q||'').trim()) return sub==='notes'?'Last opened or edited sits at the top.':'Last brought to the top sits first.';
+      if(!(q||'').trim()) return sub==='notes'?'Last opened or edited sits at the top.':'Most recently brought to the top comes first.';
       const n = sub==='notes'?notesFiltered().length:whysFiltered().length;
       return n?`${n} match${n===1?'':'es'}`:'No matches';
     })()}</p></div>`:'';
@@ -3459,7 +3462,7 @@ function pList(){
     <input type="text" id="newtodo" placeholder="Something to get done…" maxlength="400">
     <div class="row" style="margin-top:8px;align-items:center;gap:8px">
       <input type="time" id="newtodoat" value="${planState.at||''}" style="width:126px">
-      <span class="tiny muted">optional — a time nudges you</span>
+      <span class="tiny muted">optional — add a time for a reminder</span>
       ${planState.at?`<button class="btn sm ghost" id="clearat">Clear</button>`:''}</div>
     <div class="chips" style="margin-top:10px">
       ${[['today','Today'],['tomorrow','Tomorrow'],['someday','Someday']].map(([v,l])=>`<button class="chip ${w===v?'on':''}" data-when="${v}">${l}</button>`).join('')}
@@ -3591,7 +3594,7 @@ function pOverview(){
     <div class="row between" style="align-items:flex-start"><div><div class="eyebrow">Consistency</div><div class="heroval">${str}<small>%</small> ${DELTA(str,prev)}</div>
       <p class="tiny muted">Average habit strength${prev!==null?` · ${str>=prev?'up':'down'} from ${prev}% a month ago`:hist<7?` · building up, ${7-hist} day${7-hist===1?'':'s'} until trends appear`:''}</p></div>
       <div class="ring sm"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${2*Math.PI*52}" stroke-dashoffset="${2*Math.PI*52*(1-str/100)}"/></svg></div></div>
-    <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap"><span class="pill">${ICON.flame} ${S.streak.login} day streak</span><span class="pill">${chests} chest${chests===1?'':'s'}</span></div>
+    <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap"><span class="pill">${ICON.flame} ${S.streak.login}-day login streak</span><span class="pill">${chests} chest${chests===1?'':'s'}</span></div>
   </div>
 
   ${weekStoryCard()}
@@ -3620,7 +3623,7 @@ function pOverview(){
       <span class="pill">day ${daysSinceStart()}</span></div></div>`}
   <div class="card"><div class="row between" style="margin-bottom:8px"><b class="small">Note for today</b><span class="tiny muted">${fmt(today(),{weekday:'short',day:'numeric',month:'short'})}</span></div>
     <textarea id="daynote" placeholder="Anything about today…" rows="2">${esc(S.days[today()]?.note||'')}</textarea>
-    <p class="tiny muted" style="margin-top:6px">Day notes used to live on the calendar. They’re here now — and also on a day you tap inside a task.</p></div>
+    <p class="tiny muted" style="margin-top:6px">You can also add a note to any past day from a task’s calendar.</p></div>
 
   <details class="acc"><summary>Records</summary><div class="body"><ul class="list">
     <li><span>Best login streak</span><b>${rec.bestLogin} d</b></li>
@@ -3760,7 +3763,7 @@ function challengeCard(raw){
       <div class="row between" style="align-items:flex-start">
         <div><span class="tierbadge">Invite</span><b style="display:block;margin-top:6px;font-size:1.1rem">${esc(ch.name)}</b>
           <p class="small muted" style="margin-top:2px">${esc(t.label)} · ${esc(liveDesc(ch))}</p>
-          <p class="tiny muted" style="margin-top:6px">${needMe?'Needs your accept':waiting.length?('Waiting on '+waiting.map(f=>esc(f.name)).join(', ')):'Starting…'}</p></div>
+          <p class="tiny muted" style="margin-top:6px">${needMe?'Waiting for you to accept':waiting.length?('Waiting on '+waiting.map(f=>esc(f.name)).join(', ')):'Starting…'}</p></div>
         <div class="chestmini">${chestSVG(ch.tier)}</div></div>
       ${needMe?`<div class="row" style="gap:8px;margin-top:12px"><button class="btn primary" style="flex:1" data-acceptchal="${raw.id}">Accept</button>
         <button class="btn ghost" style="flex:1" data-declinechal="${raw.id}">Decline</button></div>`:
@@ -3780,7 +3783,7 @@ function challengeCard(raw){
       <div class="chestmini ${done?'shake':''}">${chestSVG(ch.tier)}</div></div>
     <div class="faces" style="margin-top:12px">${ch.members.map(f=>`<span class="avatar" title="${esc(f.name)}">${esc((f.name||'?')[0]).toUpperCase()}</span>`).join('')}</div>
     <div class="row between" style="margin-top:12px"><span class="tiny muted">${pr.have} of ${pr.need}</span>
-      <span class="tiny muted">${(()=>{ const rr=tierChestRolls(ch.tier); return rr[0]+'–'+rr[rr.length-1]; })()} coins${ch.tier==='legendary'?' · 2 shop extras':ch.tier==='rare'?' · chance of shop extra':''}</span></div>
+      <span class="tiny muted">${(()=>{ const rr=tierChestRolls(ch.tier); return rr[0]+'–'+rr[rr.length-1]; })()} coins${ch.tier==='legendary'?' · +2 Shop buys':ch.tier==='rare'?' · maybe +1 Shop buy':''}</span></div>
     <div class="bar quest chal-bar"><i style="width:${clamp(pc,0,100)}%"></i></div>
     ${counts}
     <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${pills}</div>
@@ -3790,7 +3793,7 @@ function challengeCard(raw){
   </div>`;
 }
 function startChallengeModal(crewId,after){
-  if(chalOnCooldown()){ toast('Cooldown until '+fmt(S.chalCooldownUntil,{day:'numeric',month:'short'})+' — after a fail, try again tomorrow'); return; }
+  if(chalOnCooldown()){ toast('After a failed challenge you can start another on '+fmt(S.chalCooldownUntil,{day:'numeric',month:'short'})); return; }
   const crew=crewId?crewOf(crewId):null;
   const busy=chalBusyPeople();
   const free=(crew?crewMembers(crew):friendList()).filter(f=>!busy.has(f.id));
@@ -3813,14 +3816,14 @@ function startChallengeModal(crewId,after){
     if(!questAvailable(qid, members)) qid=firstOpenQuest(tier, members);
     const box=o.querySelector('#chalform');
     const n=chalCounts();
-    const why=`Slots: legendary ${n.legendary}/1 · rare ${n.rare}/1 · common ${n.common}/2. Finish a quest and it locks until next month for everyone. Fail → try again tomorrow.`;
-    const whoHint=`Up to ${CHAL_PARTY_MAX} people on any tier. The more of you, the bigger the pot — and the harder it gets.`;
+    const why=`Running: Legendary ${n.legendary}/1 · Rare ${n.rare}/1 · Common ${n.common}/2. Finish a challenge and it’s locked for everyone in it until next month. Fail, and you can try again tomorrow.`;
+    const whoHint=`The more of you, the bigger the chest — and the harder the target.`;
     const anyOpen=(CHALLENGES[tier]||[]).some(q=>questAvailable(q.id, members));
     box.innerHTML=`<h2>Start a challenge</h2>
-      <p class="tiny muted" style="margin-top:6px">${whoHint} ${cap} ${cap===1?'seat':'seats'} left on this one.</p>
+      <p class="tiny muted" style="margin-top:6px">${whoHint} Bring up to ${cap} friend${cap===1?'':'s'}.</p>
       <p class="small" style="margin-top:14px"><b>Who's in</b></p>
       <div class="chips" style="margin-top:8px">${free.map(f=>`<button type="button" class="chip ${picks.has(f.id)?'on':''}" data-fid="${f.id}" ${!picks.has(f.id)&&atCap?'disabled':''}>${esc(f.name)}</button>`).join('')}</div>
-      <p class="tiny muted" style="margin-top:8px">${picks.size} of ${cap} selected${picks.size>=2?` · pot ×${crewMultiplier(picks.size+1).toFixed(2).replace(/0$/,'')} for ${picks.size+1} people`:''}</p>
+      <p class="tiny muted" style="margin-top:8px">${picks.size} of ${cap} selected${picks.size>=2?` · chest ×${crewMultiplier(picks.size+1).toFixed(2).replace(/0$/,'')} for ${picks.size+1} people`:''}</p>
       <p class="small" style="margin-top:16px"><b>Tier</b></p>
       <div class="chips" style="margin-top:8px">${['legendary','rare','common'].map(t=>{
         const open=tierSlotOpen(t); const label=TIERS_C[t].label;
@@ -3861,7 +3864,7 @@ function vFriends(){
   const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${headTrailHtml()}</div>${affirmationLine()}${banner}`;
 
   if(live && !inn) return head + `
-  <div class="card" data-tour="code"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
+  <div class="card" data-tour="signin"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
       <div class="stack">
         ${authState.mode==='up'?`<input type="text" id="auname" placeholder="Your name" maxlength="24" value="${esc(m.name||'')}">`:''}
         <input type="email" id="auemail" placeholder="Email" autocomplete="email">
@@ -3892,7 +3895,7 @@ function vFriends(){
       `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}
     <div class="row between" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div><div class="eyebrow">Your code</div><b style="font-size:1.25rem;letter-spacing:.08em">${m.code}</b>
       <p class="tiny muted" style="margin-top:4px">${live?esc(S.me?.email||''):''}</p></div>
-    <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button>${avatarOf(m)?`<button class="btn sm ghost" id="avclear">Remove pic</button>`:''}</div></div></div>`;
+    <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button>${avatarOf(m)?`<button class="btn sm ghost" id="avclear">Remove photo</button>`:''}</div></div></div>`;
 
   const listPane=addFriendCard+(!fs.length
     ?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`
@@ -3908,7 +3911,7 @@ function vFriends(){
         </button>
         ${open?`<div style="padding:0 14px 14px;border-top:1px solid var(--line)">
           <button class="card friendcard" data-friend="${f.id}" style="margin-top:12px"><div class="row between" style="width:100%"><div class="row" style="gap:10px">${avPairHtml(m,f)}
-            <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0} day streak · level ${f.level??1}</p></div></div>
+            <div><b>${f.consistency??0}% consistent</b><p class="tiny muted">${f.streak??0}-day login streak · level ${f.level??1}</p></div></div>
             <span class="pill ${cleared?'accent':''}">${cleared?'Cleared today':'Not yet today'}</span></div></button>
           <div class="card pairstreak" style="margin-top:10px"><div class="row between"><div><div class="eyebrow">Shared streak</div><div class="heroval">${ps}<small>days</small></div>
             <p class="tiny muted">${ps?'Days you both cleared in a row.':'Starts the first day you both clear.'}</p></div>
@@ -3945,7 +3948,7 @@ function vFriends(){
     <button class="btn ${canStartChallenge()?'primary':''} block" id="startchal" ${canStartChallenge()?'':'disabled'} style="margin-bottom:12px">${canStartChallenge()?'Start a challenge':chalOnCooldown()?'Cooldown after last challenge':peopleLeft()<1?`${CHAL_PEOPLE_MAX} people already on challenges`:'No slot free'}</button>
     ${pending.length?`<h2 style="margin:8px 0 10px">Waiting <span class="muted">${pending.length}</span></h2>${pending.map(c=>challengeCard(c)).join('')}`:''}
     <h2 style="margin:8px 0 10px">Running <span class="muted">${active.length}</span></h2>
-    ${active.map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>Invite someone — the clock starts only after they accept.<br><span class="tiny muted" style="display:block;margin-top:10px">Invites show under Active challenges → Waiting, and at the top of the chat.</span></div>`}
+    ${active.map(c=>challengeCard(c)).join('')||`<div class="card empty"><b>None running</b>Invite someone — the clock starts only after they accept.<br><span class="tiny muted" style="display:block;margin-top:10px">Invites appear here under Waiting, and at the top of the chat.</span></div>`}
   </div>`;
 
   const pane=sub==='chats'?chatsPane:sub==='challenges'?chalPane:listPane;
@@ -3967,12 +3970,12 @@ function vShop(){
     <div class="row between" style="margin-top:14px"><span class="pill accent">Level ${L.L} · ${T.name}</span><span class="tiny muted">${L.into} / ${L.need} XP</span></div>
     <div class="titlebar"><i style="width:${clamp(100*L.into/L.need,0,100)}%"></i></div>
     <p class="tiny muted" style="margin-top:8px">${T.next?`${T.next.name} at level ${T.next.at}. `:'Top title. '}XP is never spent — only coins are.</p></div>
-  <div class="section"><h2>Rewards <span class="muted">you set the price</span></h2>
+  <div class="section"><h2>Rewards <span class="muted">priced from what you earn</span></h2>
     ${(()=>{const p=pendingExtras(); if(!p.length) return '';
       return `<div class="card has-attn" style="margin-bottom:12px;border-color:color-mix(in srgb,var(--accent) 35%,var(--line))">
         <i class="attn-dot" aria-hidden="true"></i>
-        <b class="small">${p.length} chest extra${p.length===1?'':'s'} to place</b>
-        <p class="tiny muted" style="margin-top:4px">${active.length?'Pick which reward gets +1 buy this week.':'Add a reward first — they will wait.'}</p>
+        <b class="small">${p.length} extra buy${p.length===1?'':'s'} to use</b>
+        <p class="tiny muted" style="margin-top:4px">${active.length?'Pick which reward gets +1 buy this week.':'Add a reward first — extras expire at the end of the week.'}</p>
         ${active.length?`<button class="btn primary sm" style="margin-top:10px" id="placeextras">Choose</button>`:
           `<button class="btn primary sm" style="margin-top:10px" data-go="settings" data-open="rewards">Add a reward</button>`}</div>`;})()}
     ${active.length?(()=>{const newAff=new Set(shopNewAffordIds()); return active.map(x=>{const cost=rewardPrice(x); const afford=S.points.coins>=cost; const ok=afford&&canRate; const fresh=newAff.has(x.id); return `<div class="card reward ${ok?'':'locked'}${fresh?' has-attn':''}">${fresh?'<i class="attn-dot" aria-hidden="true"></i>':''}<div class="row between"><b>${esc(x.name)}</b><span class="small muted">${Math.min(S.points.coins,cost)}/${cost}</span></div><p class="tiny muted">${earnEta(cost)}</p><div class="bar"><i style="width:${clamp(100*S.points.coins/cost,0,100)}%"></i></div>
@@ -3980,18 +3983,18 @@ function vShop(){
         return `<div class="row between" style="margin:8px 0 2px">
           <span class="tiny ${al.monthUsed>mp?'':'muted'}" style="${al.monthUsed>mp?'color:var(--warn)':''}">${al.monthUsed} of ${mp} this month</span>
           <span class="tiny muted">${al.maxed?`back ${fmt(al.next,{day:'numeric',month:'short'})}`
-            :al.intoExtra?'chest extra left'
+            :al.intoExtra?'extra buy left'
             :al.over?'one spare left'
             :rewardFreq(x)==='custom'?''
             :`${al.used} of ${al.limit} ${al.period}`}</span></div>
-        ${al.extras?`<p class="tiny muted" style="margin:0 0 4px">+${al.extras} chest extra${al.extras===1?'':'s'} this week</p>`:''}
+        ${al.extras?`<p class="tiny muted" style="margin:0 0 4px">+${al.extras} extra buy${al.extras===1?'':'s'} this week</p>`:''}
         <div class="bar quest allowbar ${al.over?'spare':''} ${al.maxed?'done':''}"><i style="width:${clamp(Math.round(100*al.monthUsed/mp),0,100)}%"></i></div>
         <button class="btn ${can?(al.over?'':'primary'):''} block" style="margin-top:8px" data-buy="${x.id}" ${can?'':'disabled'}>${
-          al.maxed?`That is it ${al.period}` : !afford?`${cost-S.points.coins} more coins` : al.intoExtra?'Buy with a chest extra' : al.over?'Buy the spare one' : 'Buy'}</button>`;})()}</div>`}).join('');})():`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
+          al.maxed?`That's it for ${al.period}` : !afford?`${cost-S.points.coins} more coins` : al.intoExtra?'Use an extra buy' : al.over?'Buy the spare one' : 'Buy'}</button>`;})()}</div>`}).join('');})():`<div class="card empty"><b>No rewards yet</b>Choose up to ${MAX_REWARDS} things worth earning.<br><button class="btn primary sm" style="margin-top:14px" data-go="settings" data-open="rewards">Add a reward</button></div>`}</div>
   <div class="section"><h2>Looks <span class="muted">${looks().owned.filter(id=>lookItem(id)&&!lookItem(id).legacy).length} of ${LOOK_ITEMS.filter(i=>!i.legacy).length}</span></h2>
     <button class="card planline" id="openlooks"><div class="row" style="gap:12px;align-items:center">
       <span class="avatar big img">${charSVG(myChar(),64)}</span>
-      <div><b>Your character</b><p class="tiny muted">Open Peeps — hair, facial hair, shirt colours, eyewear, headwear and backdrops.</p></div></div>
+      <div><b>Your character</b><p class="tiny muted">Faces, hair, facial hair, eyewear, hats, shirt colours and backdrops.</p></div></div>
       <span class="chev">›</span></button></div>
   <div class="section" data-tour="locker"><h2>Locker <span class="muted">${S.locker.filter(x=>!x.usedAt).length} to use</span></h2>
     ${lockerHtml()}</div>`;
@@ -4069,14 +4072,14 @@ function lockerHtml(){
 function buy(id){
   const r=S.rewards.find(x=>x.id===id); if(!r) return; const cost=rewardPrice(r); if(S.points.coins<cost) return;
   const al=allowanceState(r);
-  if(al.maxed){ toast(`That is it ${al.period} — back ${fmt(al.next,{day:'numeric',month:'short'})}`); return; }
+  if(al.maxed){ toast(`That's it for ${al.period} — back ${fmt(al.next,{day:'numeric',month:'short'})}`); return; }
   const after=al.left-1;
   const leftAfter=al.hard-(al.used+1);
   const note = al.intoExtra
-    ? `This uses a chest extra.${leftAfter?` ${leftAfter} still left after.`:` That is the last one ${al.period}.`}`
+    ? `This uses an extra buy.${leftAfter?` ${leftAfter} still left after.`:` That is the last one ${al.period}.`}`
     : al.over
     ? (al.extras
-      ? `This is your spare. After it you still have ${al.extras} chest extra${al.extras===1?'':'s'} this week.`
+      ? `This is your spare. After it you still have ${al.extras} extra buy${al.extras===1?'':'s'} this week.`
       : `This is one past what you planned. It is allowed once — after this it waits until ${fmt(al.next,{day:'numeric',month:'short'})}.`)
     : after>0 ? `${after} more ${al.period} after this.` : `That is your last planned one ${al.period}. You would have one spare after it.`;
   modal(`<h2>Buy ${esc(r.name)}?</h2><p class="muted">${cost} coins. ${S.points.coins-cost} left after. ${note}</p>`,'Buy',()=>{
@@ -4093,9 +4096,9 @@ function vSettings(){
   ${affirmationLine()}
   <details class="acc" id="acc-tasks" data-tour="tasks"><summary>Tasks <span class="muted">${activeTasks().length} / ${MAX_TASKS}</span></summary><div class="body">
     ${(()=>{const live=S.tasks.filter(t=>!t.archived); const n=live.length; const full=n>=MAX_TASKS; return `
-    <div class="stack" style="margin-bottom:10px"><div class="row"><input type="text" id="newtask" placeholder="${full?'Task cap reached':'e.g. Walk the dog'}" maxlength="60"${full?' disabled':''}><input type="number" id="newtarget" placeholder="min" min="1" max="600" style="width:74px;padding:12px 8px;text-align:center"${full?' disabled':''}></div>
+    <div class="stack" style="margin-bottom:10px"><div class="row"><input type="text" id="newtask" placeholder="${full?'Task cap reached':'e.g. Walk the dog'}" maxlength="60"${full?' disabled':''}><input type="number" id="newtarget" placeholder="mins" min="1" max="600" style="width:74px;padding:12px 8px;text-align:center"${full?' disabled':''}></div>
       <button class="btn primary block" id="addtask"${full?' disabled':''}>Add</button></div>
-    <p class="tiny muted" style="margin:-4px 0 10px">${n} / ${MAX_TASKS} tasks${full?'':'. Minutes optional — every '+OT_PER+' minutes past a target pays +1 coin.'}</p>
+    <p class="tiny muted" style="margin:-4px 0 10px">${n} / ${MAX_TASKS} tasks${full?'':'. Add minutes to make it a timed task — every '+OT_PER+' minutes over pays +1 coin.'}</p>
     ${n?live.slice().sort((a,b)=>a.order-b.order).map(t=>`<div class="editrow"><span class="name">${esc(t.name)}${t.target?`<span class="tag">${t.target}m</span>`:''}${cadenceTagHtml(t)}</span><button class="iconbtn" data-rename="${t.id}" aria-label="Rename">${ICON.edit}</button><button class="iconbtn" data-deltask="${t.id}" aria-label="Remove">${ICON.trash}</button></div>`).join(''):'<p class="muted small">Add the things you want to keep doing daily.</p>'}`;})()}
     <p class="tiny muted" style="margin-top:10px">Finish every due task to clear the day. Removing one takes it off the list; past days stay in Progress.</p></div></details>
   <details class="acc" id="acc-rewards" ${rewOpen?'open':''}><summary>Rewards <span class="muted">${S.rewards.filter(x=>x.active).length} / ${MAX_REWARDS}</span></summary><div class="body">
@@ -4110,7 +4113,7 @@ function vSettings(){
       <div class="row"><input type="number" id="newprice" min="${MIN_REWARD_PRICE}" max="${MAX_REWARD_PRICE}" step="5" value="${suggestFromFreq(newRewardFreq,null,newRewardPer)}" style="width:118px;padding:12px 8px;text-align:center" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>
         <button class="btn primary grow" id="addreward" ${S.rewards.filter(x=>x.active).length>=MAX_REWARDS?'disabled':''}>Add</button></div>
       <p class="tiny muted" id="priceeta">${earnEta(suggestFromFreq(newRewardFreq,null,newRewardPer))}</p>
-      <p class="tiny muted">Suggested as an equal share of your weekly treat pot, scaled by how often it can be bought — never under ${REWARD_FLOOR_DAYS} full days per week of its cadence. Type over a price to keep it; Rebalance resets to the pot split.</p>
+      <p class="tiny muted">Priced from what you earn and how often you want it — at least ${REWARD_FLOOR_DAYS} clear days for every week it covers. Type your own price to keep it; <b>Balance these for me</b> resets all prices.</p>
     </div>
     ${S.rewards.filter(x=>x.active).map(x=>`<div class="editrow"><span class="name">${esc(x.name)}
       <span class="tiny muted" style="font-weight:400;display:block">${rewardPrice(x)} coins · ${esc(freqLabel(x).toLowerCase())} · ${Math.round(monthlyCostOf(x))}/month</span></span>
@@ -4157,12 +4160,12 @@ function vSettings(){
   ${(()=>{ const live=Sync.live(), inn=Sync.signedIn();
     if(!live) return `<details class="acc"><summary>Account</summary><div class="body"><p class="tiny muted">No server configured on this build.</p>
       <button class="btn sm block" id="syncnow" style="margin-top:10px">Update app</button></div></details>`;
-    if(!inn) return `<details class="acc" id="acc-account" data-tour="account"><summary>Account</summary><div class="body"><p class="tiny muted">Sign in on Friends first — backups ride with your account.</p>
+    if(!inn) return `<details class="acc" id="acc-account" data-tour="account"><summary>Account</summary><div class="body"><p class="tiny muted">Sign in on the Friends tab to back up your progress.</p>
       <button class="btn sm block" id="syncnow" style="margin-top:10px">Update app</button></div></details>`;
-    return `<details class="acc" id="acc-account" data-tour="account"><summary>Account <span class="muted">${S.vaultAt?'synced':'not yet'}</span></summary><div class="body">
+    return `<details class="acc" id="acc-account" data-tour="account"><summary>Account <span class="muted">${S.vaultAt?'backed up':'not backed up yet'}</span></summary><div class="body">
       <p class="tiny muted">${esc(S.me?.email||me().name||'')}</p>
-      <p class="tiny muted" style="margin-top:8px">${S.vaultAt?`Last backup ${new Date(S.vaultAt).toLocaleString()}`:'Not pulled from the cloud yet on this device'}</p>
-      <p class="tiny muted" style="margin-top:4px">Saves itself a few seconds after changes. Use Restore if another device is ahead.</p>
+      <p class="tiny muted" style="margin-top:8px">${S.vaultAt?`Last backup ${new Date(S.vaultAt).toLocaleString()}`:'Not backed up from this device yet'}</p>
+      <p class="tiny muted" style="margin-top:4px">Backs itself up a few seconds after anything changes. Use Restore if another device has newer data.</p>
       <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
         <button class="btn primary sm" id="restorevault">Restore from account</button>
         <button class="btn sm" id="backupnow">Backup now</button>
@@ -4174,7 +4177,7 @@ function vSettings(){
     <div class="row between" style="align-items:flex-start;gap:12px">
       <div style="flex:1;min-width:0">
         <b class="small">Away</b>
-        <p class="tiny muted" style="margin-top:4px">Pause habits while you’re off. Pick how many days. No misses, no reason prompts, clear-streak holds.${notifPerm()==='granted'?' A gentle return nudge on the end day.':''}</p>
+        <p class="tiny muted" style="margin-top:4px">Pause habits while you’re off. Pick how many days. No misses, no reason prompts, and your full-clear streak holds.${notifPerm()==='granted'?' A gentle return nudge on the end day.':''}</p>
         ${awayActive()?`<p class="tiny" style="margin-top:6px;color:var(--accent)">${esc(awayStatusLabel())}</p>`:''}
       </div>
       <button class="toggle ${awayActive()?'on':''}" data-away-toggle role="switch" aria-checked="${awayActive()}"></button>
@@ -4206,42 +4209,43 @@ function vSettings(){
     })()}
   </div>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
-    <p><b style="color:var(--fg)">The idea.</b> Nothing here ever takes points off you. Missing a day costs you what you would have earned, and that is all. The app's job is to notice patterns you would not, and to make keeping your word worth something.</p>
+    <p><b style="color:var(--fg)">The idea.</b> Nothing here takes coins off you — a missed day only costs what you would have earned. Steady spots patterns you might not, and makes keeping your word to yourself worth something.</p>
 
-    <p><b style="color:var(--fg)">Coins and XP.</b> Every task done pays ${TASK_BASE} coins and XP. Miss two expected days in a row and the next tick pays ${TASK_BASE+1}, then +1 per further miss day up to ${TASK_BASE+5}. One miss alone does not raise pay. Coins get spent in the Shop. XP is never spent — it drives your level and title.</p>
-    <p><b style="color:var(--fg)">Habit strength.</b> Each task carries a 0–100% score that climbs about 5 a day when done and fades 5% a day when not. A miss dents it; it never resets to zero.</p>
-    <p><b style="color:var(--fg)">Day quality.</b> On a normal day with N tasks due: each done task pays its base (shown as +${TASK_BASE} on the row). At half done (≥50%) you get a one-time half-day bonus of about ${halfDayBonusAmt(8)} for N=8. Clear the day (100%) for a clear bonus of about ${clearDayBonusAmt(8)} — if the half was already paid, only the difference is added. When you are one tick from half or clear, Today shows a calm “1 more for …” line and a tiny bonus hint under that row’s +${TASK_BASE}. Rough day and Away earn nothing. Undo claws back task coins and any day bonus you drop below.</p>
-    <p><b style="color:var(--fg)">Timed tasks.</b> Set a target in minutes and you will be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins whatever the clock says; the rest scales with how much of the target you did — 15 of 30 minutes on a ${TASK_BASE}-coin task pays ${Math.max(1,Math.round(TASK_BASE*(TIME_FLOOR+(1-TIME_FLOOR)*0.5)))}, not half. Over the target pays +1 coin per ${OT_PER} minutes (max +${OT_TASK_CAP} a task, +${otDayCap()} a day), coins only, never XP. A short session still counts as <i>done</i>: it never touches your streak, your day clear or your strength. Under Done today you can Undo anytime the same day, or Edit the minutes on a timed task — coins move by the difference. No countdown.</p>
-    <p><b style="color:var(--fg)">Full-clear streak.</b> Tick everything 7 days running for a bonus — ${[1,2,3,4].map(x=>clearWeekBonus(x)).join(', ')} for each further week, then holding there (half a day's coins, then a day, then two). Miss a clear and it starts again.</p>
-    <p><b style="color:var(--fg)">Login streak.</b> Just for opening the app: +${loginBonus(2)} a day from day two of a streak.</p>
-    <p><b style="color:var(--fg)">Weekly chest.</b> Clear ${CHEST_DAYS} of 7 days and a free day's coins land on Monday. Days with no tasks and away days don't count against you — the target shrinks to match (e.g. 4 of 5 for weekday-only tasks).</p>
+    <p><b style="color:var(--fg)">Coins and XP.</b> Each task you tick pays ${TASK_BASE} coins and ${TASK_BASE} XP. After two misses in a row a task pays ${TASK_BASE+1}, then 1 more for each further miss (up to ${TASK_BASE+5}), to help you back. Spend coins in the Shop; XP is never spent and sets your level.</p>
+    <p><b style="color:var(--fg)">Habit strength.</b> Each task has a 0–100% strength. It climbs each time you do it and drops 5% each time you miss, but never resets to zero.</p>
+    <p><b style="color:var(--fg)">Day bonuses.</b> Tick off half the day’s tasks for a half-day bonus, and all of them to clear the day for a bigger one (with 8 tasks: +${halfDayBonusAmt(8)} at half, +${clearDayBonusAmt(8)} in total for a clear). Undo takes back any bonus you drop below.</p>
+    <p><b style="color:var(--fg)">Timed tasks.</b> Give a task a target in minutes and you'll be asked how long it took. Turning up earns ${Math.round(TIME_FLOOR*100)}% of the coins (that's what Skip time pays) and the rest scales with your time, so 15 of 30 minutes pays ${Math.round(100*(TIME_FLOOR+(1-TIME_FLOOR)*0.5))}%. Every ${OT_PER} minutes over the target adds +1 coin, ${otDayCap()<OT_TASK_CAP?`up to +${otDayCap()} a day`:`up to +${OT_TASK_CAP} a task and +${otDayCap()} a day`} (coins only, no XP). A short session still counts as done.</p>
+    <p><b style="color:var(--fg)">Full-clear streak.</b> Clear every day for 7 days running and you get half a day's coins (+${clearWeekBonus(1)}). The next week pays a full day (+${clearWeekBonus(2)}), and every week after that pays two days (+${clearWeekBonus(3)}). Away days and days with nothing due don't break it; a day you don't clear does.</p>
+    <p><b style="color:var(--fg)">Login streak.</b> Open the app on consecutive days and, from the second day, you get +${loginBonus(2)} coins a day. The flame at the top shows your run.</p>
+    <p><b style="color:var(--fg)">Weekly chest.</b> Clear every day that has tasks bar one — 6 of 7 normally, 4 of 5 if you only have weekday tasks — and a day's coins (+${chestCoins()}) land on Monday. Away days don't count against you.</p>
 
-    <p><b style="color:var(--fg)">Rewards.</b> Up to ${MAX_REWARDS}. Reward prices follow cadence (no hard 30 ceiling) — typed prices soft-cap at ${MAX_REWARD_PRICE}. Looks stay ≤ ${MAX_LOOK_COST} coins so they cost about one clear day and rewards stay the main spend. You say how often you would like each one — weekly, fortnightly, monthly, or your own number of times a month. Every reward takes an equal share of a typical week's treat pot (about four clear days plus three half days of coins), scaled by its window — a fortnightly costs about twice a weekly, a monthly about 4.3×. Nothing costs less than ${REWARD_FLOOR_DAYS} full-clear days per week of its cadence, so one great day never buys a weekly — not even with a price you typed. A typical month then buys everything once per its cadence; lots of rewards or the floor can push the month meter amber/red — that is honest. Unlocked prices auto-recalc when tasks or rewards change. Type over a price to keep it (above the floor); <b>Balance these for me</b> / Rebalance resets to the pot split. Amber past 90%, red past 100%.</p>
-    <p><b style="color:var(--fg)">Allowances.</b> The frequency is a real limit. You get what you planned plus ${SPARES} spare, then it waits — the counter goes amber when you use that spare. A Rare or Legendary challenge chest can add a further buy for the current week on a reward you choose; unused extras expire when the week ends. Without that, a cheap reward is buyable every day and stops meaning anything. The Shop itself is always open; the limits do the work, so there is no consistency gate on spending.</p>
+    <p><b style="color:var(--fg)">Rewards.</b> Add up to ${MAX_REWARDS} and say how often you'd like each: weekly, fortnightly, monthly or a set number of times a month. Steady prices them from what you earn — each gets an equal share of a typical week's treat pot (about four clear days and three half days of coins), scaled by how often it comes round.</p>
+    <p><b style="color:var(--fg)">Reward prices.</b> Nothing costs less than ${REWARD_FLOOR_DAYS} clear days for each week it covers, so one great day never buys a weekly treat — even with a price you typed. Prices update when your tasks or rewards change; type your own to keep it, or tap <b>Balance these for me</b> to reset them all.</p>
+    <p><b style="color:var(--fg)">Budget bar.</b> Amber means your rewards cost more than a normal month earns; red means more than even a month of clearing every day.</p>
+    <p><b style="color:var(--fg)">Buying limits.</b> How often you chose is a real limit: you can buy what you planned plus ${SPARES} spare, then it waits until the next week, fortnight or month. Rare and Legendary challenge chests can give an extra buy this week on a reward you choose — use it before the week ends.</p>
 
-    <p><b style="color:var(--fg)">Every other day.</b> In Settings → Tasks → edit, switch a task to Every other day — today counts, tomorrow rests, and so on. Off days stay off the Today list, are not auto-missed, and do not dent habit strength.</p>
-    <p><b style="color:var(--fg)">Days of the week.</b> Same edit screen — pick Days of week and tap Mon–Sun chips (e.g. Mon/Wed/Fri workout). Only those days are due; other days skip the list like every-other off days.</p>
-    <p><b style="color:var(--fg)">Misses.</b> Anything due and untouched at local midnight becomes a miss on next open, and you are asked why. Those answers are the most useful thing in the app: they feed <i>Why you miss</i> in Progress, the breakdown on each task, the day detail in a task's history, and every recap.</p>
-    <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and the app offers to halve the target and suggests things that actually work — shrinking it, anchoring it to a habit that never slips, deciding when and where in advance. It will not ask again about that task for ${ADVICE_COOLDOWN} days.</p>
+    <p><b style="color:var(--fg)">How often.</b> In Settings → Tasks, tap the pencil next to a task to make it Daily, Every other day or certain Days of week. On days it isn't due it stays off Today, can't be missed and doesn't affect its strength.</p>
+    <p><b style="color:var(--fg)">Misses.</b> Anything left unticked at midnight is checked with you next time you open the app: yesterday's tasks you can still tick off, or say why you missed them. Your reasons feed <i>Why you miss</i> in Progress, each task's history and your recaps.</p>
+    <p><b style="color:var(--fg)">When something keeps slipping.</b> Miss the same task ${STUCK_MISSES} days running and Steady suggests ways to make it easier (and, for timed tasks, offers to halve the target). It won't ask about that task again for ${ADVICE_COOLDOWN} days.</p>
 
-    <p><b style="color:var(--fg)">Recaps.</b> A short one every Monday for the week just gone, with your completion rate against the week before and what you said when you missed. Bigger ones at 7, 30, 100 and 365 days. Each is snapshotted when earned, so revisiting one shows what it said at the time. They live in Progress → Overview.</p>
-    <p><b style="color:var(--fg)">Challenges.</b> Starting one sends an invite. The clock and the chest only begin after everyone accepts. Decline or cancel frees the slot. Common / Rare / Legendary share the same four shapes — clear streak, coin haul, show up, shop silence — with the bar raised each tier. Coin haul targets scale with a clear day's coins (about 3 / 5 / 10 clears in the window). Chests pay about half / one / two of a weekly treat by tier; Rare has a chance of +1 shop buy for the week, Legendary gives two — you pick which rewards. Finish a quest and that exact one locks until next month for you with every friend; if someone in the invite already finished it this month, it stays greyed out. Fail and it ends at once — you can try again the next day.</p>
-    <p><b style="color:var(--fg)">Plan.</b> A list, notes and affirmations, all outside the economy — nothing on the list or in notes can be failed. List items take any date, and a time if you want a nudge. Unfinished ones follow you along as <i>overdue</i> rather than becoming misses. On Today or Overdue you can push unfinished list items to tomorrow in one tap — only when you ask; nothing rolls over on its own.</p>
+    <p><b style="color:var(--fg)">Recaps.</b> A short recap every Monday for the week just gone, plus bigger ones at 7, 30, 100 and 365 days. Each is kept as it was on the day; find them all in Progress → Overview.</p>
+    <p><b style="color:var(--fg)">Challenges.</b> Start one from a chat — pick who's in, a tier and a challenge — and it begins once everyone accepts. Common, Rare and Legendary share the same four (clear streak, coin haul, show up, shop silence), just harder with bigger chests; Rare may add an extra Shop buy for the week and Legendary always adds two. One Legendary, one Rare and two Common can run at once. Finish one and it's locked until next month; fail and you can try again tomorrow.</p>
+    <p><b style="color:var(--fg)">Plan.</b> Your list, notes and affirmations. None of it earns coins or can be failed. List items can have a date, and a time if you'd like a reminder; unfinished ones wait under Overdue until you tick them or tap <i>Move all to tomorrow</i>.</p>
     <p><b style="color:var(--fg)">Tab dots.</b> A dot on a tab means something new is waiting there.</p>
-    <p><b style="color:var(--fg)">Notes.</b> A title, the date you made it, and a box to write in. It saves as you type, and whichever note you touched last sits at the top of the list. Search by any word in the title or the text. Delete from the bin in the full editor; an empty note removes itself when you leave.</p>
-    <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like; one is picked at random on open and when you change tabs. Search by word; tap one to read it all, and Bring to top to move it up.</p>
-    <p><b style="color:var(--fg)">Reminders.</b> One switch. A morning nudge, an evening one only if something is still open, one that just reads you one of your own affirmations, and anything on your list with a time on it. If your browser has blocked notifications, no app can undo that from the inside — the Reminders panel tells you where to clear it.</p>
+    <p><b style="color:var(--fg)">Notes.</b> Notes save as you type, and the one you used last sits at the top. Search finds any word in the title or text. Delete one with the bin in the full editor; an empty note deletes itself.</p>
+    <p><b style="color:var(--fg)">Affirmations.</b> Under Plan. Add as many as you like: one greets you when you first open the app each day, and a random one sits at the top of each tab. Tap one to read it all; <i>Bring to top</i> moves it up the list.</p>
+    <p><b style="color:var(--fg)">Reminders.</b> A morning nudge, an evening one if anything's left, an optional affirmation, and anything on your list with a time. ${PUSH.vapidPublic?'':'For now they only arrive while the app is open or recently used. '}If your browser blocks notifications, the Reminders panel shows how to allow them.</p>
 
-    <p><b style="color:var(--fg)">Friends.</b> Pair by swapping codes; adding one code links you both ways. Chats are fixed phrases and emotes only — nothing free-typed, so there is nothing to moderate. Challenges are started inside a chat: pick a tier, and the harder the tier the bigger the chest — Rare and Legendary can also unlock an extra Shop buy for the week. One legendary, one rare and two commons can run at once. No leaderboard, deliberately.</p>
-    <p><b style="color:var(--fg)">Accounts.</b> The account exists only to back things up and to pair with people — everything works without one. Backing up happens by itself a few seconds after anything changes. Forgotten your password? Use the link on the sign-in screen and it emails you a reset. Lost the email as well? Your tasks, history and coins are still on this phone; sign up again with another email and this device carries on. You would lose the old backup and any pairing, nothing else.</p>
-    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture on Friends. Looks art: Open Peeps (Pablo Stanley), CC0 — local DiceBear bundle, not a CDN. Dozens of faces, hair styles, facial hair, eyewear, headwear and shirt colours; six skin tones. Everything is available to every face. Outfits pick <i>shirt colour</i> only. Headwear replaces hair (Peeps cannot layer a hat). Facial hair is optional. Hair colour tints Peeps hair and facial hair. Free starters unlock automatically; the rest cost coins.</p>
-    <p><b style="color:var(--fg)">Your picture.</b> You can use an image instead. Tap your name and avatar at the top right of Friends. Any square image works — render one out of Blender if you like. It gets squashed to 128px, about 5KB, which is small enough to travel with your profile so friends see it. Remove it and you go back to your Open Peeps character.</p>
-    <p><b style="color:var(--fg)">Friends.</b> Tap a friend to see the two of you together — chests won, coins they brought in, which tiers, and every chest with its date.</p>
-    <p><b style="color:var(--fg)">Light and dark.</b> Follows your phone. Change it in your phone's display settings and the app follows.</p>
-    <p><b style="color:var(--fg)">Away.</b> Settings → Away pauses habits for a stretch you choose (1, 3, 7, 14 days or any number). Away days ask for nothing, create no misses, and bridge your clear-streak without counting as a clear. Login streak still counts if you open the app. Challenges won’t fail only because you were away. If notifications are allowed, a calm return reminder fires on the end day — change the length or end early and it reschedules or cancels.</p>
-    <p><b style="color:var(--fg)">Rough day.</b> A quiet private note on Today — how the day felt, optional feel chip. No coins, no XP, never shared with Friends. Edit anytime the same day.</p>
-    <p><b style="color:var(--fg)">Week story.</b> Progress → Overview stitches clears, away days, top miss reasons and rough-day notes into a short private paragraph for the current week.</p>
-    <p><b style="color:var(--fg)">Privacy.</b> Everything lives on this device by default. With a friend, only aggregates sync — cleared and done counts, streak, consistency, level. Task names, notes, miss reasons, rough days and your affirmations are never shared with friends. If you sign in, a private backup of everything is kept in your account so a new phone can restore it — only you can read it.</p>
+    <p><b style="color:var(--fg)">Friends.</b> Add a friend's code and you're linked both ways. Chats use set phrases and emoji only — no free typing. There's no leaderboard, on purpose.</p>
+    <p><b style="color:var(--fg)">Accounts.</b> An account backs up your data and lets you add friends; everything else works without one. It backs itself up a few seconds after anything changes. Forgotten your password? Tap <i>Forgotten your password?</i> on the sign-in screen for a reset code.</p>
+    <p><b style="color:var(--fg)">Your character.</b> Shop → Looks, or tap your picture at the top right. Mix any face with any skin tone, hair, facial hair, eyewear, hat, shirt colour and backdrop (a hat replaces your hair). Starters are free; the rest cost up to ${MAX_LOOK_COST} coins. Art: Open Peeps by Pablo Stanley (CC0).</p>
+    <p><b style="color:var(--fg)">Your picture.</b> Prefer a photo? Tap your picture at the top right and choose <i>Use an image</i> — any square image works. It's shrunk small so friends can see it; remove it to go back to your character.</p>
+    <p><b style="color:var(--fg)">Friend details.</b> On Friends, open a friend and tap their card to see your time together: chests won, coins, tiers and dates.</p>
+    <p><b style="color:var(--fg)">Light and dark.</b> Settings → Customise → Appearance. Auto follows your phone, or pick Light or Dark.</p>
+    <p><b style="color:var(--fg)">Away.</b> Settings → Away pauses your habits for as many days as you choose. Away days ask nothing of you, aren't misses and don't break your full-clear streak (they don't count as clears either); your login streak still counts if you open the app. With reminders allowed, you'll get a nudge on your last away day.</p>
+    <p><b style="color:var(--fg)">Rough day.</b> Tap <i>Rough day?</i> on Today to write a private note about how the day went, with an optional feeling. It earns nothing and is never shared; edit it from <i>This week</i> in Progress.</p>
+    <p><b style="color:var(--fg)">This week.</b> Progress → Overview sums up your week so far in a few private lines: clear days, away days, why you missed and any rough-day notes.</p>
+    <p><b style="color:var(--fg)">Privacy.</b> Everything stays on this device unless you sign in. Friends only see totals — days cleared, tasks done, login streak, consistency, level, and whether you opened the app or bought a reward (for challenges) — never task names, notes, miss reasons, rough days or affirmations. Signing in also keeps a private backup of everything that only you can read.</p>
     <p class="tiny">Build ${BUILD}</p>
     <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px"><button class="btn sm" id="conncheck">Check connection</button><button class="btn sm" id="replay">Replay tour</button><button class="btn sm" id="replayonb">Replay setup</button><button class="btn sm" id="export">Export data</button><button class="btn sm danger" id="wipe">Erase everything</button></div>
   </div></details>`;
@@ -4333,7 +4337,7 @@ function bind(){
         if(blob && localHeavy && vaultWeight(blob) > 0){
           render();
           S.flags.vaultDeclined=Date.now(); save();      // cleared if you tap Restore; otherwise boot won't sneak it in later
-          modal('<h2>Restore your backup?</h2><p class="muted">Your account has a backup (likely from your other device). Restoring replaces what is on <b>this</b> device with that backup. Cancel keeps this device as it is — the cloud copy is only replaced if this device ends up with more in it.</p>','Restore',()=>{ Sync.applyVault(blob); S.flags.vaultDeclined=null; save(); render(); toast('Restored from account'); friendsTick(); });
+          modal('<h2>Restore your backup?</h2><p class="muted">Your account has a backup, probably from another device. Restore replaces everything on <b>this</b> device with it. Cancel keeps this device as it is.</p>','Restore',()=>{ Sync.applyVault(blob); S.flags.vaultDeclined=null; save(); render(); toast('Restored from account'); friendsTick(); });
         } else {
           if(blob) Sync.applyVault(blob);
           render(); toast(blob?'Signed in · backup restored':'Signed in'); friendsTick();
@@ -4347,9 +4351,9 @@ function bind(){
     rvault.disabled=true; rvault.textContent='…';
     try{
       const remote=await Sync.fetchVault();
-      if(!remote?.blob){ toast('No backup on the account yet — open the app on your phone for a minute so it can upload.'); }
+      if(!remote?.blob){ toast('No backup on this account yet. Open Steady on the device that has your data and give it a minute to upload.'); }
       else {
-        modal('<h2>Restore from account?</h2><p class="muted">This replaces what is on <b>this</b> device with the cloud backup (usually your phone). You cannot undo it from here.</p>','Restore',()=>{ Sync.applyVault(remote.blob, remote.updatedAt); render(); toast('Restored from account'); friendsTick(); });
+        modal('<h2>Restore from account?</h2><p class="muted">This replaces everything on <b>this</b> device with your account backup. It can’t be undone.</p>','Restore',()=>{ Sync.applyVault(remote.blob, remote.updatedAt); render(); toast('Restored from account'); friendsTick(); });
       }
     }catch(e){ toast(e.message||'Could not reach backup'); }
     finally{ rvault.disabled=false; rvault.textContent='Restore from account'; }
@@ -4405,7 +4409,7 @@ function bind(){
         if(window.caches){ const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
       }
     }catch(e){}
-    toast(S.syncError?S.syncError:`Friends synced · build ${BUILD}`);
+    toast(S.syncError?S.syncError:'Updated — reloading…');
     setTimeout(()=>location.reload(),600);
   };
   const ol=q('#openlooks'); if(ol) ol.onclick=()=>charSheet();
@@ -4439,7 +4443,7 @@ function bind(){
   qa('[data-locker-view]').forEach(b=>b.onclick=()=>{lockerView=b.dataset.lockerView==='reward'?'reward':'date'; haptic(); render();});
   // Settings — tasks
   const nt=q('#newtask'); const addT=()=>{ const v=nt.value.trim(); if(!v) return;
-    if(S.tasks.filter(t=>!t.archived).length>=MAX_TASKS){ toast("That's the "+MAX_TASKS+" task cap."); return; }
+    if(S.tasks.filter(t=>!t.archived).length>=MAX_TASKS){ toast("You can have up to "+MAX_TASKS+" tasks."); return; }
     const tg=clamp(Math.round(Number(q('#newtarget').value)||0),0,600);
     const clearedToday=!!S.days[today()]?.cleared;          // today's already won — the new task starts tomorrow
     S.tasks.push({id:uid(),name:v,createdAt:clearedToday?addDays(today(),1):today(),order:S.tasks.length,archived:false,target:tg||null}); save(); syncCadencePrices(); haptic(); render(); document.getElementById('acc-tasks').open=true; document.getElementById('newtask')?.focus();
@@ -4482,11 +4486,11 @@ function bind(){
     toast('Affirmation deleted','Undo',()=>{ if(!S.whys.some(w=>w.id===gone.id)){ S.whys.push(gone); save(); render(); } }); });   // your own words — one stray tap shouldn't lose them
   const nr=q('#newreward'); const np=q('#newprice');
   const refreshEta=()=>{ const eta=q('#priceeta'); if(!eta||!np) return; const n=Math.round(Number(np.value)||0);
-    if(!n){ eta.textContent='Type a price — days are from a clear of the tasks you have set.'; return; }
+    if(!n){ eta.textContent='Type a price to see how many clear days it takes.'; return; }
     if(n<MIN_REWARD_PRICE){ eta.textContent='Minimum '+MIN_REWARD_PRICE+' coins so nothing is free.'; return; }
     if(n>MAX_REWARD_PRICE){ eta.textContent='Maximum '+MAX_REWARD_PRICE+' coins for a reward.'; return; }
     const fl=floorFor(newRewardFreq,newRewardPer);
-    if(n<fl){ eta.textContent=`At least ${fl} for this one — ${REWARD_FLOOR_DAYS} full days per week of its cadence, so a single day can't buy it.`; return; }
+    if(n<fl){ eta.textContent=`At least ${fl} for this one — ${REWARD_FLOOR_DAYS} clear days for every week it covers, so one good day can't buy it.`; return; }
     eta.textContent=earnEta(n); };
   const ra2=q('#acc-rewards'); if(ra2) ra2.addEventListener('toggle',()=>{ rewOpen=ra2.open; });
   if(np) np.oninput=refreshEta;
@@ -4503,7 +4507,7 @@ function bind(){
     if(price<MIN_REWARD_PRICE){ toast('Minimum '+MIN_REWARD_PRICE+' coins'); return; }
     if(price>MAX_REWARD_PRICE){ toast('Maximum '+MAX_REWARD_PRICE+' coins'); return; }
     const fl=floorFor(newRewardFreq,newRewardPer);
-    if(price<fl){ price=fl; toast(`Raised to ${fl} — the least this cadence can cost`); }
+    if(price<fl){ price=fl; toast(`Raised to ${fl}, the lowest price for how often it can be bought`); }
     price=Math.min(MAX_REWARD_PRICE, Math.max(MIN_REWARD_PRICE, price));
     const rec={id:uid(),name:v,active:true,tier:'custom',price,freq:newRewardFreq};
     if(newRewardFreq==='custom') rec.perMonth=clamp(Math.round(Number(q('#newper')?.value)||newRewardPer),1,MAX_PER_MONTH);
@@ -4578,7 +4582,7 @@ function bind(){
   qa('[data-rough]').forEach(b=>b.onclick=()=>roughSheet());
   qa('[data-rough-edit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); roughSheet(b.dataset.roughEdit); });
   qa('[data-size]').forEach(b=>b.onclick=()=>{S.settings.textSize=clamp(S.settings.textSize+Number(b.dataset.size),80,130);save();applyTheme();render();keepLook();});
-  const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings={...fresh().settings,remind:S.settings.remind}; /* the look only — keep reminders */ save();applyTheme();render();keepLook();toast('Customise reset');};
+  const rl=q('#resetlook'); if(rl) rl.onclick=()=>{S.settings={...fresh().settings,remind:S.settings.remind}; /* the look only — keep reminders */ save();applyTheme();render();keepLook();toast('Look reset to defaults');};
   const runCheck=async(btn)=>{ const old=btn.textContent; btn.textContent='…';
     const L=await connectionReport(); btn.textContent=old;
     modal(`<h2>Connection check</h2><ul class="list" style="margin-top:8px">${L.map(([k,v])=>`<li><span class="small muted">${esc(k)}</span><span class="small" style="text-align:right;max-width:62%">${esc(v)}</span></li>`).join('')}</ul>`,'Copy',()=>{
@@ -4607,7 +4611,7 @@ function bind(){
   const rp=q('#replay'); if(rp) rp.onclick=()=>{S.flags.tours={};save();setTab('today');};
   const rob=q('#replayonb'); if(rob) rob.onclick=()=>{ haptic(); onboarding(()=>{ render(); toast('Setup replayed'); }, true); };
   const ex=q('#export'); if(ex) ex.onclick=()=>{const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(stripForVault(),null,2));a.download=`steady-${today()}.json`;a.click();};
-  const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, points and rewards. This cannot be undone.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
+  const wp=q('#wipe'); if(wp) wp.onclick=()=>modal('<h2>Erase everything?</h2><p class="muted">Tasks, history, coins, rewards and notes on this device. This can’t be undone. Your account backup isn’t touched.</p>','Erase',()=>{localStorage.removeItem(KEY);location.reload();},true);
 }
 function updateConfirm(){
   const bar=document.getElementById('confirmbar'), btn=document.getElementById('confirmbtn');
@@ -4703,7 +4707,7 @@ function editReward(r){
         <input type="number" id="eper" min="1" max="${MAX_PER_MONTH}" step="1" value="${Math.round(perMonthOf(r))}" style="width:78px;padding:10px 8px;text-align:center">
         <span class="small muted">times a month</span></div></div>
     <input type="number" id="ep" value="${cur}" min="${MIN_REWARD_PRICE}" max="${MAX_REWARD_PRICE}" step="5" style="margin-top:12px">
-    <div class="chips" style="margin-top:10px"><button type="button" class="chip" data-epreset="${sp.week}">A week · ${sp.week}</button><button type="button" class="chip" data-epreset="${sp.fortnight}">A fortnight · ${sp.fortnight}</button></div>
+    <div class="chips" style="margin-top:10px"><button type="button" class="chip" data-epreset="${sp.week}">Weekly price · ${sp.week}</button><button type="button" class="chip" data-epreset="${sp.fortnight}">Fortnightly price · ${sp.fortnight}</button></div>
     <p class="tiny muted" id="eeta" style="margin-top:10px">${earnEta(cur)}</p>
     <div style="display:flex;gap:10px;margin-top:18px"><button class="btn" style="flex:1" data-x>Cancel</button><button class="btn primary" style="flex:1" data-ok>Save</button></div></div>`,'center');
   const i=o.querySelector('#ep'); const eta=o.querySelector('#eeta');
@@ -4717,7 +4721,7 @@ function editReward(r){
     o.querySelector('#ep').value=suggestFromFreq(ef,others,epv()); upd(); haptic(); });
   if(eper) eper.oninput=()=>{ const others=S.rewards.filter(x=>x.active&&x.id!==r.id);
     o.querySelector('#ep').value=suggestFromFreq('custom',others,epv()); upd(); };
-  const upd=()=>{ const n=Math.round(Number(i.value)||0), fl=floorFor(ef,epv()); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):n>MAX_REWARD_PRICE?('Maximum '+MAX_REWARD_PRICE+' coins'):n<fl?`At least ${fl} for this cadence — ${REWARD_FLOOR_DAYS} full days per week of it.`:earnEta(n); };
+  const upd=()=>{ const n=Math.round(Number(i.value)||0), fl=floorFor(ef,epv()); eta.textContent=n<MIN_REWARD_PRICE?('Minimum '+MIN_REWARD_PRICE+' coins'):n>MAX_REWARD_PRICE?('Maximum '+MAX_REWARD_PRICE+' coins'):n<fl?`At least ${fl} — ${REWARD_FLOOR_DAYS} clear days for every week it covers.`:earnEta(n); };
   i.oninput=upd;
   o.querySelectorAll('[data-epreset]').forEach(b=>b.onclick=()=>{ i.value=b.dataset.epreset; o.querySelectorAll('[data-epreset]').forEach(x=>x.classList.toggle('on',x===b)); upd(); });
   o.querySelector('[data-x]').onclick=()=>close(o);
@@ -4814,7 +4818,7 @@ function timeSheet(timed, edit){
     if(ti<0) ti=-1;
     return `<div class="card" style="padding:14px" data-time="${t.id}"><div class="row between"><b>${esc(t.name)}</b><span class="small muted" data-out>target ${t.target}m</span></div>
     <div class="timerow">${list.map((m,i)=>`<button class="chip ${i===ti?'on':''}" data-m="${m}">${m}m</button>`).join('')}${extra}<button class="chip add" data-other>Other</button></div></div>`; };
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. Still done either way.':'Still counts as done either way — a short session just pays less of the coins, and skipping the time pays the turn-up rate. Over the target pays +1 per '+OT_PER+' minutes on top.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${otDayCap()} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot">${edit?'':'<button class="btn ghost" data-x>Cancel</button>'}<button class="btn" data-skip>${edit?'Cancel':'Skip time'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>${edit?(timed.length===1?'Update time':'Update times'):`How long did ${timed.length===1?'it':'each'} take?`}</h2><p class="muted small" style="margin-bottom:14px">${edit?'Coins move by the difference. It still counts as done.':'It counts as done either way. A short session pays a bit less, and Skip time pays '+Math.round(TIME_FLOOR*100)+'% of the coins. Every '+OT_PER+' minutes over the target adds +1.'}</p><p class="small" style="color:var(--accent);margin-bottom:12px" data-cap hidden>Daily time bonus capped at +${otDayCap()} — extra minutes past this won't add more.</p><div class="stack">${timed.map(card).join('')}</div><div class="foot">${edit?'':'<button class="btn ghost" data-x>Cancel</button>'}<button class="btn" data-skip>${edit?'Cancel':'Skip time'}</button><button class="btn primary" data-ok>${edit?'Save':'Mark done'}</button></div></div>`);
   const refresh=()=>{ let left=room();
     timed.forEach(t=>{ const c=o.querySelector(`[data-time="${t.id}"] [data-out]`); const raw=overtimeFor(t,mins[t.id]); const b=clamp(raw,0,Math.max(0,left)); left-=b;
       const pay=paidValue(t,mins[t.id]);
@@ -4937,7 +4941,7 @@ function catchUpGate(){
 
   o.querySelector('[data-later]').onclick=()=>{
     catchUpSnooze=true; close(o); haptic();
-    toast('OK — ask again later today.');
+    toast('OK — I’ll ask again next time you open the app.');
     setTimeout(maybeGates,280); // older miss reasons can still show
   };
   return true;
@@ -4968,7 +4972,7 @@ function missGate(){
   };
   const multi=days.length>1;
   const title=days.length===1
-    ? (byDay[days[0]].length===1?'One day slipped':'A day slipped')
+    ? 'One day slipped'
     : `${days.length} days slipped`;
   const sub=multi
     ? 'One reason per day is enough — it covers every missed task that day. Set the same for every day below, or change any day before saving.'
@@ -5083,13 +5087,13 @@ function onboarding(next, force){
     const steps=`<div class="steps">${[0,1,2].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
     const back=step>0?`<button class="btn ghost sm" data-back style="margin-bottom:10px">‹ Back</button>`:'';
     if(step===0) g.innerHTML=`${steps}${back}<h1>Nothing is taken from you.</h1>
-      <p>Miss a day and you only lose what you would have earned. No broken streak that punishes you. No debt. No guilt trip from the app.</p>
+      <p>Miss a day and you only lose what you would have earned that day. No penalties, no debt, no guilt trip.</p>
       <p style="margin-top:12px">Steady’s job is to notice patterns you would not, and to make keeping your word to yourself worth something.</p>
       <div class="actions"><button class="btn primary block" data-n>Got it</button></div>`;
     if(step===1) g.innerHTML=`${steps}${back}<h1>Why are you doing this?</h1>
       <p>Not the goal — the reason underneath it. What is it you actually want out of keeping your word to yourself?</p>
       <textarea id="onbwhy" style="margin-top:16px" maxlength="700" placeholder="e.g. I want to be someone who follows through."></textarea>
-      <p class="tiny muted" style="margin-top:10px">This is your affirmation. You'll see it on the opening screen every day, and it sits under Plan → Affirmations where you can change it or add more. On the days you can't be bothered, it's the thing that's meant to catch you.</p>
+      <p class="tiny muted" style="margin-top:10px">This becomes your first affirmation. You'll see it when you open the app each day, and you can edit it or add more under Plan → Affirmations.</p>
       <div class="actions"><button class="btn primary block" data-n ${line?'':'disabled'}>Next</button>
         <button class="btn ghost block" data-skipwhy style="margin-top:8px">Skip — I'll write one later</button></div>`;
     if(step===2) g.innerHTML=`${steps}${back}<h1>Pick two or three to start.</h1><p>You can change these any time in Settings. Fewer is better.</p><div class="chips" style="margin-top:18px">${SUG.map(([s,m])=>`<button class="chip ${picks.has(s)?'on':''}" data-p="${esc(s)}" data-mt="${m}">${esc(s)}${m?` <span class="tiny muted">${m}m</span>`:''}</button>`).join('')}</div><div class="row" style="margin-top:14px"><input type="text" id="onbtask" placeholder="Or write your own" maxlength="60"><button class="btn" id="onbadd">Add</button></div><div class="actions"><button class="btn primary block" data-n>${picks.size?`Start with ${picks.size}`:'Start with none for now'}</button></div>`;
@@ -5128,12 +5132,12 @@ function onboarding(next, force){
 
 /* ---------- Spotlight tour ---------- */
 const TOURS={
-  today:[['ring','Coins earned today. Each task pays 3 — after 2 misses in a row it rises by 1 a day up to 8. Half and clear days add a bonus on top.'],['tasks','Tap to pick, confirm below. Timed ones ask how long — and Done today lets you Undo anytime (coins come back) or Edit the minutes.'],['week','Clear 6 of 7 days and a chest lands Monday.'],['coins','Your coin balance. Tap it to jump to the shop.']],
-  plan:[['listadd','List, Notes and Affirmations. Add anything for today, a date, or someday — nothing here can be failed. Unfinished Today or Overdue items can be pushed to tomorrow in one tap.']],
+  today:[['ring','Coins earned today. Each task pays 3 (a bit more if it’s been slipping). Getting half done, or clearing the day, adds a bonus.'],['tasks','Tap tasks to select them, then confirm at the bottom. Timed tasks ask how long they took. Changed your mind? Undo it under Done today.'],['week','Clear 6 of 7 days (fewer if some days have no tasks) and a chest of coins lands on Monday.'],['coins','Your coin balance. Tap it to jump to the Shop.']],
+  plan:[['listadd','Add anything for today, a date or someday. Nothing here earns coins or can be failed, and unfinished items can move to tomorrow in one tap.']],
   progress:[['hero','One number: how consistent you have been lately, and which way it is moving.'],['stats','Every figure is compared with the period before it.'],['pattern','Where you actually fall over. Thursdays are rarely a coincidence.']],
-  shop:[['balance','Coins to spend. XP fills the level bar and is never spent. The shop stays open — allowances on each reward do the limiting.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
-  settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours — theme, designs, font, type size.'],['remind','Optional nudges: morning, evening if anything’s open, and your own affirmations.'],['account','Update app, backup/restore, and sign out live here.']],
-  friends:[['fsubs','Three tabs: Friend list, Chats, and Active challenges.'],['code','Add a friend’s code here — pairs both ways. Your code sits underneath to share. Only totals sync, never task names or notes.']],
+  shop:[['balance','Coins to spend. XP fills your level bar and is never spent. Each reward can only be bought as often as you set.'],['locker','What you buy lands here. Mark it used when you’ve enjoyed it.']],
+  settings:[['tasks','Add, rename or remove tasks.'],['look','Make it yours: light or dark, theme, design, font and text size.'],['remind','Optional nudges: morning, evening if anything’s open, and your own affirmations.'],['account','Back up, restore, update the app or sign out.']],
+  friends:[['signin','Sign in or create a free account to add friends and back up your progress.'],['fsubs','Three tabs: Friend list, Chats, and Active challenges.'],['code','Add a friend’s code here — pairs both ways. Your code sits underneath to share. Only totals sync, never task names or notes.']],
 };
 let tourLive=null;
 function endTour(markSeen){
@@ -5176,16 +5180,15 @@ function iosInstallSheet(){
 function budgetCard(){
   const b=budgetState();
   if(!b.active.length) return `<div class="card" style="padding:12px"><b class="small">Your monthly budget</b>
-    <p class="tiny muted" style="margin-top:3px">Treat pot ~${b.pot} a month (four clears + three half days a week from your tasks). Your rewards share it, each scaled by how often it can be bought. Add a reward and this shows whether it fits.</p></div>`;
+    <p class="tiny muted" style="margin-top:3px">Your treat pot is about ${b.pot} coins a month — roughly four clear days and three half days a week. Add a reward and this shows whether it fits.</p></div>`;
   const msg = b.level==='over'
-    ? `More than even a perfect month earns (~${b.full}). Something will have to give — fewer rewards, or rarer ones.`
-    : b.level==='tight' ? `More than a normal month, but a month of clearing every day (~${b.full}) covers it.`
-    : `That fits the treat pot, with room for challenges.`;
+    ? `More than even a perfect month earns (about ${b.full}). Something will have to give — fewer rewards, or rarer ones.`
+    : b.level==='tight' ? `More than a normal month earns, but clearing every day (about ${b.full}) covers it.`
+    : `That fits your treat pot.`;
   return `<div class="card budget ${b.level}" style="padding:12px">
     <div class="row between"><b class="small">Your rewards want ${b.spend} a month</b><span class="small" style="color:${b.level==='over'?'var(--danger)':b.level==='tight'?'var(--warn)':'var(--accent)'}">${b.pct}%</span></div>
     <div class="bar quest budgetbar"><i style="width:${clamp(b.pct,0,100)}%"></i></div>
-    <p class="tiny muted" style="margin-top:6px">Treat pot ~${b.pot} (four clears + three half days a week) · shared by every reward · ${b.redemptions} redemption${b.redemptions===1?'':'s'} a month · ${msg}</p>
-    <p class="tiny muted" style="margin-top:4px">Type over a price to keep it; Rebalance resets to the pot split.</p>
+    <p class="tiny muted" style="margin-top:6px">Treat pot about ${b.pot} a month · about ${Math.round(b.redemptions)} buy${Math.round(b.redemptions)===1?'':'s'} a month planned. ${msg}</p>
     ${rebalancePlan().length?`<button class="btn sm block" style="margin-top:10px" data-rebalance>Balance these for me</button>`:''}
   </div>`;
 }
@@ -5197,13 +5200,13 @@ function rebalanceSheet(){
     + b.active.filter(r=>!plan.some(x=>x.r.id===r.id)).reduce((a,r)=>a+monthlyCostOf(r),0);
   const warn=plan.filter(x=>x.raises&&x.halfway);
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Rebalance your rewards?</h2>
-    <p class="muted small" style="margin-bottom:12px">Frequencies stay as you set them. Weeklies split one week of the treat pot so you can buy every weekly once from a solid week; fortnights split two weeks of pot among themselves (they do not shrink weeklies). The month meter may still go amber or red if you buy every occurrence of everything.</p>
+    <p class="muted small" style="margin-bottom:12px">How often stays as you set it. Each reward gets an equal share of your treat pot, scaled by how often it can be bought, and never less than its minimum. Prices you typed yourself are reset too.</p>
     <ul class="list">${plan.map(x=>`<li><div><div>${esc(x.r.name)}</div><div class="tiny muted">${esc(x.label.toLowerCase())}</div></div>
       <div style="text-align:right"><span class="tiny muted" style="text-decoration:line-through">${x.from}</span>
       <b style="margin-left:8px;color:${x.raises?'var(--danger)':'var(--accent)'}">${x.to}</b></div></li>`).join('')}</ul>
     <p class="tiny muted" style="margin-top:10px">Afterwards: ${Math.round(after)} a month of your ~${b.pot} treat pot.</p>
     ${warn.length?`<div class="card callout" style="margin-top:10px;padding:12px"><b class="small">Heads up</b>
-      <p class="tiny muted" style="margin-top:3px">${warn.map(x=>`You are ${S.points.coins} of ${x.from} into <b>${esc(x.r.name)}</b> — this moves the post to ${x.to}.`).join(' ')}</p></div>`:''}
+      <p class="tiny muted" style="margin-top:3px">${warn.map(x=>`You've saved ${S.points.coins} of ${x.from} for <b>${esc(x.r.name)}</b> — its price goes up to ${x.to}.`).join(' ')}</p></div>`:''}
     <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Apply</button></div></div>`);
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelector('[data-ok]').onclick=()=>{ applyRebalance(plan); haptic('success'); close(o); render();
@@ -5225,7 +5228,7 @@ function friendSheet(f){
       <div><h2 style="margin:0">${esc(f.name)}</h2><p class="tiny muted">${esc(f.title||'')} · level ${f.level??1} · code ${esc(f.code||'')}</p></div></div>
     <div class="stats" style="margin-top:14px">
       <div class="stat"><b>${st.chests}</b><span>chests together</span></div>
-      <div class="stat"><b>${st.coins}</b><span>coins from them</span></div>
+      <div class="stat"><b>${st.coins}</b><span>chest coins</span></div>
       <div class="stat"><b>${st.streak}</b><span>shared streak</span></div>
       <div class="stat"><b>${f.consistency??0}%</b><span>their consistency</span></div>
     </div>
@@ -5244,7 +5247,7 @@ function friendSheet(f){
 
 function forgotSheet(){
   let sent=false;
-  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Forgotten your password</h2>
+  const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Forgotten your password?</h2>
     <div id="fpstep"></div>
     <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Send it</button></div></div>`);
   const step=o.querySelector('#fpstep'), ok=o.querySelector('[data-ok]');
@@ -5252,14 +5255,14 @@ function forgotSheet(){
     step.innerHTML=`<p class="muted small" style="margin-bottom:12px">Put in the email you signed up with. You'll get a message with a <b>6-digit code</b> and a link — either will do.</p>
       <input type="email" id="fpmail" placeholder="Email" autocomplete="email" value="${esc(S.me?.email||'')}">
       <div class="card" style="margin-top:12px;padding:12px"><b class="small">If you've lost the email too</b>
-        <p class="tiny muted" style="margin-top:4px">Your tasks, history and coins are still on this phone — the account is only the backup. Sign up again with another email and this device carries on as it is. You'd lose the old backup and any pairing, nothing else.</p></div>`;
+        <p class="tiny muted" style="margin-top:4px">Your tasks, history and coins are still on this phone — the account is only the backup. Sign up again with another email and this device carries on as it is. You'd lose the old backup and your friends list, nothing else.</p></div>`;
     ok.textContent='Send it';
   };
   const drawCode=email=>{
-    step.innerHTML=`<p class="muted small" style="margin-bottom:12px">Sent to <b>${esc(email)}</b>. Type the 6-digit code from the email below — that works whatever your phone does with the link.</p>
+    step.innerHTML=`<p class="muted small" style="margin-bottom:12px">Sent to <b>${esc(email)}</b>. Type the 6-digit code from the email below.</p>
       <input type="text" id="fpcode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code" style="letter-spacing:.3em;text-align:center;font-size:1.2rem">
       <button class="btn ghost block" id="fpresend" style="margin-top:10px">Send another</button>
-      <p class="tiny muted" style="margin-top:10px">No code in the email, only a link? Add <b>{{ .Token }}</b> to the Reset Password template in Supabase → Authentication → Email Templates.</p>`;
+      <p class="tiny muted" style="margin-top:10px">No code in the email? Tap the link in it instead.</p>`;
     ok.textContent='Check code';
     o.querySelector('#fpresend').onclick=async()=>{ try{ await Sync.resetPassword(email); toast('Sent again'); }catch(e){ toast(e.message||'Could not send'); } };
     setTimeout(()=>o.querySelector('#fpcode')?.focus(),100);
@@ -5285,7 +5288,7 @@ function forgotSheet(){
 function newPasswordGate(){
   const g=document.createElement('div'); g.className='gate';
   g.innerHTML=`<h1 style="font-size:1.9rem;margin-bottom:10px">Set a new password</h1>
-    <p class="muted">You came back from the reset link. Pick something you'll remember — at least 6 characters.</p>
+    <p class="muted">Pick something you'll remember — at least 6 characters.</p>
     <div class="stack" style="margin-top:18px">
       <input type="password" id="np1" placeholder="New password" autocomplete="new-password">
       <input type="password" id="np2" placeholder="Again, to be sure" autocomplete="new-password">
@@ -5294,7 +5297,7 @@ function newPasswordGate(){
   g.querySelector('#npgo').onclick=async()=>{
     const a=g.querySelector('#np1').value, b=g.querySelector('#np2').value;
     if(a.length<6){ toast('At least 6 characters'); return; }
-    if(a!==b){ toast('Those do not match'); return; }
+    if(a!==b){ toast('Those don’t match'); return; }
     const btn=g.querySelector('#npgo'); btn.disabled=true; btn.textContent='…';
     try{ const blob=await Sync.setPassword(a);
       g.remove();
@@ -5324,7 +5327,7 @@ function charSheet(){
       const extra=BASES.filter(b=>b.group==='extra');
       body.innerHTML=`<div class="charGrid">${core.map(bs=>`<button class="charpick ${a.base===bs.id?'on':''}" data-cbase="${bs.id}" title="${esc(bs.name)}">
         ${charSVG({...a,base:bs.id},64)}</button>`).join('')}</div>
-        <p class="tiny muted" style="margin-top:8px">${core.length} everyday faces. Skin and cosmetics are separate — any face, any look.</p>
+        <p class="tiny muted" style="margin-top:8px">${core.length} everyday faces. Skin, hair and clothes are picked separately, so any face works with any look.</p>
         ${extra.length?`<p class="tiny muted" style="margin:14px 0 6px"><b style="color:var(--fg)">Extra faces</b> — wilder expressions.</p>
         <div class="charGrid">${extra.map(bs=>`<button class="charpick ${a.base===bs.id?'on':''}" data-cbase="${bs.id}" title="${esc(bs.name)}">
           ${charSVG({...a,base:bs.id},64)}</button>`).join('')}</div>`:''}`;
@@ -5332,12 +5335,12 @@ function charSheet(){
       body.innerHTML=`<div class="swatches">${TONES.map(t=>`<button class="sw ${a.tone===t.id?'on':''}" data-ctone="${t.id}" style="background:${t.hex}" title="${t.id}"></button>`).join('')}</div>`;
     } else if(tab==='hairc'){
       body.innerHTML=`<div class="swatches">${HAIR_COLOURS.map(c=>`<button class="sw ${a.hairCol===c.id?'on':''}" data-chair="${c.id}" style="background:${c.hex}"></button>`).join('')}</div>
-        <p class="tiny muted" style="margin-top:8px">Tints Peeps hair and facial hair.</p>`;
+        <p class="tiny muted" style="margin-top:8px">Colours your hair and facial hair.</p>`;
     } else {
       const items=LOOK_ITEMS.filter(i=>i.slot===tab && !i.legacy);
       const optional=tab==='glasses'||tab==='hat'||tab==='facial';
-      const tip = tab==='outfit' ? 'Colours set the shirt on the Peeps body. '
-        : tab==='hat' ? 'Headwear replaces hair (Peeps cannot layer a hat). '
+      const tip = tab==='outfit' ? 'Pick a shirt colour. '
+        : tab==='hat' ? 'A hat replaces your hair. '
         : tab==='facial' ? 'Facial hair is optional — None clears it. '
         : tab==='hair' ? 'Every hair style works on every face. '
         : '';
@@ -5423,7 +5426,7 @@ function chatView(crewId){
         if(pending) return challengeCard(pending);
         if(live) return chalCardInChat(live);
         return `<div class="card chatchal"><b class="small">No challenge running here</b>
-        <p class="tiny muted" style="margin:4px 0 10px">Invite starts a challenge — the clock only runs after everyone accepts. With ${crewSize(c)} of you the pot is ×${crewMultiplier(crewSize(c)).toFixed(2).replace(/0$/,'')}.</p>
+        <p class="tiny muted" style="margin:4px 0 10px">Invite starts a challenge — the clock only runs after everyone accepts. ${crewMultiplier(crewSize(c))>1?`With ${crewSize(c)} of you the chest is ×${crewMultiplier(crewSize(c)).toFixed(2).replace(/0$/,'')}.`:''}</p>
         <button class="btn primary sm block" data-startchal>Invite to a challenge</button></div>`; })()}
       ${ms.length?ms.map((m,i)=>{
         const mine=m.from==='me';
@@ -5513,7 +5516,7 @@ function streakScene(win){
   g.innerHTML=`<div class="chest-wrap">
     <div class="glow"></div>
     <div class="chest-eyebrow">${win.days} days, every task</div>
-    <h1 class="chest-title">Full clear streak</h1>
+    <h1 class="chest-title">Full-clear streak</h1>
     <div class="streakflame">${ICON.flame}</div>
     <div class="chest-prize show"><span class="num">+${win.amount}</span><small>coins</small></div>
     <p class="tiny muted" style="margin-top:14px;max-width:30ch;margin-inline:auto">
@@ -5561,7 +5564,7 @@ function adviceSheet(t){
   ];
   const o=overlay(`<div class="sheet"><div class="grab"></div>
     <h2>${esc(t.name)} keeps slipping</h2>
-    <p class="muted small" style="margin-bottom:6px">Missed ${misses} days in a row. Nothing has been taken off you — but ${misses} is usually the task asking to be changed, not you needing to try harder.</p>
+    <p class="muted small" style="margin-bottom:6px">Missed ${misses} days in a row. That usually means the task needs changing, not that you need to try harder.</p>
     ${t.target?`<div class="card" style="margin:12px 0"><b class="small">Shrink the target?</b>
       <p class="tiny muted" style="margin:4px 0 10px">${t.target} minutes → ${half} minutes. A target you actually hit beats one you keep missing.</p>
       <button class="btn primary sm block" data-half>Make it ${half} minutes</button></div>`:''}
@@ -5628,7 +5631,7 @@ function chestScene(win){
   claim.onclick=()=>{
     g.remove(); render();
     const ex=win.extras||0;
-    toast(ex?`+${amount} coins · ${ex} shop extra${ex===1?'':'s'}`:`+${amount} coins`);
+    toast(ex?`+${amount} coins · ${ex} extra Shop buy${ex===1?'':'s'}`:`+${amount} coins`);
     if(ex) queueMicrotask(()=>offerChestExtras());
   };
 }
@@ -5647,10 +5650,10 @@ function offerChestExtras(){
   const still=pend.length;
   const ordinal = still===1 && assignedThis===0 ? 'Pick a reward for your extra'
     : assignedThis===0 ? 'Pick a reward for your first extra'
-    : 'Pick for your second extra';
+    : 'Pick a reward for your second extra';
   const o=overlay(`<div class="sheet"><div class="grab"></div>
     <h2>${esc(ordinal)}</h2>
-    <p class="muted small" style="margin-bottom:14px">+1 buy this week for the one you choose. Stacks with what you planned and your spare.${still>1?' You will pick again for the next one.':''}</p>
+    <p class="muted small" style="margin-bottom:14px">That reward can be bought once more this week, on top of your plan and your spare.${still>1?' You will pick again for the next one.':''}</p>
     <div class="stack">${active.map(r=>{
       const al=allowanceState(r);
       const already=extrasForReward(r);
@@ -5696,7 +5699,7 @@ function recapView(r,earned){
     ${card(`${r.rate}%`,'of everything you set yourself',r.prevRate!=null?`${r.rate>=r.prevRate?'Up':'Down'} from ${r.prevRate}% the week before.`:'Across '+r.expected+' chances.')}
     ${card(r.cleared,`day${r.cleared===1?'':'s'} cleared completely`,'Every task done.')}
     ${card(r.coins.toLocaleString(),'coins earned',`Level ${r.level} · ${esc(r.title)}`)}
-    ${card(r.bestStreak,'day best streak','Longest run of opening the app.')}
+    ${card(r.bestStreak,`day${r.bestStreak===1?'':'s'} in your best login streak`,'')}
     ${r.minutes?card(hrs,'logged on timed tasks',''):''}
     ${r.chests?card(r.chests,`weekly chest${r.chests===1?'':'es'} won`,''):''}
 
@@ -5708,12 +5711,12 @@ function recapView(r,earned){
         <div class="todbar"><i class="warn" style="width:${clamp(Math.round(100*n/Math.max(1,r.missTotal)),6,100)}%"></i></div>
         <span class="tiny muted">${n}</span></div>`).join('')}</div>
       ${r.worstDay?`<p class="small muted" style="margin-top:10px">${esc(r.worstDay[0])}s were hardest.</p>`:''}
-      <p class="tiny muted" style="margin-top:6px">Straight from what you told it when it asked. Nothing was taken off you for any of it.</p></div>`:
+      <p class="tiny muted" style="margin-top:6px">From the reasons you gave. None of it cost you anything.</p></div>`:
       (r.topReason||r.worstDay)?`<div class="rcard soft"><span class="eyebrow">When you slipped</span>
       ${r.topReason?`<b class="mid">${esc(r.topReason[0])}</b><p class="small muted">${r.topReason[1]} time${r.topReason[1]===1?'':'s'}.</p>`:''}
       ${r.worstDay?`<p class="small muted" style="margin-top:8px">${esc(r.worstDay[0])}s were hardest.</p>`:''}</div>`:''}
 
-    <div class="rcard soft last"><p>${r.rate>=80?'That is a good rate. The habit is the point, not the score — but that is a good rate.':r.rate>=50?'Half the battle is turning up at all, and you did that '+r.shown+' times.':'It has been a rough run. Nothing was taken off you for it, and the days are still there to be had.'}</p>
+    <div class="rcard soft last"><p>${r.rate>=80?'That’s a strong rate. The habit is the point, not the score — but it’s a good score.':r.rate>=50?'Half the battle is turning up at all, and you did that on '+r.shown+' day'+(r.shown===1?'':'s')+'.':'It has been a rough run. Nothing was taken off you for it, and the days are still there to be had.'}</p>
       <p class="small muted" style="margin-top:8px">Nothing here is shared with anyone.</p></div>
     <button class="btn primary block" data-close style="margin-top:16px">${earned?'Keep going':'Done'}</button>
   </div>`;
