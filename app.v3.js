@@ -3226,7 +3226,12 @@ function render(){
   /* Safety net: once set up, the tab bar is always there when a page renders (only the very first
      start keeps it hidden until the opening screen is done). */
   if(S.flags?.onboarded && !document.querySelector('.gate')){ const tb=document.getElementById('tabbar'); if(tb && tb.hidden) tb.hidden=false; }
-  $app.innerHTML=`<div class="page">${({today:vToday,plan:vPlan,progress:vProgress,friends:vFriends,shop:vShop,settings:vSettings})[tab]()}</div>`;
+  /* One bad record must never freeze the app on a tab: show what went wrong and a way out instead. */
+  let html;
+  try{ html=({today:vToday,plan:vPlan,progress:vProgress,friends:vFriends,shop:vShop,settings:vSettings})[tab](); }
+  catch(e){ console.error(e);
+    html=`<div class="head"><div><h1>Something went wrong</h1></div></div><div class="card"><p class="muted">This page hit a problem: <b>${esc(e?.message||e)}</b>. Your data is safe. Try Settings → Update app, and if it keeps happening, send a screenshot of this.</p>${tab!=='today'?'<button class="btn primary sm" style="margin-top:12px" data-go="today">Back to Today</button>':''}</div>`; }
+  $app.innerHTML=`<div class="page">${html}</div>`;
   bind();
   try{ markTabSeen(tab); }catch(e){}
   try{ updateTabDots(); }catch(e){}
@@ -3299,6 +3304,101 @@ function weekStoryParagraph(ws){
   line += '. Still here.';
   return line;
 }
+/* ---------- Growth: invite links + shareable week card ----------
+   Invites are a link with your friend code in it (?invite=CODE). Opening one remembers the code; once the new
+   person is signed in, one tap pairs you. The week card is an image of totals only — never task names. */
+const INVITE_RE=/^STDY[A-Z0-9]{4,8}$/;
+function inviteLink(){ return new URL('./?invite='+encodeURIComponent(me().code), document.baseURI).href; }
+function captureInvite(){
+  try{
+    const u=new URL(location.href), c=(u.searchParams.get('invite')||'').trim().toUpperCase();
+    if(!c) return;
+    u.searchParams.delete('invite'); history.replaceState(null,'',u.pathname+(u.search||'')+u.hash);
+    if(INVITE_RE.test(c) && c!==S.me?.code && !friendList().some(f=>f.code===c)){ S.flags.pendingInvite=c; saveQuiet(); }
+  }catch(e){}
+}
+async function shareInvite(){
+  const url=inviteLink(), text='Join me on Steady — a habit tracker that pays you in coins. We can do challenges together.';
+  try{ if(navigator.share){ await navigator.share({title:'Steady',text,url}); return; } }catch(e){ if(e?.name==='AbortError') return; }
+  try{ await navigator.clipboard.writeText(url); toast('Invite link copied — send it to a friend'); }
+  catch(e){ modal(`<h2>Your invite link</h2><p class="muted" style="user-select:all;word-break:break-all">${esc(url)}</p>`,'Done',()=>{}); }
+}
+/* Offers to pair with whoever invited you. Signed out: Friends shows a card instead, and this runs after sign-in. */
+function maybeInvite(){
+  const c=S.flags.pendingInvite; if(!c) return false;
+  if(friendList().some(f=>f.code===c) || c===S.me?.code){ S.flags.pendingInvite=null; saveQuiet(); return false; }
+  if(Sync.live() && !Sync.signedIn()) return false;
+  modal(`<h2>Add the friend who invited you?</h2><p class="muted">Code <b>${esc(c)}</b>. You'll see each other's progress and can start challenges together.</p>`,'Add friend',async()=>{
+    try{ const f=await Sync.addByCode(c); S.flags.pendingInvite=null; saveQuiet(); haptic('success'); render(); toast(`${f.name||'Friend'} added`); }
+    catch(e){ toast(e.message||'Could not add that code'); }
+  });
+  /* Cancel keeps nothing: a dismissed invite shouldn't come back every time. */
+  S.flags.pendingInvite=null; saveQuiet();
+  return true;
+}
+
+/* ================= shareable week card ================= */
+function weekCardData(mon){
+  mon=mon||weekOf(today());
+  const days=[]; let cleared=0, taskDays=0, coins=0;
+  for(let i=0;i<7;i++){ const k=addDays(mon,i); const st=dayStats(k); const away=isAway(k);
+    if(st.expected) taskDays+=(k<=today()?1:0);
+    if(st.perfect) cleared++;
+    if(k<=today()) coins+=st.points||0;
+    days.push({k, state: k>today()?'future' : away?'away' : st.perfect?'clear' : st.expected? (k===today()?'today':'miss') : 'none'}); }
+  return {mon, end:addDays(mon,6), days, cleared, taskDays, coins, streak:clearedStreak(), login:S.streak.login};
+}
+function drawWeekCard(d){
+  const W=1080,H=1920, c=document.createElement('canvas'); c.width=W; c.height=H; const x=c.getContext('2d');
+  const css=getComputedStyle(document.documentElement), v=n=>css.getPropertyValue(n).trim()||'#888';
+  const bg=v('--bg'), fg=v('--fg'), fg2=v('--fg2'), s2=v('--surface2'), acc=v('--accent'), coin=v('--coin'), danger=v('--danger');
+  const font=w=>`${w} ${'"Segoe UI", -apple-system, Roboto, Helvetica, Arial, sans-serif'}`;
+  const rr=(X,Y,w,h,r)=>{ x.beginPath(); x.moveTo(X+r,Y); x.arcTo(X+w,Y,X+w,Y+h,r); x.arcTo(X+w,Y+h,X,Y+h,r); x.arcTo(X,Y+h,X,Y,r); x.arcTo(X,Y,X+w,Y,r); x.closePath(); };
+  x.fillStyle=bg; x.fillRect(0,0,W,H);
+  const g=x.createRadialGradient(W*0.95,0,0,W*0.95,0,900); g.addColorStop(0,acc+'33'); g.addColorStop(1,acc+'00'); x.fillStyle=g; x.fillRect(0,0,W,H);
+  x.textAlign='center'; x.fillStyle=fg2; x.font=font('600 40px'); x.fillText('MY WEEK ON',W/2,230);
+  x.fillStyle=fg; x.font=font('800 132px'); x.fillText('Steady',W/2,370);
+  x.fillStyle=fg2; x.font=font('500 44px'); x.fillText(`${fmt(d.mon,{day:'numeric',month:'short'})} – ${fmt(d.end,{day:'numeric',month:'short'})}`,W/2,450);
+  // ring: days cleared out of days that had tasks so far
+  const cx=W/2, cy=800, R=250, frac=d.taskDays?Math.min(1,d.cleared/d.taskDays):0;
+  x.lineCap='round'; x.lineWidth=46; x.strokeStyle=s2; x.beginPath(); x.arc(cx,cy,R,0,Math.PI*2); x.stroke();
+  if(frac>0){ x.strokeStyle=acc; x.beginPath(); x.arc(cx,cy,R,-Math.PI/2,-Math.PI/2+Math.PI*2*frac); x.stroke(); }
+  x.fillStyle=fg; x.font=font('800 170px'); x.fillText(`${d.cleared}/${d.taskDays||0}`,cx,cy+50);
+  x.fillStyle=fg2; x.font=font('500 46px'); x.fillText('days cleared',cx,cy+125);
+  // the week, Monday to Sunday
+  const sz=104, gap=24, total=7*sz+6*gap, x0=(W-total)/2, y0=1180;
+  d.days.forEach((dd,i)=>{ const X=x0+i*(sz+gap);
+    rr(X,y0,sz,sz,26);
+    if(dd.state==='clear'){ x.fillStyle=acc; x.fill(); }
+    else if(dd.state==='miss'){ x.fillStyle=danger+'88'; x.fill(); }
+    else if(dd.state==='away'){ x.setLineDash([12,10]); x.lineWidth=5; x.strokeStyle=fg2; x.stroke(); x.setLineDash([]); }
+    else if(dd.state==='today'){ x.lineWidth=7; x.strokeStyle=acc; x.stroke(); }
+    else { x.fillStyle=s2; x.fill(); }
+    x.fillStyle=fg2; x.font=font('600 36px'); x.fillText('MTWTFSS'[i],X+sz/2,y0+sz+56); });
+  // three numbers
+  const cols=[[`+${d.coins.toLocaleString()}`,'coins earned',coin],[`${d.streak}`,'day full-clear streak',fg],[`${d.login}`,'day login streak',fg]];
+  cols.forEach(([big,lab,col],i)=>{ const X=W/6+i*W/3;
+    x.fillStyle=col; x.font=font('800 92px'); x.fillText(big,X,1520);
+    x.fillStyle=fg2; x.font=font('500 34px');
+    const words=lab.split(' '), mid=Math.ceil(words.length/2);
+    x.fillText(words.slice(0,mid).join(' '),X,1576); if(words.length>1) x.fillText(words.slice(mid).join(' '),X,1618); });
+  x.fillStyle=fg2; x.font=font('500 42px'); x.fillText('Earn your treats.',W/2,1760);
+  x.fillStyle=acc; x.font=font('700 44px'); x.fillText(new URL('./',document.baseURI).href.replace(/^https?:\/\//,'').replace(/\/$/,''),W/2,1830);
+  return c;
+}
+async function shareWeekCard(mon){
+  const d=weekCardData(mon), c=drawWeekCard(d);
+  const blob=await new Promise(r=>c.toBlob(r,'image/png'));
+  if(!blob){ toast('Could not make the image'); return; }
+  const file=new File([blob],'steady-week.png',{type:'image/png'});
+  const text=`My week on Steady: ${d.cleared}/${d.taskDays} days cleared, +${d.coins} coins. ${new URL('./',document.baseURI).href}`;
+  try{ if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],text}); return; } }
+  catch(e){ if(e?.name==='AbortError') return; }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='steady-week.png';
+  document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+  toast('Image saved — post it anywhere');
+}
+
 function weekStoryCard(){
   const ws=weekStoryData();
   const teaser=weekStoryTeaser(ws);
@@ -3314,6 +3414,8 @@ function weekStoryCard(){
       <p class="week-story-text">${esc(story)}</p>
       ${roughList}
       <p class="tiny muted" style="margin-top:10px">Private — away, rough days and miss reasons are never shared with friends.</p>
+      <button type="button" class="btn sm block" data-shareweek style="margin-top:12px">Share my week</button>
+      <p class="tiny muted" style="margin-top:6px">Makes an image of your totals — days cleared, coins and streaks. No task names.</p>
     </div>
   </details>`;
 }
@@ -3646,7 +3748,7 @@ function pOverview(){
     ${rb.items.map(([r,pc])=>`<div class="tod"><span class="small">${esc(r)}</span><div class="todbar"><i class="warn" style="width:${pc}%"></i></div><span class="tiny muted">${pc}%</span></div>`).join('')}</div>`:''}
 
   ${S.recaps.length?`<div class="card"><div class="section" style="margin:0"><h2>Recaps</h2></div>
-    ${S.recaps.slice().reverse().map(r=>`<button class="noterow" data-recap="${r.week||r.n}" style="padding:12px 0"><div class="grow"><b>${r.weekly&&r.week?`Week of ${fmt(r.week,{day:'numeric',month:'short'})}`:esc(r.name)}</b><p class="tiny muted">${fmt(r.at,{day:'numeric',month:'short',year:'numeric'})} · ${r.rate}% · ${r.cleared} cleared${r.missTotal?` · ${r.missTotal} miss reason${r.missTotal===1?'':'s'}`:''}</p></div><span class="chev">›</span></button>`).join('')}</div>`:
+    ${S.recaps.filter(r=>r&&r.at).slice().reverse().map(r=>`<button class="noterow" data-recap="${r.week||r.n}" style="padding:12px 0"><div class="grow"><b>${r.weekly&&r.week?`Week of ${fmt(r.week,{day:'numeric',month:'short'})}`:esc(r.name)}</b><p class="tiny muted">${fmt(r.at,{day:'numeric',month:'short',year:'numeric'})} · ${r.rate}% · ${r.cleared} cleared${r.missTotal?` · ${r.missTotal} miss reason${r.missTotal===1?'':'s'}`:''}</p></div><span class="chev">›</span></button>`).join('')}</div>`:
     `<div class="card"><div class="row between"><div><b class="small">Next recap</b><p class="tiny muted">${(()=>{const nx=MILESTONES.find(([n])=>daysSinceStart()<n); return nx?`${nx[0]-daysSinceStart()} day${nx[0]-daysSinceStart()===1?'':'s'} to ${nx[1].toLowerCase()}`:'All milestones reached';})()}</p></div>
       <span class="pill">day ${daysSinceStart()}</span></div></div>`}
   <div class="card"><div class="row between" style="margin-bottom:8px"><b class="small">Note for today</b><span class="tiny muted">${fmt(today(),{weekday:'short',day:'numeric',month:'short'})}</span></div>
@@ -3891,7 +3993,7 @@ function vFriends(){
     <p class="tiny muted" style="margin-top:8px">Everything else works as normal — your tasks and history are on this device.</p></div>`:'';
   const head=`<div class="head"><div><div class="eyebrow">${!live?'Local only':!inn?'Signed out':S.syncError?'Offline':'Synced'}</div><h1>Friends</h1></div>${headTrailHtml()}</div>${affirmationLine()}${banner}`;
 
-  if(live && !inn) return head + `
+  if(live && !inn) return head + `${S.flags.pendingInvite?`<div class="card callout" style="margin-bottom:10px"><b>A friend invited you</b><p class="small muted" style="margin-top:4px">Create a free account (or sign in) below and you'll be paired with them straight away.</p></div>`:''}
   <div class="card" data-tour="signin"><div class="seg" style="margin-bottom:14px">${[['in','Sign in'],['up','Create account']].map(([v,l])=>`<button class="${authState.mode===v?'on':''}" data-authmode="${v}">${l}</button>`).join('')}</div>
       <div class="stack">
         ${authState.mode==='up'?`<input type="text" id="auname" placeholder="Your name" maxlength="24" value="${esc(m.name||'')}">`:''}
@@ -3923,10 +4025,10 @@ function vFriends(){
       `<p class="tiny muted" style="margin-top:10px">Adding a code pairs you both ways — they'll see you too, no need to add you back.</p>`}
     <div class="row between" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div><div class="eyebrow">Your code</div><b style="font-size:1.25rem;letter-spacing:.08em">${m.code}</b>
       <p class="tiny muted" style="margin-top:4px">${live?esc(S.me?.email||''):''}</p></div>
-    <div class="stack" style="gap:6px"><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button>${avatarOf(m)?`<button class="btn sm ghost" id="avclear">Remove photo</button>`:''}</div></div></div>`;
+    <div class="stack" style="gap:6px"><button class="btn sm primary" id="invitebtn">Invite</button><button class="btn sm" id="copycode">Copy</button><button class="btn sm ghost" id="renameme">Rename</button>${avatarOf(m)?`<button class="btn sm ghost" id="avclear">Remove photo</button>`:''}</div></div></div>`;
 
   const listPane=addFriendCard+(!fs.length
-    ?`<div class="card empty"><b>No one yet</b>Swap codes with someone and you'll both get a shared streak, chats and co-op challenges.<br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`
+    ?`<div class="card empty"><b>No one yet</b>Invite someone, or swap codes, and you'll both get a shared streak, chats and co-op challenges.<br><button class="btn primary sm" style="margin-top:12px" data-invite>Invite a friend</button><br><span class="tiny muted" style="display:block;margin-top:10px">No leaderboard, on purpose — you're on the same side.</span></div>`
     :fs.map(f=>{
       const open=openId===f.id;
       const ps=pairStreak(f), cleared=clearedOn(f,today()), mineCleared=!!S.days[today()]?.cleared;
@@ -4360,7 +4462,7 @@ function bind(){
     if(!email||!pass) { toast('Email and password needed'); return; }
     ag.disabled=true; ag.textContent='…';
     try{
-      if(authState.mode==='up'){ await Sync.signUp(email,pass,name); render(); toast('Account created'); friendsTick(); }
+      if(authState.mode==='up'){ await Sync.signUp(email,pass,name); render(); toast('Account created'); friendsTick(); setTimeout(maybeGates,800); }
       else{
         const blob=await Sync.signIn(email,pass);
         const localHeavy=vaultWeight(S)>=3;
@@ -4370,7 +4472,7 @@ function bind(){
           modal('<h2>Restore your backup?</h2><p class="muted">Your account has a backup, probably from another device. Restore replaces everything on <b>this</b> device with it. Cancel keeps this device as it is.</p>','Restore',()=>{ Sync.applyVault(blob); S.flags.vaultDeclined=null; save(); render(); toast('Restored from account'); friendsTick(); });
         } else {
           if(blob) Sync.applyVault(blob);
-          render(); toast(blob?'Signed in · backup restored':'Signed in'); friendsTick();
+          render(); toast(blob?'Signed in · backup restored':'Signed in'); friendsTick(); setTimeout(maybeGates,800);
         }
       }
     }catch(e){ ag.disabled=false; ag.textContent=authState.mode==='up'?'Create account':'Sign in'; toast(e.message||'Could not sign in'); }
@@ -4419,6 +4521,9 @@ function bind(){
       catch(e){ toast(e.message||'Could not use that image'); }
       avf.value=''; }; }
   const avc=q('#avclear'); if(avc) avc.onclick=async()=>{ await setMyAvatar(null); haptic(); render(); toast('Picture removed'); };
+  const ib=q('#invitebtn'); if(ib) ib.onclick=()=>{ haptic(); shareInvite(); };
+  qa('[data-invite]').forEach(b=>b.onclick=()=>{ haptic(); shareInvite(); });
+  qa('[data-shareweek]').forEach(b=>b.onclick=async()=>{ haptic(); b.disabled=true; try{ await shareWeekCard(b.dataset.shareweek||null); } finally{ b.disabled=false; } });
   const cc=q('#copycode'); if(cc) cc.onclick=()=>{ navigator.clipboard?.writeText(me().code); toast('Code copied'); };
   const af=q('#addfriend'); if(af){ const add=async()=>{ const v=q('#addcode').value.trim(); if(!v) return; af.disabled=true; af.textContent='…';
       try{ const f=await Sync.addByCode(v); haptic('success'); render(); toast(`${f.name} added`); }
@@ -5119,7 +5224,7 @@ function onboarding(next, force){
   const draw=()=>{
     const steps=`<div class="steps">${[0,1,2].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
     const back=step>0?`<button class="btn ghost sm" data-back style="margin-bottom:10px">‹ Back</button>`:'';
-    if(step===0) g.innerHTML=`${steps}${back}<p class="eyebrow" style="color:var(--accent);font-weight:650;margin-bottom:6px">Welcome to Steady — a habit tracker that pays you in coins for keeping your word, to spend on treats you choose.</p><h1>Nothing is taken from you.</h1>
+    if(step===0) g.innerHTML=`${steps}${back}<p class="eyebrow" style="color:var(--accent);font-weight:650;margin-bottom:6px">${S.flags.pendingInvite?'A friend invited you to Steady — ':'Welcome to Steady — '}a habit tracker that pays you in coins for keeping your word, to spend on treats you choose.</p><h1>Nothing is taken from you.</h1>
       <p>Miss a day and you only lose what you would have earned that day. No penalties, no debt, no guilt trip.</p>
       <p style="margin-top:12px">Steady’s job is to notice patterns you would not, and to make keeping your word to yourself worth something.</p>
       <div class="actions"><button class="btn primary block" data-n>Got it</button></div>`;
@@ -5729,7 +5834,7 @@ function recapView(r,earned){
     <div class="rhero"><div class="eyebrow">${earned?'You made it':'Recap'}</div><h1>${esc(r.name)}</h1>
       <p class="muted">${r.weekly?`${fmt(r.from,{day:'numeric',month:'short'})} – ${fmt(r.at,{day:'numeric',month:'short'})} · `:''}${r.shown} day${r.shown===1?'':'s'} of showing up.</p></div>
 
-    ${card(`${r.rate}%`,'of everything you set yourself',r.prevRate!=null?`${r.rate>=r.prevRate?'Up':'Down'} from ${r.prevRate}% the week before.`:'Across '+r.expected+' chances.')}
+    ${card(`${r.rate}%`,'of everything you set yourself',r.prevRate!=null?(r.rate===r.prevRate?`Same as the week before.`:`${r.rate>r.prevRate?'Up':'Down'} from ${r.prevRate}% the week before.`):'Across '+r.expected+' chances.')}
     ${card(r.cleared,`day${r.cleared===1?'':'s'} cleared completely`,'Every task done.')}
     ${card(r.coins.toLocaleString(),'coins earned',`Level ${r.level} · ${esc(r.title)}`)}
     ${card(r.bestStreak,`day${r.bestStreak===1?'':'s'} in your best login streak`,'')}
@@ -5751,10 +5856,12 @@ function recapView(r,earned){
 
     <div class="rcard soft last"><p>${r.rate>=80?'That’s a strong rate. The habit is the point, not the score — but it’s a good score.':r.rate>=50?'Half the battle is turning up at all, and you did that on '+r.shown+' day'+(r.shown===1?'':'s')+'.':'It has been a rough run. Nothing was taken off you for it, and the days are still there to be had.'}</p>
       <p class="small muted" style="margin-top:8px">Nothing here is shared with anyone.</p></div>
-    <button class="btn primary block" data-close style="margin-top:16px">${earned?'Keep going':'Done'}</button>
+    ${r.weekly&&r.week?`<button class="btn block" data-recapshare style="margin-top:16px">Share this week</button>`:''}
+    <button class="btn primary block" data-close style="margin-top:${r.weekly&&r.week?'10px':'16px'}">${earned?'Keep going':'Done'}</button>
   </div>`;
   document.body.appendChild(g);
   g.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{ g.remove(); render(); });
+  const rs=g.querySelector('[data-recapshare]'); if(rs) rs.onclick=()=>{ haptic(); shareWeekCard(r.week); };
 }
 function maybeRecap(){ const r=earnRecap(); if(r){ haptic('success'); recapView(r,true); celebrate(); return true; } return false; }
 
@@ -5794,11 +5901,13 @@ function maybeGates(){
   if(missGate()) return;                 // older slips → reasons, then advice, then recap
   const st=stuckTask(); if(st){ adviceSheet(st); return; }
   if(maybeRecap()) return;
+  if(maybeInvite()) return;
   tour(tab); }
 let _booted=false;
 export function bootSteady(){
   $app=document.getElementById('app');
   try{ markOpened(); }catch(e){}
+  captureInvite();
   try{ migratePairChallenges(S); normalizeChallenges(); }catch(e){ console.error(e); }
   document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>{haptic();setTab(b.dataset.tab)});
   try{ applyTheme(); }catch(e){ console.error(e); }
