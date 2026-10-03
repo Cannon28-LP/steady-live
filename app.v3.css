@@ -94,6 +94,8 @@ textarea{resize:vertical;min-height:80px}
 .ring .center span{display:block;font-size:.72rem;color:var(--fg2);margin-top:5px}
 .ring-meta h3{font-size:1.15rem;margin-bottom:4px}
 .whisper,.afline{font-style:italic;color:var(--fg2);font-size:.92rem;margin:14px 4px 4px;text-wrap:balance;padding-left:12px;border-left:2px solid color-mix(in srgb,var(--accent) 45%,transparent)}
+.beatline{display:block;width:100%;margin:8px 4px 0;padding:0;border:0;background:none;text-align:left;font:inherit;font-size:.84rem;font-weight:500;line-height:1.35;color:var(--fg2);text-wrap:balance;cursor:pointer}
+.beatline:hover,.beatline:focus-visible{color:var(--fg)}
 .afline{margin:-4px 2px 14px}
 
 /* Task list */

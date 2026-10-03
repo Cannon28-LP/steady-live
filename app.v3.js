@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=89';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
+import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=90';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
   return (b?'b'+b+' · ':'')+'2026-10-02'; }catch(e){ return '2026-10-02'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
@@ -1788,6 +1788,69 @@ function pairStreak(f){
   while(S.days[k]?.cleared && clearedOn(f,k)){ n++; k=addDays(k,-1); }
   return n;
 }
+/* Login streak as of today, or yesterday if they haven't posted today.
+   Only a number stored on that day's stats counts — the rolled-up f.streak can be from any old row. */
+function friendLoginStreak(f){
+  if(!f) return null;
+  if(f.demo && typeof f.streak==='number') return f.streak;
+  const k=today(), y=addDays(k,-1);
+  for(const d of [k,y]){
+    const row=f.days?.[d];
+    if(row && typeof row.streak==='number') return row.streak;
+  }
+  if(f.days?.[k] && typeof f.streak==='number') return f.streak;
+  return null;
+}
+function aOrAn(n){
+  const s=String(n);
+  if(s==='8'||s==='11'||s==='18'||/^8\d+$/.test(s)||/^11\d+$/.test(s)) return 'an';
+  return 'a';
+}
+/* One quiet line on Today. Best event only — mutual run beats "cleared yesterday".
+   Seen ids live in flags (local + the existing account backup). Held in memory so the
+   line stays for this visit, then stays gone. */
+let beatHoldId=null;
+function pruneBeatSeen(seen){
+  const cut=addDays(today(),-40), next={};
+  for(const [id,day] of Object.entries(seen||{})){
+    if(typeof day==='string' && day>=cut) next[id]=day;
+  }
+  return next;
+}
+function pickFriendBeat(){
+  const friends=friendList().filter(f=>f && typeof f.name==='string' && f.name.trim());
+  if(!friends.length) return null;
+  const y=addDays(today(),-1);
+  const mine=S.streak?.login|0;
+  let best=null;
+  const consider=ev=>{
+    if(!best || ev.rank>best.rank || (ev.rank===best.rank && (ev.n>best.n || (ev.n===best.n && ev.name.localeCompare(best.name)<0)))) best=ev;
+  };
+  for(const f of friends){
+    const name=f.name.trim();
+    const theirs=friendLoginStreak(f);
+    if(mine>1 && theirs!=null && theirs>1){
+      const n=Math.min(mine, theirs);
+      if(n>1) consider({rank:2,n,name,id:'run:'+f.id+':'+n,text:`You and ${name} are both on ${aOrAn(n)} ${n}-day run`});
+      continue;
+    }
+    if(clearedOn(f,y)) consider({rank:1,n:typeof theirs==='number'?theirs:0,name,id:'clear:'+f.id+':'+y,text:`${name} cleared yesterday`});
+  }
+  return best;
+}
+function friendBeatLine(){
+  const ev=pickFriendBeat();
+  if(!ev) return '';
+  const seen=S.flags.beatSeen||{};
+  if(seen[ev.id] && beatHoldId!==ev.id) return '';
+  beatHoldId=ev.id;
+  if(!seen[ev.id]){
+    seen[ev.id]=today();
+    S.flags.beatSeen=pruneBeatSeen(seen);
+    save();
+  }
+  return `<button type="button" class="beatline" data-beat>${esc(ev.text)}</button>`;
+}
 
 function canCheer(f){ const p=S.pairs[f.id]||{}; return p.cheerDate!==today(); }
 
@@ -2130,6 +2193,7 @@ const Sync = {
       const data=await api(`/rest/v1/daily_stats?user_id=in.(${ids.join(',')})&date=gte.${since}&select=*`);
       (data||[]).forEach(r=>{ const f=S.friends[r.user_id]; if(!f) return;
         f.days[r.date]={cleared:r.cleared,done:r.done,expected:r.expected,opened:r.opened,buys:r.buys};
+        if(typeof r.streak==='number') f.days[r.date].streak=r.streak;
         if(r.date===today()||!f.consistency){ f.consistency=r.consistency; f.streak=r.streak; f.level=r.level; f.title=r.title; } });
     }
     // 3. cheers AND nudges addressed to us
@@ -3418,6 +3482,7 @@ function vToday(){
   ${activeTasks().length?`<div class="card weekstrip" data-tour="week"><div class="row between"><div><b class="small">Weekly chest</b><p class="tiny muted">${wc>=need?`Earned · +${chestCoins()} lands Monday`:`Clear ${need} of ${wcw.taskDays||7} for +${chestCoins()} · ${wc} so far`}</p></div>
     <div class="dots big">${wk.map(x=>`<i class="${x.away?'a':x.cleared?'d':x.frozen?'f':x.fut?'':x.dk===k?'t':'m'}" title="${fmt(x.dk)}${x.away?' · away':''}"></i>`).join('')}</div></div></div>`:''}
   ${a?`<p class="whisper">${esc(a.text)}</p>`:''}
+  ${friendBeatLine()}
   <div class="row" style="margin:6px 2px 0;justify-content:flex-start">
     <button type="button" class="textlink" data-rough>${roughToday()?'Rough day · edit':'Rough day?'}</button>
   </div>
@@ -4306,6 +4371,7 @@ function vSettings(){
 function bind(){
   const q=s=>$app.querySelector(s), qa=s=>[...$app.querySelectorAll(s)];
   qa('[data-go]').forEach(b=>b.onclick=()=>{ const open=b.dataset.open; setTab(b.dataset.go); if(open){ const acc=document.getElementById('acc-'+open); if(acc){acc.open=true; acc.querySelector('input')?.focus();} } });
+  qa('[data-beat]').forEach(b=>b.onclick=()=>{ beatHoldId=null; haptic(); render(); });
   // Today
   qa('[data-task]').forEach(b=>b.onclick=()=>{ const id=b.dataset.task; sel.has(id)?sel.delete(id):sel.add(id); b.classList.toggle('selected'); haptic(); updateConfirm(); });
   qa('[data-donetap]').forEach(b=>b.onclick=()=>doneSheet(b.dataset.donetap));
@@ -5906,7 +5972,7 @@ function friendsTick(){
     .then(()=>pushLocalChals())
     .then(()=>{ try{ checkChallenges(); }catch(e){} })
     .then(()=>Sync.pullMessages())
-    .then(()=>{ if(tab==='friends'||tab==='shop') renderKeepingDrafts(); else { try{ updateTabDots(); }catch(e){} } })
+    .then(()=>{ if(tab==='friends'||tab==='shop'||tab==='today') renderKeepingDrafts(); else { try{ updateTabDots(); }catch(e){} } })
     .catch(()=>{})
     .finally(()=>{ _ticking=false; });
   Sync.push().catch(()=>{});
