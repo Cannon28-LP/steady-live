@@ -1,9 +1,9 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=91';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
+import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=92';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
-  return (b?'b'+b+' · ':'')+'2026-10-02'; }catch(e){ return '2026-10-02'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
+  return (b?'b'+b+' · ':'')+'2026-10-03'; }catch(e){ return '2026-10-03'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
 /* ---- Friends sync config ----
    Project URL (no /rest/v1 suffix) and publishable key. This key is meant to be
    public — row-level security in supabase.sql is what actually protects the data.
@@ -4334,6 +4334,15 @@ function vSettings(){
     </div>`;
     })()}
   </div>
+  <div class="card" style="margin:12px 0">
+    <div class="row between" style="align-items:flex-start;gap:12px">
+      <div style="flex:1;min-width:0">
+        <b class="small">Feedback</b>
+        <p class="tiny muted" style="margin-top:4px">Something off, or an idea? Write a short note — it opens your email so you can send it.</p>
+      </div>
+      <button class="btn sm" id="feedback">Write</button>
+    </div>
+  </div>
   <details class="acc"><summary>Help</summary><div class="body small muted stack">
     <p><b style="color:var(--fg)">The idea.</b> Nothing here takes coins off you — a missed day only costs what you would have earned. Steady spots patterns you might not, and makes keeping your word to yourself worth something.</p>
 
@@ -4690,6 +4699,7 @@ function bind(){
     const L=await connectionReport(); btn.textContent=old;
     modal(`<h2>Connection check</h2><ul class="list" style="margin-top:8px">${L.map(([k,v])=>`<li><span class="small muted">${esc(k)}</span><span class="small" style="text-align:right;max-width:62%">${esc(v)}</span></li>`).join('')}</ul>`,'Copy',()=>{
       navigator.clipboard?.writeText(L.map(([k,v])=>k+': '+v).join('\n')); toast('Copied'); }); };
+  const fb=q('#feedback'); if(fb) fb.onclick=()=>{ haptic(); feedbackSheet(); };
   const ck=q('#conncheck'); if(ck) ck.onclick=()=>runCheck(ck);
   const ck2=q('#conncheck2'); if(ck2) ck2.onclick=()=>runCheck(ck2);
   const rs=q('#retrysync'); if(rs) rs.onclick=()=>{ rs.disabled=true; rs.textContent='…'; S.syncError=null; save(); friendsTick();   // the Retry button had no handler
@@ -5468,6 +5478,52 @@ function friendSheet(f){
   o.querySelector('[data-x]').onclick=()=>close(o);
 }
 
+function feedbackSheet(){
+  const ABOUT=['Something broken','An idea','Something else'];
+  let about='';
+  const o=overlay(`<div class="sheet"><div class="grab"></div>
+    <h2>Feedback</h2>
+    <p class="muted small" style="margin-bottom:12px">Short and honest is perfect. Opens your email with the note filled in — you tap Send there.</p>
+    <p class="tiny muted" style="margin-bottom:8px">What's it about? (optional)</p>
+    <div class="chips" data-abouts>${ABOUT.map(a=>`<button type="button" class="chip" data-about="${esc(a)}">${esc(a)}</button>`).join('')}<button type="button" class="chip on" data-about="">Skip</button></div>
+    <textarea id="fbmsg" maxlength="1200" rows="5" placeholder="What happened, or what you'd like…" style="margin-top:14px;width:100%;resize:vertical"></textarea>
+    <p class="tiny muted" style="margin-top:6px"><span data-fc>0</span> / 1200</p>
+    <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok>Send</button></div>
+  </div>`);
+  const ta=o.querySelector('#fbmsg'); const fc=o.querySelector('[data-fc]');
+  ta.oninput=()=>{ fc.textContent=ta.value.length; };
+  o.querySelectorAll('[data-about]').forEach(b=>b.onclick=()=>{
+    about=b.dataset.about; o.querySelectorAll('[data-about]').forEach(x=>x.classList.toggle('on',x===b)); haptic();
+  });
+  o.querySelector('[data-x]').onclick=()=>close(o);
+  o.querySelector('[data-ok]').onclick=()=>{
+    const msg=ta.value.trim();
+    if(!msg){ toast('Write a little first'); return; }
+    const signed=(()=>{ try{ return Sync.signedIn()?'yes':'no'; }catch(e){ return 'no'; } })();
+    const name=(me()?.name||'').trim();
+    const lines=[
+      about?`About: ${about}`:null,
+      '',
+      msg,
+      '',
+      '—',
+      `Build: ${BUILD}`,
+      `Signed in: ${signed}`,
+      name?`Name: ${name}`:null,
+    ].filter(x=>x!==null);
+    const href='mailto:l1am150098@gmail.com'
+      +'?subject='+encodeURIComponent('Steady feedback')
+      +'&body='+encodeURIComponent(lines.join('\n'));
+    close(o);
+    try{
+      const a=document.createElement('a'); a.href=href; a.rel='noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+    }catch(e){ location.href=href; }
+    haptic('success');
+    toast('Opens your email so you can send it');
+  };
+  setTimeout(()=>ta.focus(),200);
+}
 function forgotSheet(){
   let sent=false;
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Forgotten your password?</h2>
