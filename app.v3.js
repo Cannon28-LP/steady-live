@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=90';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
+import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=91';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
   return (b?'b'+b+' · ':'')+'2026-10-02'; }catch(e){ return '2026-10-02'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
@@ -590,11 +590,12 @@ function todosAhead(){ return S.todos.filter(t=>!t.done && t.day && t.day>today(
 function todosDone(){ return S.todos.filter(t=>t.done && t.doneDay===today()); }
 function backlog(){ return S.todos.filter(t=>!t.done && !t.day).sort((a,b)=>b.createdAt-a.createdAt); }
 function addTodo(text,day,at){ S.todos.push({id:uid(),text,day:day||null,at:at||null,done:false,createdAt:Date.now()}); save(); }
-function setTodoTime(id,at){ const t=S.todos.find(x=>x.id===id); if(t){ t.at=at||null; save(); } }
-function setTodoDay(id,day){ const t=S.todos.find(x=>x.id===id); if(t){ t.day=day||null; save(); } }
+function clearTodoPing(id){ const f=S.settings?.remind?.fired; if(f) delete f['t'+id]; }
+function setTodoTime(id,at){ const t=S.todos.find(x=>x.id===id); if(!t) return; const next=at||null; if(t.at===next) return; t.at=next; clearTodoPing(id); save(); }
+function setTodoDay(id,day){ const t=S.todos.find(x=>x.id===id); if(!t) return; const next=day||null; if(t.day===next) return; t.day=next; clearTodoPing(id); save(); }
 function moveTodosToTomorrow(items){
   const tom=addDays(today(),1); let n=0;
-  for(const t of items){ if(t&&!t.done){ t.day=tom; n++; } }
+  for(const t of items){ if(t&&!t.done){ if(t.day!==tom) clearTodoPing(t.id); t.day=tom; n++; } }
   if(n) save(); return n;
 }
 function whenLabel(k){ if(!k) return 'Someday'; const d=daysBetween(today(),k);   // rounded — a clock change made it 0.96 days
@@ -917,14 +918,22 @@ function reminderTick(){
   const c=remindCfg(); if(!c.on||notifPerm()!=='granted') return;
   const now=new Date(); const hm=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
   c.fired=c.fired||{};
-  /* Plan items with a time on them */
+  /* Plan items. A time fires at that time; a date with no time uses the morning nudge.
+     Once each — moving the date or time arms it again. Not sent for Someday. */
   if(c.todos!==false){
-    for(const t of S.todos){
-      if(t.done||!t.at||t.day!==k) continue;
+    const list=S.todos.filter(t=>!t.done && t.day && t.day<=k)
+      .sort((a,b)=>a.day<b.day?-1:a.day>b.day?1:(a.at||'99:99').localeCompare(b.at||'99:99'));
+    for(const t of list){
       const key='t'+t.id;
-      if(c.fired[key]===k || hm<t.at) continue;
+      if(c.fired[key]) continue;
+      const at=t.at || c.morning || '08:00';
+      const laterToday=t.day===k && hm<at;
+      const laterCatchup=t.day<k && !t.at && hm<at;
+      if(laterToday || laterCatchup) continue;
+      const line=firstLine(t.text, 140);
+      if(!line || line==='…') { c.fired[key]=k; save(); continue; }
       c.fired[key]=k; save();
-      showLocal('On your list', t.text, 'steady-todo-'+t.id);
+      showLocal('On your list', line, 'steady-todo-'+t.id);
       return;
     }
   }
@@ -3569,7 +3578,7 @@ function pList(){
     <input type="text" id="newtodo" placeholder="Something to get done…" maxlength="400">
     <div class="row" style="margin-top:8px;align-items:center;gap:8px">
       <input type="time" id="newtodoat" value="${planState.at||''}" style="width:126px">
-      <span class="tiny muted">optional — add a time for a reminder</span>
+      <span class="tiny muted">optional — no time uses your morning nudge</span>
       ${planState.at?`<button class="btn sm ghost" id="clearat">Clear</button>`:''}</div>
     <div class="chips" style="margin-top:10px">
       ${[['today','Today'],['tomorrow','Tomorrow'],['someday','Someday']].map(([v,l])=>`<button class="chip ${w===v?'on':''}" data-when="${v}">${l}</button>`).join('')}
@@ -4268,7 +4277,7 @@ function vSettings(){
         ${c.eveningOn?`<div class="opt"><label>Evening time</label><input type="time" id="remevening" value="${c.evening}" style="width:130px"></div>`:''}
         <div class="opt"><label>Affirmation <span class="hint">sends one of your own lines</span></label><button class="toggle ${c.affOn?'on':''}" data-remind-aff role="switch" aria-checked="${c.affOn}"></button></div>
         ${c.affOn?`<div class="opt"><label>Affirmation time</label><input type="time" id="remaff" value="${c.aff}" style="width:130px"></div>`:''}
-        <div class="opt"><label>List reminders <span class="hint">for Plan items with a time</span></label><button class="toggle ${c.todos!==false?'on':''}" data-remind-todos role="switch" aria-checked="${c.todos!==false}"></button></div>
+        <div class="opt"><label>List reminders <span class="hint">a time on the item, or your morning nudge if it only has a date</span></label><button class="toggle ${c.todos!==false?'on':''}" data-remind-todos role="switch" aria-checked="${c.todos!==false}"></button></div>
         <p class="tiny muted" style="margin-top:10px">${pushKey()?'Morning and evening nudges arrive even when the app is closed; list-item and affirmation ones while it’s open or recently used.':'These fire while the app is open (or recently open in the background).'}</p>`;
     })()}
   </div></details>
@@ -4847,7 +4856,7 @@ function moveSheet(t){
   const opts=[['Today',today()],['Tomorrow',addDays(today(),1)],[whenLabel(addDays(today(),2)),addDays(today(),2)],['Next week',addDays(today(),7)],['Someday',null]];
   const o=overlay(`<div class="sheet"><div class="grab"></div><h2>Move “${esc(t.text)}”</h2><p class="muted small" style="margin-bottom:14px">Currently ${whenLabel(t.day).toLowerCase()}.</p>
     <div class="chips">${opts.map((x,i)=>`<button class="chip" data-mv="${i}">${esc(x[0])}</button>`).join('')}<button class="chip add" data-mvpick>Pick a date</button></div>
-    <div class="row" style="margin-top:12px;align-items:center;gap:8px"><input type="time" id="mvat" value="${t.at||''}" style="width:126px"><span class="tiny muted">time (optional)</span><button class="btn sm" id="mvatsave">Set</button></div>
+    <div class="row" style="margin-top:12px;align-items:center;gap:8px"><input type="time" id="mvat" value="${t.at||''}" style="width:126px"><span class="tiny muted">time (optional — otherwise your morning nudge)</span><button class="btn sm" id="mvatsave">Set</button></div>
     <div class="foot"><button class="btn" data-x>Cancel</button></div></div>`);
   o.querySelector('[data-x]').onclick=()=>close(o);
   o.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{ setTodoDay(t.id,opts[b.dataset.mv][1]); close(o); haptic(); render(); });
