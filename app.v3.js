@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=92';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
+import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=93';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
   return (b?'b'+b+' · ':'')+'2026-10-03'; }catch(e){ return '2026-10-03'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
@@ -5511,7 +5511,7 @@ function feedbackSheet(){
       `Signed in: ${signed}`,
       name?`Name: ${name}`:null,
     ].filter(x=>x!==null);
-    const href='mailto:l1am150098@gmail.com'
+    const href='mailto:Canvai.ai@outlook.com'
       +'?subject='+encodeURIComponent('Steady feedback')
       +'&body='+encodeURIComponent(lines.join('\n'));
     close(o);
