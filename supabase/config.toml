@@ -1,0 +1,6 @@
+# Local project id (not the hosted ref). Only the feedback function is configured here
+# so a deploy does not change send-reminders.
+project_id = "steady-live"
+
+[functions.send-feedback]
+verify_jwt = false

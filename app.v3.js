@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* ============ Steady — local-first consistency tracker ============ */
-import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=93';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
+import { charArt, charFull, hairHexOf, isHex, suits, sexOf, FACES, TONES as CHAR_TONES, HAIR_COLOURS as CHAR_HAIR, HAIR as CHAR_HAIRSTYLES, DETAILS as CHAR_DETAILS, GLASSES as CHAR_GLASSES, HATS as CHAR_HATS, OUTFITS as CHAR_OUTFITS, BACKDROPS as CHAR_BACKDROPS, BACKDROP_SWATCH } from './chars.js?b=94';   // versioned with the app, so a phone never pairs a new app with an old cached chars.js
 const KEY = 'steady.v2';
 const BUILD = (()=>{ try{ const b=new URL(import.meta.url).searchParams.get('b');
   return (b?'b'+b+' · ':'')+'2026-10-03'; }catch(e){ return '2026-10-03'; } })();   // shown in Settings → Help, so you can tell which build a phone is running
@@ -4338,7 +4338,7 @@ function vSettings(){
     <div class="row between" style="align-items:flex-start;gap:12px">
       <div style="flex:1;min-width:0">
         <b class="small">Feedback</b>
-        <p class="tiny muted" style="margin-top:4px">Something off, or an idea? Write a short note — it opens your email so you can send it.</p>
+        <p class="tiny muted" style="margin-top:4px">Something off, or an idea? Write a short note and it comes straight through.</p>
       </div>
       <button class="btn sm" id="feedback">Write</button>
     </div>
@@ -5483,7 +5483,7 @@ function feedbackSheet(){
   let about='';
   const o=overlay(`<div class="sheet"><div class="grab"></div>
     <h2>Feedback</h2>
-    <p class="muted small" style="margin-bottom:12px">Short and honest is perfect. Opens your email with the note filled in — you tap Send there.</p>
+    <p class="muted small" style="margin-bottom:12px">Short and honest is perfect. Send delivers it straight away. If that can't get through, your email opens with the note filled in.</p>
     <p class="tiny muted" style="margin-bottom:8px">What's it about? (optional)</p>
     <div class="chips" data-abouts>${ABOUT.map(a=>`<button type="button" class="chip" data-about="${esc(a)}">${esc(a)}</button>`).join('')}<button type="button" class="chip on" data-about="">Skip</button></div>
     <textarea id="fbmsg" maxlength="1200" rows="5" placeholder="What happened, or what you'd like…" style="margin-top:14px;width:100%;resize:vertical"></textarea>
@@ -5496,9 +5496,12 @@ function feedbackSheet(){
     about=b.dataset.about; o.querySelectorAll('[data-about]').forEach(x=>x.classList.toggle('on',x===b)); haptic();
   });
   o.querySelector('[data-x]').onclick=()=>close(o);
-  o.querySelector('[data-ok]').onclick=()=>{
+  o.querySelector('[data-ok]').onclick=async()=>{
     const msg=ta.value.trim();
     if(!msg){ toast('Write a little first'); return; }
+    const btn=o.querySelector('[data-ok]');
+    if(btn.disabled) return;
+    btn.disabled=true; btn.textContent='Sending…';
     const signed=(()=>{ try{ return Sync.signedIn()?'yes':'no'; }catch(e){ return 'no'; } })();
     const name=(me()?.name||'').trim();
     const lines=[
@@ -5511,16 +5514,28 @@ function feedbackSheet(){
       `Signed in: ${signed}`,
       name?`Name: ${name}`:null,
     ].filter(x=>x!==null);
-    const href='mailto:Canvai.ai@outlook.com'
-      +'?subject='+encodeURIComponent('Steady feedback')
-      +'&body='+encodeURIComponent(lines.join('\n'));
-    close(o);
+    const openMail=()=>{
+      const href='mailto:Canvai.ai@outlook.com'
+        +'?subject='+encodeURIComponent('Steady feedback')
+        +'&body='+encodeURIComponent(lines.join('\n'));
+      try{
+        const a=document.createElement('a'); a.href=href; a.rel='noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+      }catch(e){ location.href=href; }
+    };
     try{
-      const a=document.createElement('a'); a.href=href; a.rel='noopener';
-      document.body.appendChild(a); a.click(); a.remove();
-    }catch(e){ location.href=href; }
-    haptic('success');
-    toast('Opens your email so you can send it');
+      await api('/functions/v1/send-feedback',{method:'POST',body:{
+        about:about||'', message:msg, build:BUILD, signedIn:signed, name:name||''
+      }});
+      close(o);
+      haptic('success');
+      toast('Sent');
+    }catch(e){
+      close(o);
+      openMail();
+      haptic();
+      toast("Couldn't send from the app — opened your email instead");
+    }
   };
   setTimeout(()=>ta.focus(),200);
 }
